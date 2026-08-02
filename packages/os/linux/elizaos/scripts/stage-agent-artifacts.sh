@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)"
-LINUX_DIR="${ROOT}/packages/os/linux/elizaos"
-RM_PATH_RECURSIVE_SCRIPT="${ROOT}/packages/scripts/rm-path-recursive.mjs"
+OS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)"
+ELIZA_ROOT="${ELIZAOS_ELIZA_ROOT:-${OS_ROOT}/.eliza-source}"
+LINUX_DIR="${OS_ROOT}/packages/os/linux/elizaos"
+RM_PATH_RECURSIVE_SCRIPT="${OS_ROOT}/packages/scripts/rm-path-recursive.mjs"
 
 ARCH="amd64"
 SKIP_BUILD=0
 OUT=""
 BUN_SOURCE=""
-RISCV64_BUN_ZIP="${ROOT}/packages/os/toolchains/bun-riscv64/dist/bun-linux-riscv64-musl.zip"
+RISCV64_BUN_ZIP="${OS_ROOT}/packages/os/toolchains/bun-riscv64/dist/bun-linux-riscv64-musl.zip"
 RISCV64_MUSL_RUNTIME="${LINUX_DIR}/artifacts/riscv64/elizaos-app/musl-runtime"
 RISCV64_ICU_DATA=""
 RISCV64_BUN_ZIP_EXPLICIT=0
@@ -83,9 +84,9 @@ if [ -z "${OUT}" ]; then
     OUT="${LINUX_DIR}/artifacts/${ARCH}"
 fi
 
-AGENT_BUNDLE="${ROOT}/packages/agent/dist-mobile/agent-bundle.js"
+AGENT_BUNDLE="${ELIZA_ROOT}/packages/agent/dist-mobile/agent-bundle.js"
 if [ "${SKIP_BUILD}" != "1" ]; then
-    (cd "${ROOT}" && bun run --cwd packages/agent build:mobile)
+    (cd "${ELIZA_ROOT}" && bun run --cwd packages/agent build:mobile)
 fi
 
 if [ ! -s "${AGENT_BUNDLE}" ]; then
@@ -98,7 +99,7 @@ sha256_file() {
 }
 
 relpath() {
-    python3 - "$ROOT" "$1" <<'PY'
+    python3 - "$OS_ROOT" "$1" <<'PY'
 from pathlib import Path
 import sys
 root = Path(sys.argv[1]).resolve()
@@ -172,7 +173,7 @@ write_manifest() {
 write_riscv64_provenance() {
     local zip_path="$1"
     local staged_bun="$2"
-    python3 - "${ROOT}" "${OUT}/riscv64-bun-provenance.json" "${zip_path}" "${staged_bun}" "${RISCV64_MUSL_RUNTIME}" "${RISCV64_ICU_DATA}" <<'PY'
+    python3 - "${OS_ROOT}" "${OUT}/riscv64-bun-provenance.json" "${zip_path}" "${staged_bun}" "${RISCV64_MUSL_RUNTIME}" "${RISCV64_ICU_DATA}" <<'PY'
 from datetime import UTC, datetime
 from pathlib import Path
 import hashlib
@@ -216,7 +217,7 @@ for pattern in input_globs:
 data = {
     "schema": "eliza.os.linux.riscv64_bun_stage_provenance.v1",
     "claim_boundary": "staged riscv64 Bun artifact provenance for Debian/AOSP shared userland runtime; not a boot or agent-health runtime claim",
-    "producer": "linux/elizaos/scripts/stage-agent-artifacts.sh",
+    "producer": "packages/os/linux/elizaos/scripts/stage-agent-artifacts.sh",
     "generated_utc": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
     "inputs": inputs,
     "artifact": {
@@ -239,7 +240,7 @@ copy_agent_bundle
 if [ "${ARCH}" = "riscv64" ]; then
     if [ "${RISCV64_BUN_ZIP_EXPLICIT}" = "1" ] && [ -s "${RISCV64_BUN_ZIP}" ]; then
         newest_input="$(
-            python3 - "${ROOT}/packages/os/toolchains/bun-riscv64" <<'PY'
+            python3 - "${OS_ROOT}/packages/os/toolchains/bun-riscv64" <<'PY'
 from pathlib import Path
 import sys
 

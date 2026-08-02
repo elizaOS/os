@@ -2,7 +2,7 @@
   "schema": "elizaos.os.migration/v1",
   "sourceRepository": "https://github.com/elizaOS/eliza",
   "sourceBaselineCommit": "069b3e9a1468c2cd1130792795481c0680f297ab",
-  "preparedAgainstCommit": "f4a3b9693caa1172dca55ee7858eda84d3e2eabe",
+  "preparedAgainstCommit": "2a7b65e65508d330d31e86183f7e685f3b05b9a8",
   "targetRepository": "https://github.com/elizaOS/os",
   "mappings": [
     {
@@ -11,7 +11,11 @@
     },
     {
       "source": "packages/app-core/packaging/debian/**",
-      "target": "packages/app-core/packaging/debian/**"
+      "target": "packages/os/linux/packaging/debian/**"
+    },
+    {
+      "source": "packages/app-core/scripts/bun-riscv64/**",
+      "target": "packages/os/toolchains/bun-riscv64/**"
     },
     {
       "source": "packages/app-core/scripts/aosp/{deploy-pixel,smoke-cuttlefish,lib,seccomp-shim,variant-config-schema}",
@@ -48,7 +52,7 @@
     {
       "path": ".github/workflows/build-debian-package.yml",
       "type": "file",
-      "sha256": "453f793f43fbe5811dadfee26910aba8ee944a404eb58035c947713e07ebafc6",
+      "sha256": "d467c9af7a7dc1a82bc586593b09b32fb91abad7f77050995ec82d8180a2af19",
       "size": 6948
     },
     {
@@ -84,8 +88,8 @@
     {
       "path": ".github/workflows/elizaos-os-release.yml",
       "type": "file",
-      "sha256": "e081fb72f4b47c8f15f324eb2d2337860c54aedfc02fb85e6a2cbcbfbff3380c",
-      "size": 6944
+      "sha256": "70b50bed14ef8e1a4810928e797b7f4c59efa6489054650080a0b2d639014adb",
+      "size": 7155
     },
     {
       "path": ".github/workflows/publish-aosp-update-manifest.yml",
@@ -96,7 +100,7 @@
     {
       "path": ".github/workflows/publish-apt-repo.yml",
       "type": "file",
-      "sha256": "bc585e42b00d74868c32a66f1225c191ed4eb4e185aea43023b89480fef0fac1",
+      "sha256": "c6d59cf26a59d7450e1a961d58347158d6e2410150af44a9a330d5726dc22d33",
       "size": 6525
     },
     {
@@ -162,8 +166,8 @@
     {
       "path": "MIGRATION.md",
       "type": "file",
-      "sha256": "e9905b7246d3462cd7386e6f1073d36a8eda77d45f6506aa2dcdb7f11151f7ba",
-      "size": 1405
+      "sha256": "7009d87edcbb324c1c3ee8f6060131574936a91bd5392d2e0f8f5a8cc7a91958",
+      "size": 2077
     },
     {
       "path": "README.md",
@@ -188,396 +192,6 @@
       "type": "file",
       "sha256": "227542f914856a55c8665c7277e75aa8759ac35e24d5648f72c070d2171d542f",
       "size": 1893
-    },
-    {
-      "path": "packages/app-core/packaging/debian/apt-repo-config/README.md",
-      "type": "file",
-      "sha256": "28c73bec7899d7999e96ad8547e40d0798857db4b501c00a54fca3fcf859b67f",
-      "size": 676
-    },
-    {
-      "path": "packages/app-core/packaging/debian/apt-repo-config/conf/distributions",
-      "type": "file",
-      "sha256": "416b0422208ae952e36eaab7abdd309643f4aa8d95c182f24812fc5c84f20512",
-      "size": 235
-    },
-    {
-      "path": "packages/app-core/packaging/debian/changelog",
-      "type": "file",
-      "sha256": "e60d82e37b28bdad40f6410f30aef4656ab5ffe52a91089cd32875ee10a2a131",
-      "size": 333
-    },
-    {
-      "path": "packages/app-core/packaging/debian/control",
-      "type": "file",
-      "sha256": "d77d9ec588d874aeddf2beef6e8b4994ae79bf99589e6458d98f69e06ebf3617",
-      "size": 933
-    },
-    {
-      "path": "packages/app-core/packaging/debian/copyright",
-      "type": "file",
-      "sha256": "18add464719d0c7351a8bd7f7bb025bf5e1651ae2cf137ad8807552cb1f4e3c5",
-      "size": 1294
-    },
-    {
-      "path": "packages/app-core/packaging/debian/elizaos-app.service",
-      "type": "file",
-      "sha256": "7b02bfc0930878d9249098701ae2dd962c161d66ef466460ad0b4fc7e8532630",
-      "size": 325
-    },
-    {
-      "path": "packages/app-core/packaging/debian/install",
-      "type": "file",
-      "sha256": "c24ef9664a2d05133bf6171696e591e09f4f7ef772f68af2e2da52716fa11489",
-      "size": 138
-    },
-    {
-      "path": "packages/app-core/packaging/debian/postinst",
-      "type": "file",
-      "sha256": "63d4bb0bd2345550ed76a0429d0c5a1c046fb41c1bd28aa761305ebf9e56363f",
-      "size": 821
-    },
-    {
-      "path": "packages/app-core/packaging/debian/prerm",
-      "type": "file",
-      "sha256": "2ad317bd1e8dc72f876caec128eebe067f60e8e0d303d1da593e398081228834",
-      "size": 266
-    },
-    {
-      "path": "packages/app-core/packaging/debian/rules",
-      "type": "file",
-      "sha256": "974ddca85d21fd9d780ed0cf2bb038bcb39f059b777ec2ab3fa81b40b266acce",
-      "size": 1434
-    },
-    {
-      "path": "packages/app-core/packaging/debian/source/format",
-      "type": "file",
-      "sha256": "1be7080d72e6b566df3e236ce2c55efdfbbb8fa1c972d825e5b672ff8773be1a",
-      "size": 12
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/Dockerfile",
-      "type": "file",
-      "sha256": "4eafa2fe512dd7dfc4d3d50f84653324415990ef5567f1b52d49cf7253953014",
-      "size": 19086
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/README.md",
-      "type": "file",
-      "sha256": "35dc02dd2c2be4074bb7d5ed613efe9c7d591aaba52f8e41a4725c5c73c0aabe",
-      "size": 14182
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/build.sh",
-      "type": "file",
-      "sha256": "07e0baf41a3e8b6f7c0725a0bffa2acf3c9f068da90a77472e44b7508028b4d4",
-      "size": 24451
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-patches/0001-config-add-riscv64-arch.patch",
-      "type": "file",
-      "sha256": "7ffff10be9048bc1c0ffed987a407cda5d5470550e21de39d36913c6e9a1918d",
-      "size": 3382
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-patches/0002-flags-add-riscv64-march-mabi.patch",
-      "type": "file",
-      "sha256": "4140dd014c650cecdebcd495f3c7193ffcd6be4afe9d28b51394b658e14c0896",
-      "size": 573
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-patches/0003-zig-add-riscv64-target-triple-and-cpu.patch",
-      "type": "file",
-      "sha256": "d323f8ce19178748c37167fadba257f0bd1bb619cb1adb804994824c72812646",
-      "size": 998
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-patches/0004-webkit-force-local-mode-on-riscv64.patch",
-      "type": "file",
-      "sha256": "1e6f5de122a7ba59d6b99d9f14d9f2390fc5c11b1c3ad61b8cc8a7b6b75d838a",
-      "size": 1354
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-patches/0005-tinycc-disable-on-riscv64.patch",
-      "type": "file",
-      "sha256": "ee3e9b0c64a5ccdb78397309ce2115381c353a3dfce313aba88dd951264dc7d3",
-      "size": 725
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-patches/0006-build-add-riscv64-cli-validation.patch",
-      "type": "file",
-      "sha256": "d621bff9ae125af7674bb4ee44dad62848c1ab6e333e61d4b1f6311eb139764c",
-      "size": 731
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-patches/0007-deps-per-dep-riscv64-checks.patch",
-      "type": "file",
-      "sha256": "0d1516c4655601174f5ee91a877ad1a0fcb287ed8df42f7e96297b47b03ea5e4",
-      "size": 1211
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-patches/0008-source-stabilize-riscv64-musl-build.patch",
-      "type": "file",
-      "sha256": "58abdc9deff750305be9176da68b7190cdcbbd1a484256100b36f7239de63824",
-      "size": 8878
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-patches/0009-disable-wasm-streaming-hooks-for-c-loop.patch",
-      "type": "file",
-      "sha256": "c8658536cc46505cec35ab65f9d51daeba8cc5abac741f55496c65712c556731",
-      "size": 6914
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-patches/0010-disable-inspector-profiler-for-riscv64-c-loop.patch",
-      "type": "file",
-      "sha256": "4433d1077b59c325b19194fecefa4e33b5a586099fec0f4f999c82d053826128",
-      "size": 2717
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-patches/0011-process-arch-add-riscv64.patch",
-      "type": "file",
-      "sha256": "1a3e4ab498e83603a34016aab7f02d78fc21a0c7f61daa18cd282e8287d1ef1e",
-      "size": 1200
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-patches/0012-cpu-features-add-riscv64-fallback.patch",
-      "type": "file",
-      "sha256": "1ac5866560fed8cb37b107a7c684d501e77449c320eb0badc593fca97b12fab9",
-      "size": 414
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-patches/0013-disable-console-inspector-hooks-for-riscv64-c-loop.patch",
-      "type": "file",
-      "sha256": "189822f2d07eeeec69b420b4c7657afdb12a37f01a90fc4e3150c85beca0d098",
-      "size": 1557
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-patches/0014-disable-custom-inspector-dispatchers-on-riscv64.patch",
-      "type": "file",
-      "sha256": "0c3c3d551a503d951baff9111057f16903e7c91831ab6e178b5e6ab37c3fab0d",
-      "size": 6279
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-patches/0015-disable-jsc-profiler-builtins-on-riscv64.patch",
-      "type": "file",
-      "sha256": "71741d5f58521247d14304667126f66befc1c912c9a677f370fe236adb981eaa",
-      "size": 2874
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-patches/0016-node-vm-disable-jit-cached-data-on-riscv64-c-loop.patch",
-      "type": "file",
-      "sha256": "5d63e5478d518c69f56e971b4b14b791ebe18bbc0195fd536cb3a33f00798488",
-      "size": 3920
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-patches/0017-disable-performance-domjit-signature-on-riscv64-c-loop.patch",
-      "type": "file",
-      "sha256": "1e2d0f77acfd11574db7b4ee212dc846d47b2d3c7adbe21301f3809fe0e96e2c",
-      "size": 1453
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-patches/0018-fix-serialized-script-identifier-big-endian-path.patch",
-      "type": "file",
-      "sha256": "2bcf9fbcf86d0bd37be3ac5145b85c7bac8fddfd87caffe68a5e1ec3fdbf6c52",
-      "size": 792
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-patches/0019-add-wtf-timer-fire-bridge-for-c-loop.patch",
-      "type": "file",
-      "sha256": "e812c00feac0561de35fb4ca7aa37ce38280f47c84f0d8b246b4a62e6802f10b",
-      "size": 726
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-patches/0020-run-riscv64-smoke-test-under-qemu.patch",
-      "type": "file",
-      "sha256": "26997fbd4d7fd6025565733df8ee61d982244b61be3bce7666ed9df35a0e86ce",
-      "size": 684
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-patches/0021-fix-riscv64-linux-open-flags.patch",
-      "type": "file",
-      "sha256": "71613fdce702893ce2375d728b112fa32cb526f44277e516ae88a6c73fdb15e7",
-      "size": 897
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-patches/0022-zlib-riscv64-generic-kernels.patch",
-      "type": "file",
-      "sha256": "0c39097e8f4513684ea25cb9eb83d4c48021b8e632c85c85faedf27ae9125f44",
-      "size": 1126
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-patches/README.md",
-      "type": "file",
-      "sha256": "0d4e6050ab7a926e91c69d3b9baa48df96a9cbcf7a379d6a9cbdb0a25506d9ed",
-      "size": 7298
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/bun-version.json",
-      "type": "file",
-      "sha256": "4ec06c7e872e7b2c1c17660a6dd1fa6f6f4a7bddfa8d064da0a42de8430221dd",
-      "size": 19855
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/run-build.sh",
-      "type": "file",
-      "sha256": "0d9d528803c6d9a5c245501eab27f94418235fc17d0f067307258039bdbb8e16",
-      "size": 7061
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/rust-core/0001-riscv64-rust-core-port.patch",
-      "type": "file",
-      "sha256": "585ee05b3e93fd975d650876290aaf4d4bcbf01b72cd1e2ff3393a6267837a5f",
-      "size": 36987
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/rust-core/0002-second-wave-riscv64-source-gaps.patch",
-      "type": "file",
-      "sha256": "8d77474cff766215cc9c54328fe650c70bc4c3a4cc0eb7f1ad525326b7bfcbdf",
-      "size": 4369
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/rust-core/0003-third-wave-riscv64-crash-handler-gaps.patch",
-      "type": "file",
-      "sha256": "604c6709ab65fd4b923353819bc5790308cea66de93071ea3ca2a0f3f846424d",
-      "size": 3645
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/rust-core/0004-rust-target-cpu-riscv64.patch",
-      "type": "file",
-      "sha256": "78430553f13449ad79d78446c8e6535b09a50b0ad33b438c028d51d31b2993d4",
-      "size": 2086
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/rust-core/0005-fifth-wave-riscv64-source-gaps.patch",
-      "type": "file",
-      "sha256": "1186df63151cd6dea294c9a2f504c55f89a48bca8549ec2e24baed92982bf803",
-      "size": 4306
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/rust-core/0006-cpp-wasm-and-inspector-guards-riscv64.patch",
-      "type": "file",
-      "sha256": "383053559f8c725d37088f49768fe85a038513faf0c3fb81349787cad7188a7b",
-      "size": 4724
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/rust-core/0007-bun-alloc-max-align-t-riscv64.patch",
-      "type": "file",
-      "sha256": "ace8a7e0fa872108fadc7dd1e091e669f2b445a2ee06012dd14fbd111a7f377d",
-      "size": 1698
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/rust-core/0008-workspace-lints-warn-not-deny-riscv64.patch",
-      "type": "file",
-      "sha256": "1d98e583d0140e0d3cc7d29e46f105e97c77bb127fb4aa5904c6b63e420d31c6",
-      "size": 3831
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/rust-core/0009-zigglobalobject-wasm-streaming-guards-riscv64.patch",
-      "type": "file",
-      "sha256": "92cffcc4b493a8f526b8043c595f674e1c19134af4eb6765ee02b754e49ec558",
-      "size": 5590
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/rust-core/0010-tcc-externs-stub-on-riscv64.patch",
-      "type": "file",
-      "sha256": "9138d75ee2f597e4d7f3231184f7b866d4dcd299a0e8a25c601e4f68ebf78715",
-      "size": 3197
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/rust-core/0011-clippy-ptr-cast-lints-warn-riscv64.patch",
-      "type": "file",
-      "sha256": "ebf077f9f6edb927b1979c77736486f51df1eb0c195c01f64ea676d8e4eee399",
-      "size": 3161
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/rust-core/README.md",
-      "type": "file",
-      "sha256": "3f407ce0fbf38fa923f602309363da687e034c356183ea6ce85bcefb073a3530",
-      "size": 4605
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/rust-core/webkit-patches/0003-disable-dfg-ftl-on-riscv64.patch",
-      "type": "file",
-      "sha256": "c00fe21a74ea35c8586cc380af6d03de89fef9d9bc8c4f0186dc7c629f0b9814",
-      "size": 2600
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/rust-core/webkit-patches/0004-riscv64-do-not-force-wasm-in-c-loop.patch",
-      "type": "file",
-      "sha256": "031c9d4df85ecd313730d13a36a68bd4b222cc7e461d11b8e50ad0ff9bdec2cf",
-      "size": 1101
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/rust-core/webkit-patches/0005-domjit-effect-allow-no-dfg-c-loop.patch",
-      "type": "file",
-      "sha256": "70da4f1f4a1b61ef8626cb07ad8899971efb9eea2f29bc7576881e54d42083e3",
-      "size": 1139
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/rust-core/webkit-patches/0006-disable-usewasm-when-webassembly-compiled-out.patch",
-      "type": "file",
-      "sha256": "2e7a763abd922ce698cfc56ca916b6db262907115d0e250ad1b1aec4f845f918",
-      "size": 1574
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/rust-core/webkit-patches/0007-restore-dropped-includes-and-llint-fwd-decl.patch",
-      "type": "file",
-      "sha256": "742a677554d00ed3c08d77e53df085998bbfb6e20dea6d158a13aea760926180",
-      "size": 1551
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/validate.sh",
-      "type": "file",
-      "sha256": "7ff7f7c79d9a0067de412d0431d2f23c2dcc0918607d2ecb3c5fd9d584a50c0c",
-      "size": 12759
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/webkit-patches/0001-cherry-pick-llint-riscv64.recipe",
-      "type": "file",
-      "sha256": "8017bed5bf3f6fc22585b802c0016734ab48f0f70ddc675613c9b6930b8ea6b6",
-      "size": 9136
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/webkit-patches/0002-cherry-pick-baseline-jit-riscv64.recipe",
-      "type": "file",
-      "sha256": "4ee6709e6e30ccbdc1b50641dd924835fb1b28fd3d5b874625307fb699dc39b4",
-      "size": 2185
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/webkit-patches/0003-disable-dfg-ftl-on-riscv64.patch",
-      "type": "file",
-      "sha256": "c00fe21a74ea35c8586cc380af6d03de89fef9d9bc8c4f0186dc7c629f0b9814",
-      "size": 2600
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/webkit-patches/0004-riscv64-do-not-force-wasm-in-c-loop.patch",
-      "type": "file",
-      "sha256": "031c9d4df85ecd313730d13a36a68bd4b222cc7e461d11b8e50ad0ff9bdec2cf",
-      "size": 1101
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/webkit-patches/0005-domjit-effect-allow-no-dfg-c-loop.patch",
-      "type": "file",
-      "sha256": "70da4f1f4a1b61ef8626cb07ad8899971efb9eea2f29bc7576881e54d42083e3",
-      "size": 1139
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/webkit-patches/0006-disable-usewasm-when-webassembly-compiled-out.patch",
-      "type": "file",
-      "sha256": "2e7a763abd922ce698cfc56ca916b6db262907115d0e250ad1b1aec4f845f918",
-      "size": 1574
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/webkit-patches/0007-restore-dropped-includes-and-llint-fwd-decl.patch",
-      "type": "file",
-      "sha256": "aebd3bcb6a7938dec40cdb9c4b4fd1abfe4170850abdf9e2e9edf268142714b1",
-      "size": 3150
-    },
-    {
-      "path": "packages/app-core/scripts/bun-riscv64/webkit-patches/README.md",
-      "type": "file",
-      "sha256": "747ebd7454f0071f00fb6fdb3acf3b68004f1b249a57324d4b3600abdc9d9d5e",
-      "size": 7094
     },
     {
       "path": "packages/os/android/Makefile",
@@ -1074,8 +688,8 @@
     {
       "path": "packages/os/docs/ci-cd-production-plan.md",
       "type": "file",
-      "sha256": "6d590230124d555d989ad7d136ae0183f583ed749ddfa25b081fee843d817660",
-      "size": 11834
+      "sha256": "659777d5a55f6c6d3a7def83dbf5cb6b9b81725ffc09753ee74c820aadecb816",
+      "size": 11828
     },
     {
       "path": "packages/os/docs/installers-release-plan.md",
@@ -1146,8 +760,8 @@
     {
       "path": "packages/os/docs/two-fork-architecture.md",
       "type": "file",
-      "sha256": "9305aa97dad6fb73219e13881fbf5a31afb2d9839ebab88b4826cbd75321ef11",
-      "size": 5523
+      "sha256": "de31f12783ad6efcc6d6d110dcaa876178fd58011dbfc362ee8121a3c69b87f0",
+      "size": 5466
     },
     {
       "path": "packages/os/docs/verify-iso-download.md",
@@ -2730,14 +2344,14 @@
     {
       "path": "packages/os/linux/elizaos/Makefile",
       "type": "file",
-      "sha256": "eb032043b5b9f6a2a81b55cd090716266618bc075bf28a5654ff17c9fd17c332",
-      "size": 7537
+      "sha256": "0624041f1fe59410a1ba6aa427e2894c59727077fe77ee218c26443e39acde80",
+      "size": 7528
     },
     {
       "path": "packages/os/linux/elizaos/README.md",
       "type": "file",
-      "sha256": "07039919a434399a6bdf65cc1a6ca0ed7ed29a0614101ff7359329e0dd85c508",
-      "size": 10796
+      "sha256": "6930365d5304ba351c2e5cbbec9f5ceb8ac9c85dce3f15487feaa61d77bcc250",
+      "size": 10793
     },
     {
       "path": "packages/os/linux/elizaos/assets/elizaOS_text_black.svg",
@@ -2808,8 +2422,8 @@
     {
       "path": "packages/os/linux/elizaos/build.sh",
       "type": "file",
-      "sha256": "6ed779b868e97d8c509836c6e83b087813d849f5a683bf18c89163a0f009b8d6",
-      "size": 21135
+      "sha256": "815ecbda829c4860aed9f1e989cd7bb5112129a9a89d8ec0aefafe7cf41ee96b",
+      "size": 21132
     },
     {
       "path": "packages/os/linux/elizaos/chip-boot-manifest.json",
@@ -2982,20 +2596,20 @@
     {
       "path": "packages/os/linux/elizaos/config/includes.chroot/opt/elizaos-artifacts/elizaos-root-assets.sha256",
       "type": "file",
-      "sha256": "9f744e9bfb211166196c3891cb6a8a6d60ae93c7b7e21a813cf8e96270512ce1",
+      "sha256": "60061c83e13b1b2fd731025011bd8899763eeca8fa328d541bddbf57b168d502",
       "size": 343
     },
     {
       "path": "packages/os/linux/elizaos/config/includes.chroot/opt/elizaos-artifacts/manifest.txt",
       "type": "file",
-      "sha256": "bbee93336638ff879339b605d213f08b6a957fdc1dea53a499f3a3e6ad283428",
-      "size": 566
+      "sha256": "7735b8c2d2cbf166ae0d96448ff404f7f9091634f477204909ae55f6d3b8cc73",
+      "size": 488
     },
     {
       "path": "packages/os/linux/elizaos/config/includes.chroot/opt/elizaos-artifacts/riscv64-bun-provenance.json",
       "type": "file",
-      "sha256": "9e417f7fa433c5324e9eda26cf5a8f8ec8039656d6765204eda355d8a898d63e",
-      "size": 6148
+      "sha256": "970a3379eb401ccbaa6ee3796811c76318ea22113ddaf0df7ee8b83511f61322",
+      "size": 6042
     },
     {
       "path": "packages/os/linux/elizaos/config/includes.chroot/usr/lib/elizaos/run-agent.sh",
@@ -3168,8 +2782,8 @@
     {
       "path": "packages/os/linux/elizaos/scripts/check-multiarch-boot-contract.py",
       "type": "file",
-      "sha256": "a9279e8decca498a3ea414ca721921ba12e380694e42e17f2a2353bd44723c2e",
-      "size": 23892
+      "sha256": "fc6e73fe2d92c92227f47997a9933d261a4265645adae60920750ab2dc2e02ce",
+      "size": 23889
     },
     {
       "path": "packages/os/linux/elizaos/scripts/check-riscv64-agent-runtime-artifact.sh",
@@ -3180,8 +2794,8 @@
     {
       "path": "packages/os/linux/elizaos/scripts/check_release_manifest.py",
       "type": "file",
-      "sha256": "0fbd66560a2ca93e65ea6cd2e1490cc2bd4e06799f2c60cc3d4c59d8e5807db5",
-      "size": 40046
+      "sha256": "a7134132762faa6dc3e3aab939f44af5f1e313d1dff893548a07c47abf9014d3",
+      "size": 40043
     },
     {
       "path": "packages/os/linux/elizaos/scripts/mkosi-lint.sh",
@@ -3204,8 +2818,8 @@
     {
       "path": "packages/os/linux/elizaos/scripts/stage-agent-artifacts.sh",
       "type": "file",
-      "sha256": "29b685bf888976360e9c603e8698d05e5c2da08da30475a86b302edd85a24885",
-      "size": 9475
+      "sha256": "ec9b2b70caffb103b516c329de183ce81c48f18086d083a8a761a07d0e986146",
+      "size": 9578
     },
     {
       "path": "packages/os/linux/elizaos/scripts/static-smoke.sh",
@@ -3216,8 +2830,8 @@
     {
       "path": "packages/os/linux/elizaos/scripts/test_check_multiarch_boot_contract.py",
       "type": "file",
-      "sha256": "baa0a90ddd40e2dd6dcb31cf68389a28f1619cf1d86e8ad07b5c00f732501a57",
-      "size": 15763
+      "sha256": "f8857efc37e88b5934fda01e86bb1320860760a3a41a740abf6042c330e0862b",
+      "size": 15760
     },
     {
       "path": "packages/os/linux/elizaos/scripts/test_check_release_manifest.py",
@@ -3234,8 +2848,74 @@
     {
       "path": "packages/os/linux/elizaos/scripts/test_riscv64_agent_staging.py",
       "type": "file",
-      "sha256": "be23f0d1f1ab21bd88fc85102df653eebbefe3c6a5a6e33126990fee7baf445d",
-      "size": 13600
+      "sha256": "0844c22a67afaf324ea254727f43a8296878c358a530c1b3402e01a9bfd96993",
+      "size": 13690
+    },
+    {
+      "path": "packages/os/linux/packaging/debian/apt-repo-config/README.md",
+      "type": "file",
+      "sha256": "28c73bec7899d7999e96ad8547e40d0798857db4b501c00a54fca3fcf859b67f",
+      "size": 676
+    },
+    {
+      "path": "packages/os/linux/packaging/debian/apt-repo-config/conf/distributions",
+      "type": "file",
+      "sha256": "416b0422208ae952e36eaab7abdd309643f4aa8d95c182f24812fc5c84f20512",
+      "size": 235
+    },
+    {
+      "path": "packages/os/linux/packaging/debian/changelog",
+      "type": "file",
+      "sha256": "e60d82e37b28bdad40f6410f30aef4656ab5ffe52a91089cd32875ee10a2a131",
+      "size": 333
+    },
+    {
+      "path": "packages/os/linux/packaging/debian/control",
+      "type": "file",
+      "sha256": "d77d9ec588d874aeddf2beef6e8b4994ae79bf99589e6458d98f69e06ebf3617",
+      "size": 933
+    },
+    {
+      "path": "packages/os/linux/packaging/debian/copyright",
+      "type": "file",
+      "sha256": "18add464719d0c7351a8bd7f7bb025bf5e1651ae2cf137ad8807552cb1f4e3c5",
+      "size": 1294
+    },
+    {
+      "path": "packages/os/linux/packaging/debian/elizaos-app.service",
+      "type": "file",
+      "sha256": "7b02bfc0930878d9249098701ae2dd962c161d66ef466460ad0b4fc7e8532630",
+      "size": 325
+    },
+    {
+      "path": "packages/os/linux/packaging/debian/install",
+      "type": "file",
+      "sha256": "c24ef9664a2d05133bf6171696e591e09f4f7ef772f68af2e2da52716fa11489",
+      "size": 138
+    },
+    {
+      "path": "packages/os/linux/packaging/debian/postinst",
+      "type": "file",
+      "sha256": "63d4bb0bd2345550ed76a0429d0c5a1c046fb41c1bd28aa761305ebf9e56363f",
+      "size": 821
+    },
+    {
+      "path": "packages/os/linux/packaging/debian/prerm",
+      "type": "file",
+      "sha256": "2ad317bd1e8dc72f876caec128eebe067f60e8e0d303d1da593e398081228834",
+      "size": 266
+    },
+    {
+      "path": "packages/os/linux/packaging/debian/rules",
+      "type": "file",
+      "sha256": "974ddca85d21fd9d780ed0cf2bb038bcb39f059b777ec2ab3fa81b40b266acce",
+      "size": 1434
+    },
+    {
+      "path": "packages/os/linux/packaging/debian/source/format",
+      "type": "file",
+      "sha256": "1be7080d72e6b566df3e236ce2c55efdfbbb8fa1c972d825e5b672ff8773be1a",
+      "size": 12
     },
     {
       "path": "packages/os/linux/schemas/model-catalog.schema.json",
@@ -40690,6 +40370,330 @@
       "size": 372
     },
     {
+      "path": "packages/os/toolchains/bun-riscv64/Dockerfile",
+      "type": "file",
+      "sha256": "4eafa2fe512dd7dfc4d3d50f84653324415990ef5567f1b52d49cf7253953014",
+      "size": 19086
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/README.md",
+      "type": "file",
+      "sha256": "730e400981b92f83a1cbe87e3f16958fc3f87bbec159f7241c71d825bbc33726",
+      "size": 14164
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/build.sh",
+      "type": "file",
+      "sha256": "07e0baf41a3e8b6f7c0725a0bffa2acf3c9f068da90a77472e44b7508028b4d4",
+      "size": 24451
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-patches/0001-config-add-riscv64-arch.patch",
+      "type": "file",
+      "sha256": "7ffff10be9048bc1c0ffed987a407cda5d5470550e21de39d36913c6e9a1918d",
+      "size": 3382
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-patches/0002-flags-add-riscv64-march-mabi.patch",
+      "type": "file",
+      "sha256": "4140dd014c650cecdebcd495f3c7193ffcd6be4afe9d28b51394b658e14c0896",
+      "size": 573
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-patches/0003-zig-add-riscv64-target-triple-and-cpu.patch",
+      "type": "file",
+      "sha256": "d323f8ce19178748c37167fadba257f0bd1bb619cb1adb804994824c72812646",
+      "size": 998
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-patches/0004-webkit-force-local-mode-on-riscv64.patch",
+      "type": "file",
+      "sha256": "1e6f5de122a7ba59d6b99d9f14d9f2390fc5c11b1c3ad61b8cc8a7b6b75d838a",
+      "size": 1354
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-patches/0005-tinycc-disable-on-riscv64.patch",
+      "type": "file",
+      "sha256": "ee3e9b0c64a5ccdb78397309ce2115381c353a3dfce313aba88dd951264dc7d3",
+      "size": 725
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-patches/0006-build-add-riscv64-cli-validation.patch",
+      "type": "file",
+      "sha256": "d621bff9ae125af7674bb4ee44dad62848c1ab6e333e61d4b1f6311eb139764c",
+      "size": 731
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-patches/0007-deps-per-dep-riscv64-checks.patch",
+      "type": "file",
+      "sha256": "0d1516c4655601174f5ee91a877ad1a0fcb287ed8df42f7e96297b47b03ea5e4",
+      "size": 1211
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-patches/0008-source-stabilize-riscv64-musl-build.patch",
+      "type": "file",
+      "sha256": "58abdc9deff750305be9176da68b7190cdcbbd1a484256100b36f7239de63824",
+      "size": 8878
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-patches/0009-disable-wasm-streaming-hooks-for-c-loop.patch",
+      "type": "file",
+      "sha256": "c8658536cc46505cec35ab65f9d51daeba8cc5abac741f55496c65712c556731",
+      "size": 6914
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-patches/0010-disable-inspector-profiler-for-riscv64-c-loop.patch",
+      "type": "file",
+      "sha256": "4433d1077b59c325b19194fecefa4e33b5a586099fec0f4f999c82d053826128",
+      "size": 2717
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-patches/0011-process-arch-add-riscv64.patch",
+      "type": "file",
+      "sha256": "1a3e4ab498e83603a34016aab7f02d78fc21a0c7f61daa18cd282e8287d1ef1e",
+      "size": 1200
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-patches/0012-cpu-features-add-riscv64-fallback.patch",
+      "type": "file",
+      "sha256": "1ac5866560fed8cb37b107a7c684d501e77449c320eb0badc593fca97b12fab9",
+      "size": 414
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-patches/0013-disable-console-inspector-hooks-for-riscv64-c-loop.patch",
+      "type": "file",
+      "sha256": "189822f2d07eeeec69b420b4c7657afdb12a37f01a90fc4e3150c85beca0d098",
+      "size": 1557
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-patches/0014-disable-custom-inspector-dispatchers-on-riscv64.patch",
+      "type": "file",
+      "sha256": "0c3c3d551a503d951baff9111057f16903e7c91831ab6e178b5e6ab37c3fab0d",
+      "size": 6279
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-patches/0015-disable-jsc-profiler-builtins-on-riscv64.patch",
+      "type": "file",
+      "sha256": "71741d5f58521247d14304667126f66befc1c912c9a677f370fe236adb981eaa",
+      "size": 2874
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-patches/0016-node-vm-disable-jit-cached-data-on-riscv64-c-loop.patch",
+      "type": "file",
+      "sha256": "5d63e5478d518c69f56e971b4b14b791ebe18bbc0195fd536cb3a33f00798488",
+      "size": 3920
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-patches/0017-disable-performance-domjit-signature-on-riscv64-c-loop.patch",
+      "type": "file",
+      "sha256": "1e2d0f77acfd11574db7b4ee212dc846d47b2d3c7adbe21301f3809fe0e96e2c",
+      "size": 1453
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-patches/0018-fix-serialized-script-identifier-big-endian-path.patch",
+      "type": "file",
+      "sha256": "2bcf9fbcf86d0bd37be3ac5145b85c7bac8fddfd87caffe68a5e1ec3fdbf6c52",
+      "size": 792
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-patches/0019-add-wtf-timer-fire-bridge-for-c-loop.patch",
+      "type": "file",
+      "sha256": "e812c00feac0561de35fb4ca7aa37ce38280f47c84f0d8b246b4a62e6802f10b",
+      "size": 726
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-patches/0020-run-riscv64-smoke-test-under-qemu.patch",
+      "type": "file",
+      "sha256": "26997fbd4d7fd6025565733df8ee61d982244b61be3bce7666ed9df35a0e86ce",
+      "size": 684
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-patches/0021-fix-riscv64-linux-open-flags.patch",
+      "type": "file",
+      "sha256": "71613fdce702893ce2375d728b112fa32cb526f44277e516ae88a6c73fdb15e7",
+      "size": 897
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-patches/0022-zlib-riscv64-generic-kernels.patch",
+      "type": "file",
+      "sha256": "0c39097e8f4513684ea25cb9eb83d4c48021b8e632c85c85faedf27ae9125f44",
+      "size": 1126
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-patches/README.md",
+      "type": "file",
+      "sha256": "0d4e6050ab7a926e91c69d3b9baa48df96a9cbcf7a379d6a9cbdb0a25506d9ed",
+      "size": 7298
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/bun-version.json",
+      "type": "file",
+      "sha256": "4ec06c7e872e7b2c1c17660a6dd1fa6f6f4a7bddfa8d064da0a42de8430221dd",
+      "size": 19855
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/run-build.sh",
+      "type": "file",
+      "sha256": "0d9d528803c6d9a5c245501eab27f94418235fc17d0f067307258039bdbb8e16",
+      "size": 7061
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/rust-core/0001-riscv64-rust-core-port.patch",
+      "type": "file",
+      "sha256": "585ee05b3e93fd975d650876290aaf4d4bcbf01b72cd1e2ff3393a6267837a5f",
+      "size": 36987
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/rust-core/0002-second-wave-riscv64-source-gaps.patch",
+      "type": "file",
+      "sha256": "8d77474cff766215cc9c54328fe650c70bc4c3a4cc0eb7f1ad525326b7bfcbdf",
+      "size": 4369
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/rust-core/0003-third-wave-riscv64-crash-handler-gaps.patch",
+      "type": "file",
+      "sha256": "604c6709ab65fd4b923353819bc5790308cea66de93071ea3ca2a0f3f846424d",
+      "size": 3645
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/rust-core/0004-rust-target-cpu-riscv64.patch",
+      "type": "file",
+      "sha256": "78430553f13449ad79d78446c8e6535b09a50b0ad33b438c028d51d31b2993d4",
+      "size": 2086
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/rust-core/0005-fifth-wave-riscv64-source-gaps.patch",
+      "type": "file",
+      "sha256": "1186df63151cd6dea294c9a2f504c55f89a48bca8549ec2e24baed92982bf803",
+      "size": 4306
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/rust-core/0006-cpp-wasm-and-inspector-guards-riscv64.patch",
+      "type": "file",
+      "sha256": "383053559f8c725d37088f49768fe85a038513faf0c3fb81349787cad7188a7b",
+      "size": 4724
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/rust-core/0007-bun-alloc-max-align-t-riscv64.patch",
+      "type": "file",
+      "sha256": "ace8a7e0fa872108fadc7dd1e091e669f2b445a2ee06012dd14fbd111a7f377d",
+      "size": 1698
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/rust-core/0008-workspace-lints-warn-not-deny-riscv64.patch",
+      "type": "file",
+      "sha256": "1d98e583d0140e0d3cc7d29e46f105e97c77bb127fb4aa5904c6b63e420d31c6",
+      "size": 3831
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/rust-core/0009-zigglobalobject-wasm-streaming-guards-riscv64.patch",
+      "type": "file",
+      "sha256": "92cffcc4b493a8f526b8043c595f674e1c19134af4eb6765ee02b754e49ec558",
+      "size": 5590
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/rust-core/0010-tcc-externs-stub-on-riscv64.patch",
+      "type": "file",
+      "sha256": "9138d75ee2f597e4d7f3231184f7b866d4dcd299a0e8a25c601e4f68ebf78715",
+      "size": 3197
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/rust-core/0011-clippy-ptr-cast-lints-warn-riscv64.patch",
+      "type": "file",
+      "sha256": "ebf077f9f6edb927b1979c77736486f51df1eb0c195c01f64ea676d8e4eee399",
+      "size": 3161
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/rust-core/README.md",
+      "type": "file",
+      "sha256": "f48e048a5d616a787efc4cda2a02166462291d61415959ae7415bd93adf7d2af",
+      "size": 4602
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/rust-core/webkit-patches/0003-disable-dfg-ftl-on-riscv64.patch",
+      "type": "file",
+      "sha256": "c00fe21a74ea35c8586cc380af6d03de89fef9d9bc8c4f0186dc7c629f0b9814",
+      "size": 2600
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/rust-core/webkit-patches/0004-riscv64-do-not-force-wasm-in-c-loop.patch",
+      "type": "file",
+      "sha256": "031c9d4df85ecd313730d13a36a68bd4b222cc7e461d11b8e50ad0ff9bdec2cf",
+      "size": 1101
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/rust-core/webkit-patches/0005-domjit-effect-allow-no-dfg-c-loop.patch",
+      "type": "file",
+      "sha256": "70da4f1f4a1b61ef8626cb07ad8899971efb9eea2f29bc7576881e54d42083e3",
+      "size": 1139
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/rust-core/webkit-patches/0006-disable-usewasm-when-webassembly-compiled-out.patch",
+      "type": "file",
+      "sha256": "2e7a763abd922ce698cfc56ca916b6db262907115d0e250ad1b1aec4f845f918",
+      "size": 1574
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/rust-core/webkit-patches/0007-restore-dropped-includes-and-llint-fwd-decl.patch",
+      "type": "file",
+      "sha256": "742a677554d00ed3c08d77e53df085998bbfb6e20dea6d158a13aea760926180",
+      "size": 1551
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/validate.sh",
+      "type": "file",
+      "sha256": "7ff7f7c79d9a0067de412d0431d2f23c2dcc0918607d2ecb3c5fd9d584a50c0c",
+      "size": 12759
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/webkit-patches/0001-cherry-pick-llint-riscv64.recipe",
+      "type": "file",
+      "sha256": "8017bed5bf3f6fc22585b802c0016734ab48f0f70ddc675613c9b6930b8ea6b6",
+      "size": 9136
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/webkit-patches/0002-cherry-pick-baseline-jit-riscv64.recipe",
+      "type": "file",
+      "sha256": "4ee6709e6e30ccbdc1b50641dd924835fb1b28fd3d5b874625307fb699dc39b4",
+      "size": 2185
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/webkit-patches/0003-disable-dfg-ftl-on-riscv64.patch",
+      "type": "file",
+      "sha256": "c00fe21a74ea35c8586cc380af6d03de89fef9d9bc8c4f0186dc7c629f0b9814",
+      "size": 2600
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/webkit-patches/0004-riscv64-do-not-force-wasm-in-c-loop.patch",
+      "type": "file",
+      "sha256": "031c9d4df85ecd313730d13a36a68bd4b222cc7e461d11b8e50ad0ff9bdec2cf",
+      "size": 1101
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/webkit-patches/0005-domjit-effect-allow-no-dfg-c-loop.patch",
+      "type": "file",
+      "sha256": "70da4f1f4a1b61ef8626cb07ad8899971efb9eea2f29bc7576881e54d42083e3",
+      "size": 1139
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/webkit-patches/0006-disable-usewasm-when-webassembly-compiled-out.patch",
+      "type": "file",
+      "sha256": "2e7a763abd922ce698cfc56ca916b6db262907115d0e250ad1b1aec4f845f918",
+      "size": 1574
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/webkit-patches/0007-restore-dropped-includes-and-llint-fwd-decl.patch",
+      "type": "file",
+      "sha256": "aebd3bcb6a7938dec40cdb9c4b4fd1abfe4170850abdf9e2e9edf268142714b1",
+      "size": 3150
+    },
+    {
+      "path": "packages/os/toolchains/bun-riscv64/webkit-patches/README.md",
+      "type": "file",
+      "sha256": "747ebd7454f0071f00fb6fdb3acf3b68004f1b249a57324d4b3600abdc9d9d5e",
+      "size": 7094
+    },
+    {
       "path": "packages/os/toolchains/cmake/toolchain-android-riscv64.cmake",
       "type": "file",
       "sha256": "904737d5453e1b34c5093e90fc9e61e213a0a5278d0281d5d55d0cdd929f0dce",
@@ -41382,14 +41386,14 @@
     {
       "path": "scripts/generate-migration-manifest.mjs",
       "type": "file",
-      "sha256": "d34767f7781d95b006e77a676324845f41d4172aff2067bbf3f25c4e2ebebefd",
-      "size": 2074
+      "sha256": "d9b6b46f1ae4c827bc289129798538225128836942c381e7a4e1ab3a0080c4f5",
+      "size": 2200
     },
     {
       "path": "scripts/verify-riscv64-buildpaths.sh",
       "type": "file",
-      "sha256": "8f876cbf0db3c1505eb8b05cb5159e37430c48166920b5c3defb0a2a72f0f34a",
-      "size": 20104
+      "sha256": "bb269aa8ee3cfa50469ac75039fe7d0483af77a9e91c326c794883ad69f348ab",
+      "size": 20101
     },
     {
       "path": "tsconfig.base.json",
@@ -41406,8 +41410,8 @@
     {
       "path": "turbo.json",
       "type": "file",
-      "sha256": "d1d80259c1993df44a523fa7cd00990ae4b93ab5a6f6b51691b299aa8d7914bb",
-      "size": 767
+      "sha256": "b069363904af511ef59ac589d114cddcf1028a6567f4282108c2d878205f7677",
+      "size": 817
     }
   ]
 }

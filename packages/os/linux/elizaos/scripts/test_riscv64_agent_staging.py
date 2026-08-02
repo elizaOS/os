@@ -12,6 +12,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[5]
+ELIZA_ROOT = Path(os.environ.get("ELIZAOS_ELIZA_ROOT", ROOT / ".eliza-source")).resolve()
 LINUX_DIR = ROOT / "packages/os/linux/elizaos"
 SCRIPT = LINUX_DIR / "scripts/stage-agent-artifacts.sh"
 BUILD_SH = LINUX_DIR / "build.sh"
@@ -22,7 +23,7 @@ WAIT_AGENT_HEALTH = LINUX_DIR / "config/includes.chroot/usr/lib/elizaos/wait-age
 FIRST_BOOT = LINUX_DIR / "config/includes.chroot/usr/local/lib/elizaos/first-boot.sh"
 RISCV64_POSTGRES_HOOK = LINUX_DIR / "config/hooks/normal/0012-riscv64-agent-postgres.hook.chroot"
 MUSL_RUNTIME = LINUX_DIR / "artifacts/riscv64/elizaos-app/musl-runtime"
-AGENT_BUNDLE = ROOT / "packages/agent/dist-mobile/agent-bundle.js"
+AGENT_BUNDLE = ELIZA_ROOT / "packages/agent/dist-mobile/agent-bundle.js"
 
 
 def make_bun_zip(path: Path) -> Path:

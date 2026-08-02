@@ -43,6 +43,11 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Verify application and OS repository ownership boundary
+        env:
+          ELIZAOS_ELIZA_ROOT: ${{ github.workspace }}/.eliza-source
+        run: node scripts/verify-eliza-source-boundary.mjs
+
       - name: Validate OS release manifest
         run: |
           manifest=packages/os/release/beta-2026-05-16/manifest.json

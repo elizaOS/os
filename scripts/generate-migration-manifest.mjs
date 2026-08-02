@@ -36,7 +36,7 @@ const manifest = {
   schema: "elizaos.os.migration/v1",
   sourceRepository: "https://github.com/elizaOS/eliza",
   sourceBaselineCommit: "069b3e9a1468c2cd1130792795481c0680f297ab",
-  preparedAgainstCommit: "f4a3b9693caa1172dca55ee7858eda84d3e2eabe",
+  preparedAgainstCommit: "2a7b65e65508d330d31e86183f7e685f3b05b9a8",
   targetRepository: "https://github.com/elizaOS/os",
   mappings: [
     { source: "packages/os/**", target: "packages/os/**" },

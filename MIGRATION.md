@@ -24,6 +24,12 @@ compiler/model-staging scripts remain in `elizaOS/eliza`. Those app-side
 scripts consume OS-owned build artifacts through `ELIZAOS_OS_REPO_ROOT` or
 explicit artifact URLs; they do not own image or distro toolchains.
 
+The retained AOSP-named plugin files are application runtime adapters: the
+Capacitor privileged bridge, computer-use input actor, and local-inference FFI
+loader. `scripts/verify-eliza-source-boundary.mjs` classifies those exact paths,
+requires the Android/iOS/native app trees to remain, and rejects new unreviewed
+OS-named plugin or native paths.
+
 ## Cross-repository ordering
 
 1. Create `elizaOS/os` from this payload and protect `main`/`develop`.
