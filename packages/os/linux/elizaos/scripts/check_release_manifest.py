@@ -128,7 +128,7 @@ TEMPLATE_SENTINEL_SHA256 = "0" * 64
 TEMPLATE_SENTINEL_FILENAME = "elizaos-linux-riscv64-template.iso"
 RISCV64_AGENT_RUNTIME_SCHEMA = "eliza.os.linux.riscv64_agent_runtime_smoke.v1"
 RISCV64_BUN_PROVENANCE_SCHEMA = "eliza.os.linux.riscv64_bun_stage_provenance.v1"
-RISCV64_BUN_VERSION_INPUT = "packages/app-core/scripts/bun-riscv64/bun-version.json"
+RISCV64_BUN_VERSION_INPUT = "packages/os/toolchains/bun-riscv64/bun-version.json"
 SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 
 Status = Literal["PASS", "BLOCKED", "FAIL"]

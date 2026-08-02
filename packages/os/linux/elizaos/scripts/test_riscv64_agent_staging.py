@@ -117,8 +117,8 @@ def test_fresh_riscv64_stage_writes_patch_bound_provenance() -> None:
             raise AssertionError(provenance)
         inputs = provenance.get("inputs", {})
         required_inputs = {
-            "packages/app-core/scripts/bun-riscv64/bun-version.json",
-            "packages/app-core/scripts/bun-riscv64/bun-patches/0021-fix-riscv64-linux-open-flags.patch",
+            "packages/os/toolchains/bun-riscv64/bun-version.json",
+            "packages/os/toolchains/bun-riscv64/bun-patches/0021-fix-riscv64-linux-open-flags.patch",
         }
         missing = sorted(required_inputs - set(inputs))
         if missing:

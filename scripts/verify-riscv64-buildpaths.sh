@@ -503,7 +503,7 @@ done
     echo "## What this report does NOT cover"
     echo
     echo "- Boot of \`cf_riscv64_phone\` Cuttlefish image (needs Linux x86_64 build host + KVM)."
-    echo "- Bun-on-riscv64 (upstream \`oven-sh/bun#6266\`; source-build via \`packages/app-core/scripts/bun-riscv64/build.sh\`)."
+    echo "- Bun-on-riscv64 (upstream \`oven-sh/bun#6266\`; source-build via \`packages/os/toolchains/bun-riscv64/build.sh\`)."
     echo "- Real-hardware execution of the produced ELFs (this report only verifies cross-compile + ELF arch tag)."
     echo "- RVV kernel numerical parity vs scalar (requires QEMU-V or rv64gcv hardware; deferred)."
 } > "$OUT"

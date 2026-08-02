@@ -101,7 +101,7 @@ green.
    `workflow_dispatch` instead of waiting 24 hours.
 3. **If arm64/riscv64 still fail after the env fix**, gate those matrix
    entries with `continue-on-error: true` until Phase 3 of the OS work
-   lands real per-arch builds (see `packages/app-core/scripts/bun-riscv64/`
+   lands real per-arch builds (see `packages/os/toolchains/bun-riscv64/`
    for the riscv64 bun cross-build pipeline).
 
 ### Phase 2 — Fix the release tag path
@@ -144,7 +144,7 @@ green.
 12. **riscv64** — gated on (a) Shaw pushing electrobun-riscv64
     enablement patches (current `upstreams/electrobun-patches/` only has
     diagnostic instrumentation) AND (b) running Shaw's
-    `packages/app-core/scripts/bun-riscv64/run-build.sh` to produce the
+    `packages/os/toolchains/bun-riscv64/run-build.sh` to produce the
     `bun-linux-riscv64-musl.zip` (~8h cross-compile). Workflow can
     consume the resulting zip via `ELIZA_BUN_RISCV64_URL`.
 

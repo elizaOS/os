@@ -47,7 +47,7 @@ bun-riscv64/
 Easiest path — the bundled host-side runner:
 
 ```bash
-cd packages/app-core/scripts/bun-riscv64
+cd packages/os/toolchains/bun-riscv64
 ./run-build.sh                # builds the image + runs the cross-compile
 ./run-build.sh --shell        # drop into the toolchain image for poking
 ./run-build.sh --image-only   # just build the image
@@ -59,7 +59,7 @@ cd packages/app-core/scripts/bun-riscv64
 Or invoke Docker directly:
 
 ```bash
-cd packages/app-core/scripts/bun-riscv64
+cd packages/os/toolchains/bun-riscv64
 
 # 1. Build the image (caches the toolchain layer; only re-runs when
 #    Dockerfile or its ARG values change).
@@ -89,7 +89,7 @@ dist/build-log.txt
 Before staging the artifact into Debian or Android, run:
 
 ```bash
-packages/app-core/scripts/bun-riscv64/validate.sh
+packages/os/toolchains/bun-riscv64/validate.sh
 ```
 
 The validator now fails before any network clone if an existing
@@ -251,7 +251,7 @@ exist (run with `BUN_RISCV64_FORCE_CLOOP=1` to build with C_LOOP instead).
 ## Validating the patch series
 
 ```bash
-cd packages/app-core/scripts/bun-riscv64
+cd packages/os/toolchains/bun-riscv64
 ./validate.sh
 ```
 
@@ -289,12 +289,12 @@ git cherry-pick d9b48eb6 2c412363 7cab5669 30fad9e8 66db9c06 \
 # (resolve conflicts per recipe notes)
 
 # 3. Export as patches
-git format-patch -o "$REPO_ROOT/packages/app-core/scripts/bun-riscv64/webkit-patches/" \
+git format-patch -o "$REPO_ROOT/packages/os/toolchains/bun-riscv64/webkit-patches/" \
     --start-number=1 \
     5488984d20e0dbfe4be2c3ba8fb18eb81a5e0e8b..HEAD
 
 # 4. Remove the recipes
-rm "$REPO_ROOT/packages/app-core/scripts/bun-riscv64/webkit-patches/"*.recipe
+rm "$REPO_ROOT/packages/os/toolchains/bun-riscv64/webkit-patches/"*.recipe
 
 # 5. Re-run validate.sh and update bun-version.json:patch_series sha256s
 ./validate.sh

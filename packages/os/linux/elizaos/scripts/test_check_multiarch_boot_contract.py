@@ -299,7 +299,7 @@ class MultiarchBootContractTests(unittest.TestCase):
                     {
                         "schema": "eliza.os.linux.riscv64_bun_stage_provenance.v1",
                         "inputs": {
-                            "packages/app-core/scripts/bun-riscv64/bun-version.json": "0" * 64
+                            "packages/os/toolchains/bun-riscv64/bun-version.json": "0" * 64
                         },
                         "artifact": {
                             "staged_bun_sha256": sha256_bytes(runtime_bun.read_bytes())

@@ -11,12 +11,18 @@ plugins remain in the source monorepo.
   `packages/app-core/scripts/aosp/**` → `scripts/aosp/**`
 - OS-only RISC-V CMake toolchains from `packages/native/cmake/**` →
   `packages/os/toolchains/cmake/**`
-- `packages/app-core/packaging/debian/**` → unchanged path
+- Bun RISC-V runtime source-build tooling from
+  `packages/app-core/scripts/bun-riscv64/**` →
+  `packages/os/toolchains/bun-riscv64/**`
+- `packages/app-core/packaging/debian/**` →
+  `packages/os/linux/packaging/debian/**`
 - AOSP, Debian/live-image, VM-image, USB-installer, RISC-V, and OS
   release workflows → `.github/workflows/**`
 
 Android/iOS app projects, native plugins, local inference, and the Android app
-compiler/model-staging scripts remain in `elizaOS/eliza`.
+compiler/model-staging scripts remain in `elizaOS/eliza`. Those app-side
+scripts consume OS-owned build artifacts through `ELIZAOS_OS_REPO_ROOT` or
+explicit artifact URLs; they do not own image or distro toolchains.
 
 ## Cross-repository ordering
 

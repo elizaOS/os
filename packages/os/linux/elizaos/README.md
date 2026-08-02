@@ -108,7 +108,7 @@ make clean                                     # remove out/ + live-build state
 Real agent images require per-arch artifacts under
 `artifacts/<arch>/`. For riscv64, consume the shared
 `bun-linux-riscv64-musl.zip` produced by
-`packages/app-core/scripts/bun-riscv64/run-build.sh` and stage it with the
+`packages/os/toolchains/bun-riscv64/run-build.sh` and stage it with the
 Debian wrapper plus the matching musl runtime:
 
 ```sh

@@ -412,7 +412,7 @@ artifact = data.get("artifact", {})
 if artifact.get("staged_bun_sha256") != sha256_file(bun):
     raise SystemExit("ERROR: riscv64 Bun provenance staged_bun_sha256 does not match staged Bun")
 inputs = data.get("inputs", {})
-if not isinstance(inputs, dict) or "packages/app-core/scripts/bun-riscv64/bun-version.json" not in inputs:
+if not isinstance(inputs, dict) or "packages/os/toolchains/bun-riscv64/bun-version.json" not in inputs:
     raise SystemExit("ERROR: riscv64 Bun provenance does not record bun-version.json")
 PY
     fi

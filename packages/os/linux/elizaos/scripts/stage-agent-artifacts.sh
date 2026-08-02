@@ -2,14 +2,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)"
-LINUX_DIR="${ROOT}/linux/elizaos"
+LINUX_DIR="${ROOT}/packages/os/linux/elizaos"
 RM_PATH_RECURSIVE_SCRIPT="${ROOT}/packages/scripts/rm-path-recursive.mjs"
 
 ARCH="amd64"
 SKIP_BUILD=0
 OUT=""
 BUN_SOURCE=""
-RISCV64_BUN_ZIP="${ROOT}/packages/app-core/scripts/bun-riscv64/dist/bun-linux-riscv64-musl.zip"
+RISCV64_BUN_ZIP="${ROOT}/packages/os/toolchains/bun-riscv64/dist/bun-linux-riscv64-musl.zip"
 RISCV64_MUSL_RUNTIME="${LINUX_DIR}/artifacts/riscv64/elizaos-app/musl-runtime"
 RISCV64_ICU_DATA=""
 RISCV64_BUN_ZIP_EXPLICIT=0
@@ -203,9 +203,9 @@ def rel(path: Path) -> str:
 
 
 input_globs = [
-    "packages/app-core/scripts/bun-riscv64/bun-version.json",
-    "packages/app-core/scripts/bun-riscv64/bun-patches/*.patch",
-    "packages/app-core/scripts/bun-riscv64/webkit-patches/*",
+    "packages/os/toolchains/bun-riscv64/bun-version.json",
+    "packages/os/toolchains/bun-riscv64/bun-patches/*.patch",
+    "packages/os/toolchains/bun-riscv64/webkit-patches/*",
 ]
 inputs = {}
 for pattern in input_globs:
@@ -239,7 +239,7 @@ copy_agent_bundle
 if [ "${ARCH}" = "riscv64" ]; then
     if [ "${RISCV64_BUN_ZIP_EXPLICIT}" = "1" ] && [ -s "${RISCV64_BUN_ZIP}" ]; then
         newest_input="$(
-            python3 - "${ROOT}/packages/app-core/scripts/bun-riscv64" <<'PY'
+            python3 - "${ROOT}/packages/os/toolchains/bun-riscv64" <<'PY'
 from pathlib import Path
 import sys
 

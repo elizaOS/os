@@ -307,7 +307,7 @@ def validate_runtime_artifacts(errors: list[str], matrix: dict) -> None:
                             require(
                                 errors,
                                 isinstance(inputs, dict)
-                                and "packages/app-core/scripts/bun-riscv64/bun-version.json"
+                                and "packages/os/toolchains/bun-riscv64/bun-version.json"
                                 in inputs,
                                 "multiarch boot matrix riscv64 Bun provenance does not record "
                                 "bun-version.json",

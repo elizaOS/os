@@ -42,7 +42,11 @@ const manifest = {
     { source: "packages/os/**", target: "packages/os/**" },
     {
       source: "packages/app-core/packaging/debian/**",
-      target: "packages/app-core/packaging/debian/**",
+      target: "packages/os/linux/packaging/debian/**",
+    },
+    {
+      source: "packages/app-core/scripts/bun-riscv64/**",
+      target: "packages/os/toolchains/bun-riscv64/**",
     },
     {
       source: "packages/app-core/scripts/aosp/{deploy-pixel,smoke-cuttlefish,lib,seccomp-shim,variant-config-schema}",

@@ -73,17 +73,17 @@ jobs:
         id: deb
         run: |
           set -euo pipefail
-          if [ ! -d packages/app-core/packaging/debian ]; then
-            echo "ERROR: packages/app-core/packaging/debian is missing — debian packaging dir is required for the .deb build. Repo state is bad."
+          if [ ! -d packages/os/linux/packaging/debian ]; then
+            echo "ERROR: packages/os/linux/packaging/debian is missing — debian packaging dir is required for the .deb build. Repo state is bad."
             exit 1
           fi
           # dpkg-buildpackage expects the source root to have a debian/ subdir
           # alongside the source it needs to build. The repo keeps the
-          # packaging definitions under packages/app-core/packaging/debian to
+          # packaging definitions under packages/os/linux/packaging/debian to
           # avoid clutter; link them into the app-core source root for the
           # build, then unlink so a follow-up run is idempotent.
           mkdir -p "$ELIZA_ROOT/packages/app-core/packaging"
-          cp -a "$GITHUB_WORKSPACE/packages/app-core/packaging/debian" \
+          cp -a "$GITHUB_WORKSPACE/packages/os/linux/packaging/debian" \
             "$ELIZA_ROOT/packages/app-core/packaging/debian"
           cd "$ELIZA_ROOT/packages/app-core"
           if [ ! -L debian ]; then

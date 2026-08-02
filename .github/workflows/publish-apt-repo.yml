@@ -148,7 +148,7 @@ jobs:
           CODENAME="${{ inputs.channel }}"
           # Ensure conf/ exists in apt-repo branch
           mkdir -p apt-repo/conf
-          cp src-repo/packages/app-core/packaging/debian/apt-repo-config/conf/distributions apt-repo/conf/distributions
+          cp src-repo/packages/os/linux/packaging/debian/apt-repo-config/conf/distributions apt-repo/conf/distributions
 
           # Add the package
           cd apt-repo

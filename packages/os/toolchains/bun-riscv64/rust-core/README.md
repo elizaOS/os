@@ -69,7 +69,7 @@ CPU profiler, inspector agents, DOMJIT, NodeVM cached-data) + the
 ## How to drive it
 
 ```sh
-cd packages/app-core/scripts/bun-riscv64
+cd packages/os/toolchains/bun-riscv64
 docker run --rm --privileged tonistiigi/binfmt --install riscv64   # for the QEMU smoke test
 ./run-build.sh --rust-core            # image build + Rust-core cross-build (multi-hour)
 # artifact: dist/bun-linux-riscv64-musl.zip

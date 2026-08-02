@@ -33,8 +33,7 @@ Both forks consume the same code for everything above the OS layer:
   `packages/agent`, `packages/elizaos`, and `packages/core`. They are pure
   JS / TS and architecture-agnostic at the source level.
 - **Bun source-build pipeline** —
-  the external `eliza` repository's `packages/app-core/scripts/bun-riscv64/`
-  produces
+  this repository's `packages/os/toolchains/bun-riscv64/` produces
   `bun-linux-riscv64-musl.zip` from oven-sh/bun + WebKit fork + the
   in-tree patches. Both forks consume the same zip layout
   (`bun-linux-riscv64-musl/bun` inside).
@@ -78,8 +77,7 @@ Changes to any of these need both forks to be re-validated together:
 2. **`usb-installer/src/backend/types.ts` `ElizaOsImage`
    architecture union** — both linux and android images live in the
    same catalog.
-3. **The external app repository's
-   `packages/app-core/scripts/bun-riscv64/bun-version.json`** — Bun
+3. **`packages/os/toolchains/bun-riscv64/bun-version.json`** — Bun
    version pin. Drift between this and `stage-android-agent.mjs`'s
    `BUN_VERSION` constant is silent and dangerous.
 4. **Native-plugin CMake variable names** —
