@@ -17,9 +17,7 @@ jobs:
         with:
           bun-version: 1.4.0
       - run: bun install --frozen-lockfile
-      - run: bun run typecheck
-      - run: bun run lint
-      - run: bun run test:release
+      - run: bun run verify
 
   linux-static-smoke:
     runs-on: ubuntu-24.04

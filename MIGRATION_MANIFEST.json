@@ -38,10 +38,10 @@
       "size": 876
     },
     {
-      "path": ".github/actions/setup-bun-workspace/action.yml",
+      "path": ".github/actionlint.yaml",
       "type": "file",
-      "sha256": "15aea9ac58ef1605db96f1eeb491b9fc2a49d4cdd4dd9434ab844c9a94812b24",
-      "size": 20229
+      "sha256": "1758ef5bca8178121056e4dbbcb7c9baf2b63fd3ec108df1f08f8df143dfab6c",
+      "size": 296
     },
     {
       "path": ".github/workflows/README.md",
@@ -70,8 +70,8 @@
     {
       "path": ".github/workflows/ci.yml",
       "type": "file",
-      "sha256": "1ff7dffba751dbb9447401e79f498a7bf8dade4886d94a6838695098c91756b5",
-      "size": 566
+      "sha256": "24dfed3380e430644d11e8d6be6febbf717af9c19da98ac3f60f734eeef0599e",
+      "size": 503
     },
     {
       "path": ".github/workflows/elizaos-cuttlefish.yml",
@@ -142,19 +142,19 @@
     {
       "path": ".gitignore",
       "type": "file",
-      "sha256": "3deb6eec69135304394a7e31d66903ddacceeed7c800203992dc971c311fb72a",
-      "size": 730
+      "sha256": "832b4d287ea4773e02b338cffaadb8e5bd14709176b73d34d5f1a3c8ce2c50c4",
+      "size": 837
     },
     {
       "path": "AGENTS.md",
       "type": "file",
-      "sha256": "309b9b125a918d3fec626b330a565f48c602fafd3ea07d2b7d4364e42ffc8105",
+      "sha256": "e1cc6951d5fbb78b0a4f6705998a6fcffa17f2cdd19041ff2e2a510b70c4ce82",
       "size": 2853
     },
     {
       "path": "CLAUDE.md",
       "type": "file",
-      "sha256": "309b9b125a918d3fec626b330a565f48c602fafd3ea07d2b7d4364e42ffc8105",
+      "sha256": "e1cc6951d5fbb78b0a4f6705998a6fcffa17f2cdd19041ff2e2a510b70c4ce82",
       "size": 2853
     },
     {
@@ -190,8 +190,8 @@
     {
       "path": "package.json",
       "type": "file",
-      "sha256": "227542f914856a55c8665c7277e75aa8759ac35e24d5648f72c070d2171d542f",
-      "size": 1893
+      "sha256": "461c62f45d664ecf264580fcad3ce00693dbc7cbd5325cb4e1de769f47c4d089",
+      "size": 1987
     },
     {
       "path": "packages/os/android/Makefile",

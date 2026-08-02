@@ -22,7 +22,7 @@ bridge works.
 
 - `packages/os/android/`: AOSP products, vendor policy, system UI, and image integration.
 - `packages/os/linux/`: Debian-based live images, VM images, and confidential-compute policy.
-- `packages/app-core/packaging/debian/`: Debian application packaging.
+- `packages/os/linux/packaging/debian/`: Debian application packaging.
 - `packages/os/setup/`, `usb-installer/`, `homepage/`: OS distribution surfaces.
 - `packages/os/release/` and `packages/os/scripts/`: release contracts and validation.
 

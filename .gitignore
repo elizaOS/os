@@ -1,5 +1,7 @@
 # JavaScript and task-runner output
 node_modules/
+# Cross-repository app builds can materialize plugin build outputs here; plugin
+# source ownership remains in elizaOS/eliza and the layout verifier rejects it.
 plugins/
 dist/
 **/dist/
@@ -13,10 +15,8 @@ coverage/
 **/.gradle/
 **/Pods/
 **/DerivedData/
-packages/app-core/scripts/bun-riscv64/dist/
-packages/app/android/
-packages/app/ios/
-packages/app/electrobun/
+packages/os/toolchains/bun-riscv64/dist/
+.eliza-source/
 
 # OS image and release build output
 out/
