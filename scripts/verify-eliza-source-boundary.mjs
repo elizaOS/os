@@ -92,6 +92,27 @@ if (workflowReferenceResiduals.length > 0) {
   );
 }
 
+const ownershipConfigChecks = [
+  [".dockerignore", /^packages\/os(?:\/|$)/m],
+  [".gitignore", /^\/?packages\/os(?:\/|$)/m],
+  [".gitignore", /^packages\/app-core\/scripts\/bun-riscv64(?:\/|$)/m],
+  ["package.json", /"packages\/os\/\*"/],
+  ["AGENTS.md", /packages\/os\/\*/],
+  ["CLAUDE.md", /packages\/os\/\*/],
+  ["README.md", /\]\(packages\/os(?:\/|\))/],
+];
+const ownershipConfigResiduals = ownershipConfigChecks.flatMap(
+  ([entry, pattern]) => {
+    const contents = fs.readFileSync(path.join(elizaRoot, entry), "utf8");
+    return pattern.test(contents) ? [`${entry}: ${pattern}`] : [];
+  },
+);
+if (ownershipConfigResiduals.length > 0) {
+  throw new Error(
+    `Source configuration still owns local OS paths:\n${ownershipConfigResiduals.map((entry) => `- ${entry}`).join("\n")}`,
+  );
+}
+
 const requiredAppPrefixes = [
   "packages/app-core/platforms/android/",
   "packages/app-core/platforms/ios/",

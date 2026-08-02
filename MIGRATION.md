@@ -30,6 +30,9 @@ loader. `scripts/verify-eliza-source-boundary.mjs` classifies those exact paths,
 requires the Android/iOS/native app trees to remain, and rejects new unreviewed
 OS-named plugin or native paths. It also rejects source CI references to the
 moved OS release workflows.
+Source workspace metadata, ignore files, and repository guides are checked as
+well, so `packages/os` cannot silently return as a local workspace or build
+artifact root.
 
 ## Cross-repository ordering
 
