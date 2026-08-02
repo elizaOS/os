@@ -100,6 +100,7 @@ const ownershipConfigChecks = [
   ["AGENTS.md", /packages\/os\/\*/],
   ["CLAUDE.md", /packages\/os\/\*/],
   ["README.md", /\]\(packages\/os(?:\/|\))/],
+  [".github/actionlint.yaml", /^\s*-\s*kvm\s*$/m],
 ];
 const ownershipConfigResiduals = ownershipConfigChecks.flatMap(
   ([entry, pattern]) => {

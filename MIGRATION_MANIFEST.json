@@ -2,7 +2,7 @@
   "schema": "elizaos.os.migration/v1",
   "sourceRepository": "https://github.com/elizaOS/eliza",
   "sourceBaselineCommit": "069b3e9a1468c2cd1130792795481c0680f297ab",
-  "preparedAgainstCommit": "93193d5e61938926749aa45badbc7a15be5cbdc6",
+  "preparedAgainstCommit": "92af7abfa2afb10d70699147db86523776a480f2",
   "targetRepository": "https://github.com/elizaOS/os",
   "mappings": [
     {
@@ -166,8 +166,8 @@
     {
       "path": "MIGRATION.md",
       "type": "file",
-      "sha256": "90065525ae0a0afade874f9bcaa5e4bff922af15856818b92a13b8fee7ed5834",
-      "size": 2318
+      "sha256": "813509043a794c3d67ab92db3eeaeff60c9078f437557f5ef1a865552df8a027",
+      "size": 2478
     },
     {
       "path": "README.md",
@@ -41386,14 +41386,14 @@
     {
       "path": "scripts/generate-migration-manifest.mjs",
       "type": "file",
-      "sha256": "d38dcfd1e6f130998962896989c78ab3e5e88a88a0e254d049711015e2cf6327",
+      "sha256": "b827023bad7f06a9f72ee9641ddf543f392fd0baedfd1cd52ff31b590ba6d674",
       "size": 2216
     },
     {
       "path": "scripts/verify-eliza-source-boundary.mjs",
       "type": "file",
-      "sha256": "0f63800b0e7f77daf7bd964fa0a25079d69e907112cb554888c956cb68425325",
-      "size": 6182
+      "sha256": "d2897cff855e74eaaa9c802ad601c2b3b4211e812a075005a13f0f78e0f22cef",
+      "size": 6233
     },
     {
       "path": "scripts/verify-riscv64-buildpaths.sh",

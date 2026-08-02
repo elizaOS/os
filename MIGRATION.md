@@ -33,6 +33,8 @@ moved OS release workflows.
 Source workspace metadata, ignore files, and repository guides are checked as
 well, so `packages/os` cannot silently return as a local workspace or build
 artifact root.
+The KVM self-hosted runner label used by Cuttlefish belongs to this repository's
+actionlint configuration rather than the application repository's CI metadata.
 
 ## Cross-repository ordering
 
