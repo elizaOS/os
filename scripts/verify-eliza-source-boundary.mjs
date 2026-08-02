@@ -59,6 +59,11 @@ const forbiddenWorkflowNames = new Set([
   "update-os-release-manifest.yml",
   "update-vendor-checksums.yml",
 ]);
+const forbiddenWorkflowReferences = [
+  "ElizaOS Cuttlefish",
+  "ElizaOS OpenAgent E1",
+  "publish-apt-repo.yml",
+];
 
 const forbidden = tracked.filter(
   (entry) =>
@@ -70,6 +75,20 @@ const forbidden = tracked.filter(
 if (forbidden.length > 0) {
   throw new Error(
     `OS-owned paths are tracked in eliza:\n${forbidden.map((entry) => `- ${entry}`).join("\n")}`,
+  );
+}
+
+const workflowReferenceResiduals = tracked
+  .filter((entry) => entry.startsWith(".github/workflows/"))
+  .flatMap((entry) => {
+    const contents = fs.readFileSync(path.join(elizaRoot, entry), "utf8");
+    return forbiddenWorkflowReferences
+      .filter((reference) => contents.includes(reference))
+      .map((reference) => `${entry}: ${reference}`);
+  });
+if (workflowReferenceResiduals.length > 0) {
+  throw new Error(
+    `Moved OS workflow references remain in eliza CI:\n${workflowReferenceResiduals.map((entry) => `- ${entry}`).join("\n")}`,
   );
 }
 

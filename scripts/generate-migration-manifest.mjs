@@ -36,7 +36,7 @@ const manifest = {
   schema: "elizaos.os.migration/v1",
   sourceRepository: "https://github.com/elizaOS/eliza",
   sourceBaselineCommit: "069b3e9a1468c2cd1130792795481c0680f297ab",
-  preparedAgainstCommit: "2a7b65e65508d330d31e86183f7e685f3b05b9a8",
+  preparedAgainstCommit: "e2704b397ecf5c7c9bff61f3839aaa9c7a374505",
   targetRepository: "https://github.com/elizaOS/os",
   mappings: [
     { source: "packages/os/**", target: "packages/os/**" },
@@ -49,11 +49,13 @@ const manifest = {
       target: "packages/os/toolchains/bun-riscv64/**",
     },
     {
-      source: "packages/app-core/scripts/aosp/{deploy-pixel,smoke-cuttlefish,lib,seccomp-shim,variant-config-schema}",
+      source:
+        "packages/app-core/scripts/aosp/{deploy-pixel,smoke-cuttlefish,lib,seccomp-shim,variant-config-schema}",
       target: "scripts/aosp/**",
     },
     {
-      source: "packages/native/cmake/toolchain-{android-riscv64,riscv64-linux-gnu,riscv64-linux-musl}.cmake",
+      source:
+        "packages/native/cmake/toolchain-{android-riscv64,riscv64-linux-gnu,riscv64-linux-musl}.cmake",
       target: "packages/os/toolchains/cmake/**",
     },
     {

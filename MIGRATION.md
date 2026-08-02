@@ -28,7 +28,8 @@ The retained AOSP-named plugin files are application runtime adapters: the
 Capacitor privileged bridge, computer-use input actor, and local-inference FFI
 loader. `scripts/verify-eliza-source-boundary.mjs` classifies those exact paths,
 requires the Android/iOS/native app trees to remain, and rejects new unreviewed
-OS-named plugin or native paths.
+OS-named plugin or native paths. It also rejects source CI references to the
+moved OS release workflows.
 
 ## Cross-repository ordering
 
