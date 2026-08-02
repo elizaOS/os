@@ -1,0 +1,51 @@
+{
+  "name": "@elizaos/os",
+  "version": "0.1.0",
+  "description": "elizaOS operating-system distributions, installers, and release infrastructure.",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.4.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "workspaces": [
+    "packages/os/android/system-ui",
+    "packages/os/homepage",
+    "packages/os/setup",
+    "packages/os/shared-system",
+    "packages/os/usb-installer"
+  ],
+  "scripts": {
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint:check",
+    "format": "turbo run format",
+    "test": "turbo run test",
+    "test:release": "node --test packages/os/scripts/__tests__/*.test.mjs && bun test packages/os/scripts/__tests__/*.test.ts",
+    "migration:manifest": "node scripts/generate-migration-manifest.mjs",
+    "verify": "bun run typecheck && bun run lint && bun run test:release",
+    "verify:linux": "ELIZAOS_STATIC_SOURCE_ONLY=1 bash packages/os/linux/scripts/static-smoke.sh",
+    "verify:riscv64": "node packages/scripts/run-bash-linux-only.mjs scripts/verify-riscv64-buildpaths.sh",
+    "build:riscv64-artifacts": "node packages/scripts/run-bash-linux-only.mjs scripts/build-riscv64-artifacts.sh",
+    "check:riscv64-artifacts": "node packages/scripts/run-bash-linux-only.mjs scripts/check-riscv64-artifacts.sh"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.6",
+    "@types/bun": "1.3.14",
+    "@types/node": "25.6.2",
+    "@typescript/native": "npm:typescript@^7.0.2",
+    "turbo": "^2.9.16",
+    "typescript": "^6.0.3",
+    "vitest": "4.1.5"
+  },
+  "overrides": {
+    "@biomejs/biome": "2.5.6",
+    "@elizaos/app-core": "2.0.11-beta.7",
+    "@elizaos/core": "2.0.11-beta.7",
+    "@elizaos/shared": "2.0.11-beta.7",
+    "@elizaos/ui": "2.0.11-beta.7",
+    "react": "19.2.5",
+    "react-dom": "19.2.5",
+    "rollup": "npm:@rollup/wasm-node@4.60.3"
+  }
+}
