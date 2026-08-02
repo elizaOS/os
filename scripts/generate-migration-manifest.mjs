@@ -50,7 +50,7 @@ const manifest = {
     },
     {
       source:
-        "packages/app-core/scripts/aosp/{deploy-pixel,smoke-cuttlefish,lib,seccomp-shim,variant-config-schema}",
+        "packages/app-core/scripts/aosp/{deploy-pixel,smoke-cuttlefish,lib,variant-config-schema}",
       target: "scripts/aosp/**",
     },
     {

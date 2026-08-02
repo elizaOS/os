@@ -18,7 +18,7 @@
       "target": "packages/os/toolchains/bun-riscv64/**"
     },
     {
-      "source": "packages/app-core/scripts/aosp/{deploy-pixel,smoke-cuttlefish,lib,seccomp-shim,variant-config-schema}",
+      "source": "packages/app-core/scripts/aosp/{deploy-pixel,smoke-cuttlefish,lib,variant-config-schema}",
       "target": "scripts/aosp/**"
     },
     {
@@ -166,8 +166,8 @@
     {
       "path": "MIGRATION.md",
       "type": "file",
-      "sha256": "813509043a794c3d67ab92db3eeaeff60c9078f437557f5ef1a865552df8a027",
-      "size": 2478
+      "sha256": "3f2864f77452219bf601a1fa80eb0fe693804c17db13a41ee64bd477d6d7007b",
+      "size": 2666
     },
     {
       "path": "README.md",
@@ -760,8 +760,8 @@
     {
       "path": "packages/os/docs/two-fork-architecture.md",
       "type": "file",
-      "sha256": "de31f12783ad6efcc6d6d110dcaa876178fd58011dbfc362ee8121a3c69b87f0",
-      "size": 5466
+      "sha256": "c27a23dc9a3533ad3f1c9f1c8d50de32d08086e7740ae467fd356c360dc842d2",
+      "size": 5549
     },
     {
       "path": "packages/os/docs/verify-iso-download.md",
@@ -41216,30 +41216,6 @@
       "size": 6010
     },
     {
-      "path": "scripts/aosp/seccomp-shim/loader-wrap.c",
-      "type": "file",
-      "sha256": "7d9fbcbd27751df71c7d263520b41718092b953d586b09b76fb67459289d6c8f",
-      "size": 5938
-    },
-    {
-      "path": "scripts/aosp/seccomp-shim/sigsys-handler-arm64.c",
-      "type": "file",
-      "sha256": "6b6608dc1832eb56027bd6d0a523e0ab9b46f8a611885ceaccf3c106a7f91d32",
-      "size": 7053
-    },
-    {
-      "path": "scripts/aosp/seccomp-shim/sigsys-handler-riscv64.c",
-      "type": "file",
-      "sha256": "94ab923910aacf4ef1f11f8e1efdeb39157f3eb0f93f1fec35ef43fe77b15039",
-      "size": 9286
-    },
-    {
-      "path": "scripts/aosp/seccomp-shim/sigsys-handler.c",
-      "type": "file",
-      "sha256": "1eaf6fe3dfbc7fb06ef54c503f66955ae6864f498bdcae0b9f05309778c6adc5",
-      "size": 11324
-    },
-    {
       "path": "scripts/aosp/smoke-cuttlefish.mjs",
       "type": "file",
       "sha256": "56bf4ff0d16be9789b65c32e0b90ba9c31c93cba5c71cb60c9e0f92be1dad631",
@@ -41386,14 +41362,20 @@
     {
       "path": "scripts/generate-migration-manifest.mjs",
       "type": "file",
-      "sha256": "b827023bad7f06a9f72ee9641ddf543f392fd0baedfd1cd52ff31b590ba6d674",
-      "size": 2216
+      "sha256": "bdcf7ce2a393a14d951f6bdd4b5b95864dd4d5368d428d06ace1a6ded8718ca3",
+      "size": 2203
     },
     {
       "path": "scripts/verify-eliza-source-boundary.mjs",
       "type": "file",
       "sha256": "d2897cff855e74eaaa9c802ad601c2b3b4211e812a075005a13f0f78e0f22cef",
       "size": 6233
+    },
+    {
+      "path": "scripts/verify-os-repository-layout.mjs",
+      "type": "file",
+      "sha256": "3794290d7a2a1ca4422e37e53ef246199282856776b44168dcac51c78a95952d",
+      "size": 2473
     },
     {
       "path": "scripts/verify-riscv64-buildpaths.sh",

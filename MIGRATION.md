@@ -23,6 +23,9 @@ Android/iOS app projects, native plugins, local inference, and the Android app
 compiler/model-staging scripts remain in `elizaOS/eliza`. Those app-side
 scripts consume OS-owned build artifacts through `ELIZAOS_OS_REPO_ROOT` or
 explicit artifact URLs; they do not own image or distro toolchains.
+The Android seccomp compatibility shim remains application-native source in
+`elizaOS/eliza`; OS RISC-V validation invokes the app checkout's compiler and
+does not duplicate the shim here.
 
 The retained AOSP-named plugin files are application runtime adapters: the
 Capacitor privileged bridge, computer-use input actor, and local-inference FFI

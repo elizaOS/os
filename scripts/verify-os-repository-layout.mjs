@@ -24,6 +24,7 @@ const forbiddenPrefixes = [
   "packages/native/",
   "plugins/",
   ".github/actions/setup-bun-workspace/",
+  "scripts/aosp/seccomp-shim/",
 ];
 const forbidden = tracked.filter((entry) =>
   forbiddenPrefixes.some((prefix) => entry.startsWith(prefix)),

@@ -93,8 +93,9 @@ Changes to any of these need both forks to be re-validated together:
 ## What is correctly divergent (do NOT unify)
 
 - **seccomp shim**:
-  `scripts/aosp/seccomp-shim/sigsys-handler-*.c` is
-  Android-only. Linux's seccomp filter for desktop apps does not match
+  `$ELIZAOS_ELIZA_ROOT/packages/app-core/scripts/aosp/seccomp-shim/sigsys-handler-*.c`
+  is Android-app runtime code and remains in `elizaOS/eliza`. Linux's seccomp
+  filter for desktop apps does not match
   Android's `untrusted_app` policy, so the shim is meaningless on
   Debian.
 - **launch.sh + double-fork daemonisation**: only the AOSP fork's
