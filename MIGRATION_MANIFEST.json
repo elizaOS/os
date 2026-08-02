@@ -2,7 +2,7 @@
   "schema": "elizaos.os.migration/v1",
   "sourceRepository": "https://github.com/elizaOS/eliza",
   "sourceBaselineCommit": "069b3e9a1468c2cd1130792795481c0680f297ab",
-  "preparedAgainstCommit": "92af7abfa2afb10d70699147db86523776a480f2",
+  "preparedAgainstCommit": "5f255cc1c2eccb3a7733ad6b866c6dec61a838b7",
   "targetRepository": "https://github.com/elizaOS/os",
   "mappings": [
     {
@@ -41362,7 +41362,7 @@
     {
       "path": "scripts/generate-migration-manifest.mjs",
       "type": "file",
-      "sha256": "bdcf7ce2a393a14d951f6bdd4b5b95864dd4d5368d428d06ace1a6ded8718ca3",
+      "sha256": "8bc5eb03336b0655a0fdcaa26ca77dda650c1a2a7c0ae627233eee64c5be2d71",
       "size": 2203
     },
     {
