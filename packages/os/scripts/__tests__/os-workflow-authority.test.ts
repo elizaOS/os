@@ -1,7 +1,7 @@
 /** Guards the standalone repository's OS release writer and recovery boundaries. */
 
 import { describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -29,6 +29,7 @@ const repositoryRoot = fileURLToPath(new URL("../../../..", import.meta.url));
 const workflowsDirectory = join(repositoryRoot, ".github", "workflows");
 const automaticManifestWorkflow = "elizaos-os-full-release.yml";
 const recoveryWorkflow = "update-os-release-manifest.yml";
+const ripgrepProvisioner = "packages/os/scripts/provision-ripgrep.sh";
 
 function workflowPath(name: string): string {
   return join(workflowsDirectory, name);
@@ -128,8 +129,7 @@ describe("OS release workflow authority", () => {
       /github\.workspace.*\.eliza-source/,
     );
     expect(ripgrepSetup.shell).toBe("bash");
-    expect(ripgrepSetup.run).toContain("version=15.1.0");
-    expect(ripgrepSetup.run).toContain("sha256sum --check");
+    expect(ripgrepSetup.run).toBe(ripgrepProvisioner);
     const ripgrepIndex = linuxSteps.indexOf(ripgrepSetup);
     const verifyLinuxIndex = linuxSteps.findIndex(
       (step) => step.run === "bun run verify:linux",
@@ -165,21 +165,34 @@ describe("OS release workflow authority", () => {
   });
 
   test("release validation provisions ripgrep before Linux metadata checks", () => {
-    const source = readFileSync(workflowPath("elizaos-os-release.yml"), "utf8");
-    const provisionIndex = source.indexOf(
-      "- name: Provision ripgrep for Linux metadata validation",
+    const workflow = parseWorkflow("elizaos-os-release.yml");
+    const steps = workflow.jobs?.["validate-os-release"]?.steps ?? [];
+    const provision = namedJobStep(
+      workflow,
+      "validate-os-release",
+      "Provision ripgrep for Linux metadata validation",
     );
-    const validationIndex = source.indexOf(
-      "- name: Validate Linux live USB metadata",
+    const validation = namedJobStep(
+      workflow,
+      "validate-os-release",
+      "Validate Linux live USB metadata",
     );
 
-    expect(provisionIndex).toBeGreaterThan(0);
-    expect(validationIndex).toBeGreaterThan(provisionIndex);
+    expect(provision.run).toBe(ripgrepProvisioner);
+    expect(steps.indexOf(provision)).toBeGreaterThan(-1);
+    expect(steps.indexOf(validation)).toBeGreaterThan(steps.indexOf(provision));
+  });
+
+  test("one checked provisioner owns the ripgrep release", () => {
+    const provisionerPath = join(repositoryRoot, ripgrepProvisioner);
+    const source = readFileSync(provisionerPath, "utf8");
+
+    expect(statSync(provisionerPath).mode & 0o111).not.toBe(0);
     expect(source).toContain("version=15.1.0");
     expect(source).toContain("X64) target=x86_64-unknown-linux-musl");
     expect(source).toContain("ARM64) target=aarch64-unknown-linux-gnu");
-    expect(source).toContain('sha256sum --check "${archive}.sha256"');
-    expect(source).toContain('echo "${bin_dir}" >> "${GITHUB_PATH}"');
+    expect(source).toContain(`sha256sum --check "\${archive}.sha256"`);
+    expect(source).toContain(`echo "\${bin_dir}" >> "\${GITHUB_PATH}"`);
   });
 
   test("all local reusable workflow calls resolve", () => {
