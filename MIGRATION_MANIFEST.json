@@ -142,8 +142,8 @@
     {
       "path": ".gitignore",
       "type": "file",
-      "sha256": "832b4d287ea4773e02b338cffaadb8e5bd14709176b73d34d5f1a3c8ce2c50c4",
-      "size": 837
+      "sha256": "b9535c724c6b465842e266a53494dcb96a57955283d291497a58f8393badaa94",
+      "size": 1067
     },
     {
       "path": "AGENTS.md",
@@ -2332,8 +2332,8 @@
     {
       "path": "packages/os/linux/elizaos/.gitignore",
       "type": "file",
-      "sha256": "32b2ae5903228557ea25935b5b7d39ccfbfb633bfb30ee8cb89bc15f3fc6f26a",
-      "size": 1330
+      "sha256": "7b3951af85bdc3ed345726e5ff1c2e65fd2b5d8147b5cc748d448a4706735631",
+      "size": 1350
     },
     {
       "path": "packages/os/linux/elizaos/Dockerfile",
@@ -2492,6 +2492,12 @@
       "size": 612
     },
     {
+      "path": "packages/os/linux/elizaos/config/includes.binary/boot/grub/elizaos-splash.png",
+      "type": "file",
+      "sha256": "3dc8fb6c16cf8694800e093dfb85f2e1695094447c775012e7ab938e43327d3b",
+      "size": 22993
+    },
+    {
       "path": "packages/os/linux/elizaos/config/includes.chroot/etc/X11/Xwrapper.config",
       "type": "file",
       "sha256": "cb68c70c4bdea74d110844562f2f6eac02e8337eb0e8ab20b9b0f9cdee9e7fd4",
@@ -2622,6 +2628,60 @@
       "type": "file",
       "sha256": "34d202fa7e3ffac21ec32ab93b4844643374977e8cdde916d96159e8a3fb9509",
       "size": 878
+    },
+    {
+      "path": "packages/os/linux/elizaos/config/includes.chroot/usr/local/lib/elizaos/collect-real-hw-evidence",
+      "type": "file",
+      "sha256": "e4caca802944a7ed54c84854bd516a99d462d33fedf3817ff65ad0dbc37f0d0e",
+      "size": 3736
+    },
+    {
+      "path": "packages/os/linux/elizaos/config/includes.chroot/usr/local/lib/elizaos/electrobun-xinitrc",
+      "type": "file",
+      "sha256": "024db3f5393e9645053c84cf654cdd6d2f4a698cbc7cddc491dba66622573751",
+      "size": 1914
+    },
+    {
+      "path": "packages/os/linux/elizaos/config/includes.chroot/usr/local/lib/elizaos/first-boot.sh",
+      "type": "file",
+      "sha256": "24e198ac2dd17e1e54a880f484c16ea498b3fa7b23d8b0bfad0e64d50b98a95f",
+      "size": 2860
+    },
+    {
+      "path": "packages/os/linux/elizaos/config/includes.chroot/usr/local/lib/elizaos/mount-capture-share",
+      "type": "file",
+      "sha256": "932cf8bda84e23b5a4157aa9065222065d6ccb4d8280f96e98d481c5219d60ca",
+      "size": 715
+    },
+    {
+      "path": "packages/os/linux/elizaos/config/includes.chroot/usr/local/lib/elizaos/start-cage",
+      "type": "file",
+      "sha256": "8d436c24ece0acb4d6ca588ad7d80c3ebdb76ed3ebdc636a76eefacb91f2a944",
+      "size": 4259
+    },
+    {
+      "path": "packages/os/linux/elizaos/config/includes.chroot/usr/local/lib/elizaos/start-chat-overlay",
+      "type": "file",
+      "sha256": "9011ef807e9c90f2c9679a06a5e704cbd964735d5eb910e20c4a470fc72d3f1f",
+      "size": 942
+    },
+    {
+      "path": "packages/os/linux/elizaos/config/includes.chroot/usr/local/lib/elizaos/start-kiosk",
+      "type": "file",
+      "sha256": "e08f4711040cb6eb8017616a9b24f6ce84cbcb88ff5c58952fc338464d7a5327",
+      "size": 3242
+    },
+    {
+      "path": "packages/os/linux/elizaos/config/includes.chroot/usr/local/lib/elizaos/start-launcher",
+      "type": "file",
+      "sha256": "5b2f946e2cf9b237b51869fd8d0210e1f98161ec1d0d1e8392a8af142fca2361",
+      "size": 1111
+    },
+    {
+      "path": "packages/os/linux/elizaos/config/includes.chroot/usr/local/lib/elizaos/start-xorg-kiosk",
+      "type": "file",
+      "sha256": "92eedf28f862162390b446a7276d3d8978276375fabd4455f8a1c337d36cdf48",
+      "size": 1737
     },
     {
       "path": "packages/os/linux/elizaos/config/includes.chroot/usr/share/applications/elizaos.desktop",
@@ -8346,6 +8406,78 @@
       "type": "file",
       "sha256": "2560ae8f7fe71e39706dff60e4e4cc8103026c9aef572dbb23db0e6cc8f897d6",
       "size": 490
+    },
+    {
+      "path": "packages/os/linux/tails/config/chroot_local-includes/usr/share/tails/build/.placeholder",
+      "type": "file",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "packages/os/linux/tails/config/chroot_local-includes/usr/share/tails/build/custom-about-tor/browser-omni.patch",
+      "type": "file",
+      "sha256": "2afacd67f8576b0c8ad5440d38a586e04fb6b959c4121d47d6ddaf0accc830ad",
+      "size": 7788
+    },
+    {
+      "path": "packages/os/linux/tails/config/chroot_local-includes/usr/share/tails/build/custom-about-tor/omni.patch",
+      "type": "file",
+      "sha256": "cf7aa93892c11a9ec0e1b61e5128d2af920d592816ca1911a6942ea9c87e7469",
+      "size": 819
+    },
+    {
+      "path": "packages/os/linux/tails/config/chroot_local-includes/usr/share/tails/build/customize-ublock-assets",
+      "type": "file",
+      "sha256": "7b1cdef1bc43824c30f52d14d8895c96d9fedb0ff83575a31da4e57834fa8476",
+      "size": 2461
+    },
+    {
+      "path": "packages/os/linux/tails/config/chroot_local-includes/usr/share/tails/build/flatpak/org.boum.tails.Platform/metadata",
+      "type": "file",
+      "sha256": "b55ea6a9c299b28f9ce00db50d3e9dca9b3983b3dcfed27d7ceed50983c9d817",
+      "size": 810
+    },
+    {
+      "path": "packages/os/linux/tails/config/chroot_local-includes/usr/share/tails/build/flatpak/org.boum.tails.TorBrowser/metadata",
+      "type": "file",
+      "sha256": "ac31fe84d9de0555042e584f75c1eee11f10d009c89b98bd16028511f3e3e0df",
+      "size": 677
+    },
+    {
+      "path": "packages/os/linux/tails/config/chroot_local-includes/usr/share/tails/build/flatpak/org.boum.tails.TorBrowser/org.boum.tails.TorBrowser.yaml",
+      "type": "file",
+      "sha256": "cdd392c107dcc0c17d338e3799b77706b56535ce74b37ee3bf934b9e29d61271",
+      "size": 212
+    },
+    {
+      "path": "packages/os/linux/tails/config/chroot_local-includes/usr/share/tails/build/flatpak/org.boum.tails.TorBrowser/update-manifest",
+      "type": "file",
+      "sha256": "db9d28dee0573375da2c5e0f38aebb5b3e30934a1aec54beccb719d1552c3099",
+      "size": 1796
+    },
+    {
+      "path": "packages/os/linux/tails/config/chroot_local-includes/usr/share/tails/build/group",
+      "type": "file",
+      "sha256": "4380e83bf150449e05709e45246ed642b75b6d88b3163da10bc408a0f5d8d630",
+      "size": 1002
+    },
+    {
+      "path": "packages/os/linux/tails/config/chroot_local-includes/usr/share/tails/build/mksquashfs-excludes",
+      "type": "file",
+      "sha256": "f9b822d8ab0c9fe60a5291cd534fbae85055e7c0dcd5204c750f8cf154c864b6",
+      "size": 346
+    },
+    {
+      "path": "packages/os/linux/tails/config/chroot_local-includes/usr/share/tails/build/passwd",
+      "type": "file",
+      "sha256": "64357cf87482d2d48c704f9f9b594691d643715239805e232ace4a363e380b2c",
+      "size": 2351
+    },
+    {
+      "path": "packages/os/linux/tails/config/chroot_local-includes/usr/share/tails/build/plymouth-theme.diff",
+      "type": "file",
+      "sha256": "eaddf8c6922ef62e92c0a0aa553b20c28a79c8539a7b1a990a9ce1de9260da19",
+      "size": 274
     },
     {
       "path": "packages/os/linux/tails/config/chroot_local-includes/usr/share/tails/chroot-browsers/common/prefs.js",
