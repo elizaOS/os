@@ -135,12 +135,14 @@ sh -n \
 
 node --check scripts/prepare-elizaos-app-overlay.mjs
 node --check scripts/generate-release-evidence.mjs
+node --check scripts/runtime-supplements.mjs
 node --check scripts/validate-model-catalog.mjs
 node --check scripts/validate-runtime-overlay.mjs
 node --check tails/config/chroot_local-includes/usr/local/lib/elizaos/renderer-server.mjs
 grep -q 'ELIZAOS_APP_ARTIFACT' Justfile
-grep -q 'ensure_plugin_runtime_dist "plugins/plugin-health" package-js' Justfile
-grep -q 'ensure_plugin_runtime_dist "plugins/plugin-calendly" tsup-index' Justfile
+node scripts/runtime-supplements.mjs \
+    --format tsv \
+    --source-root "${REPO_ROOT}" >/dev/null
 python3 -m json.tool schemas/update-manifest.schema.json >/dev/null
 python3 -m json.tool schemas/model-catalog.schema.json >/dev/null
 python3 - \
@@ -1215,33 +1217,45 @@ for (const [path, target] of [
   }
 }
 
-for (const packageName of [
-  "@elizaos/plugin-whatsapp",
-  "@elizaos/plugin-streaming",
-  "@elizaos/plugin-x402",
-  "@elizaos/plugin-mcp",
-  "@elizaos/plugin-imessage",
-  "@elizaos/plugin-capacitor-bridge",
-  "@elizaos/plugin-native-inference",
-  "@elizaos/plugin-background-runner",
-  "@elizaos/plugin-mlx",
+for (const root of [
+  "tails/config/chroot_local-includes/usr/share/elizaos/elizaos-app",
+  "tails/chroot/opt/elizaos",
 ]) {
-  for (const root of [
-    "tails/config/chroot_local-includes/usr/share/elizaos/elizaos-app",
-    "tails/chroot/opt/elizaos",
-  ]) {
-    if (!fs.existsSync(root)) continue;
-    const packagePath = `${root}/Resources/app/eliza-dist/node_modules/${packageName}/package.json`;
-    const indexPath = `${root}/Resources/app/eliza-dist/node_modules/${packageName}/index.js`;
+  if (!fs.existsSync(root)) continue;
+  const overlayManifestPath = `${root}/Resources/app/elizaos-live-overlay-manifest.json`;
+  const overlayManifest = JSON.parse(fs.readFileSync(overlayManifestPath, "utf8"));
+  const optionalPluginStubs = overlayManifest.generated?.optionalPluginStubs;
+  if (!Array.isArray(optionalPluginStubs) || optionalPluginStubs.length === 0) {
+    throw new Error(`${overlayManifestPath}: optional plugin stub inventory is missing`);
+  }
+  for (const stub of optionalPluginStubs) {
+    const expectedPackagePath = `Resources/app/eliza-dist/node_modules/${stub.packageName}/package.json`;
+    const expectedIndexPath = `Resources/app/eliza-dist/node_modules/${stub.packageName}/index.js`;
+    if (
+      stub.packagePath !== expectedPackagePath ||
+      stub.indexPath !== expectedIndexPath
+    ) {
+      throw new Error(
+        `${overlayManifestPath}: ${stub.packageName} optional plugin stub paths are malformed`,
+      );
+    }
+    const packagePath = `${root}/${stub.packagePath}`;
+    const indexPath = `${root}/${stub.indexPath}`;
     const pkg = JSON.parse(fs.readFileSync(packagePath, "utf8"));
-    if (pkg.version === "0.0.0-elizaos-live-stub") {
-      if (pkg.type !== "module") {
-        throw new Error(`${packagePath}: optional desktop connector stub must be ESM`);
-      }
-      const index = fs.readFileSync(indexPath, "utf8");
-      if (!index.includes("export default undefined")) {
-        throw new Error(`${indexPath}: optional desktop connector stub is malformed`);
-      }
+    if (typeof stub.generated !== "boolean") {
+      throw new Error(
+        `${overlayManifestPath}: ${stub.packageName} optional plugin generated flag is malformed`,
+      );
+    }
+    if (pkg.name !== stub.packageName || pkg.version !== stub.packageVersion) {
+      throw new Error(`${packagePath}: optional plugin stub manifest is malformed`);
+    }
+    if (!stub.generated) continue;
+    if (pkg.version !== stub.stubVersion || pkg.type !== "module") {
+      throw new Error(`${packagePath}: generated optional plugin stub is malformed`);
+    }
+    if (!fs.existsSync(indexPath)) {
+      throw new Error(`${indexPath}: optional plugin stub entrypoint is missing`);
     }
   }
 }
@@ -1262,15 +1276,13 @@ for (const root of [
   if (appControlPackage.main !== "./src/index.ts") {
     throw new Error(`${appControlPackagePath}: app-control must be source-staged`);
   }
-  for (const packageName of [
-    "@elizaos/plugin-app-manager",
-    "@elizaos/plugin-calendly",
-    "@elizaos/plugin-health",
-    "@elizaos/plugin-registry",
-  ]) {
-    const distIndex = `${nodeModules}/${packageName}/dist/index.js`;
-    if (!fs.existsSync(distIndex)) {
-      throw new Error(`${distIndex}: required runtime plugin dist is missing`);
+  const runtimeSupplements = JSON.parse(
+    fs.readFileSync("runtime-supplements.json", "utf8"),
+  ).packages;
+  for (const { packageName, requiredEntry } of runtimeSupplements) {
+    const requiredPath = `${nodeModules}/${packageName}/${requiredEntry}`;
+    if (!fs.existsSync(requiredPath)) {
+      throw new Error(`${requiredPath}: required runtime supplement is missing`);
     }
   }
   const forcedLiveStubs = new Map([
@@ -1335,8 +1347,12 @@ for (const root of [
     if (!index.includes("<title>elizaOS</title>")) {
       throw new Error(`${indexPath}: browser shell title must be elizaOS`);
     }
-    if (index.includes("<title>elizaOS</title>") || index.includes("app.elizaos.ai")) {
-      throw new Error(`${indexPath}: browser shell metadata still contains elizaOS branding`);
+    if (
+      index.includes("<title>Eliza</title>") ||
+      index.includes("<title>Milady</title>") ||
+      index.includes("app.elizaos.ai")
+    ) {
+      throw new Error(`${indexPath}: browser shell contains stale upstream metadata`);
     }
   }
   if (fs.existsSync(manifestPath)) {
@@ -1433,20 +1449,6 @@ for (const root of [
   const embeddingPresetsPath = `${root}/Resources/app/eliza-dist/node_modules/@elizaos/plugin-local-inference/src/runtime/embedding-presets.ts`;
   if (!fs.existsSync(embeddingPresetsPath)) {
     throw new Error(`${embeddingPresetsPath}: missing packaged embedding presets source`);
-  }
-  const workerRuntimePackageJsonPath = `${root}/Resources/app/eliza-dist/node_modules/@elizaos/plugin-worker-runtime/package.json`;
-  const workerRuntimePackageJson = JSON.parse(fs.readFileSync(workerRuntimePackageJsonPath, "utf8"));
-  if (workerRuntimePackageJson.exports?.["."]?.import !== "./src/index.ts") {
-    throw new Error(`${workerRuntimePackageJsonPath}: packaged worker runtime must resolve to source`);
-  }
-  const workerRuntimeErrorPath = `${root}/Resources/app/eliza-dist/node_modules/@elizaos/plugin-worker-runtime/src/error.ts`;
-  if (!fs.existsSync(workerRuntimeErrorPath)) {
-    throw new Error(`${workerRuntimeErrorPath}: missing packaged worker runtime source`);
-  }
-  const remoteManifestPackageJsonPath = `${root}/Resources/app/eliza-dist/node_modules/@elizaos/plugin-remote-manifest/package.json`;
-  const remoteManifestPackageJson = JSON.parse(fs.readFileSync(remoteManifestPackageJsonPath, "utf8"));
-  if (remoteManifestPackageJson.exports?.["."]?.import !== "./src/index.ts") {
-    throw new Error(`${remoteManifestPackageJsonPath}: packaged remote manifest must resolve to source`);
   }
   const sqlPackageJsonPath = `${root}/Resources/app/eliza-dist/node_modules/@elizaos/plugin-sql/package.json`;
   const sqlPackageJson = JSON.parse(fs.readFileSync(sqlPackageJsonPath, "utf8"));

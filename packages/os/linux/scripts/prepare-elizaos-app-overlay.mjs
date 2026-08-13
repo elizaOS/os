@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { loadRuntimeSupplements } from "./runtime-supplements.mjs";
 
 const args = process.argv.slice(2);
 
@@ -310,7 +311,7 @@ export const personalAssistantPlugin = {
   services: [],
   routes: [],
 };
-export const personalAssistantPlugin = {
+export const personalAssistantRoutesPlugin = {
   name: "lifeops-routes",
   routes: [],
 };
@@ -884,9 +885,10 @@ const sourceRuntimePackages = [
   ["@elizaos/plugin-sql", "plugins/plugin-sql"],
   ["@elizaos/plugin-video", "plugins/plugin-video"],
   ["@elizaos/plugin-workflow", "plugins/plugin-workflow"],
-  ["@elizaos/plugin-remote-manifest", "packages/plugin-remote-manifest"],
-  ["@elizaos/plugin-worker-runtime", "packages/plugin-worker-runtime"],
 ];
+const supplementalRuntimePackages = loadRuntimeSupplements({
+  sourceRoot: elizaSourceRoot,
+});
 
 function includeRuntimePackageFile(relativePath) {
   const parts = relativePath.split(path.sep);
@@ -945,36 +947,41 @@ function syncWorkspaceRuntimePackages({ checkOnly }) {
       stale;
   }
 
-  for (const [packageName, relativeSource] of [
-    ["@elizaos/plugin-calendly", "plugins/plugin-calendly"],
-    ["@elizaos/plugin-health", "plugins/plugin-health"],
-    ["@elizaos/plugin-app-manager", "plugins/plugin-app-manager"],
-    ["@elizaos/plugin-registry", "plugins/plugin-registry"],
-  ]) {
+  for (const {
+    packageName,
+    sourcePath: relativeSource,
+    requiredEntry,
+  } of supplementalRuntimePackages) {
     const packageSource = path.join(elizaSourceRoot, relativeSource);
-    if (!packageSource || !fs.existsSync(packageSource)) continue;
+    if (!fs.existsSync(packageSource)) {
+      throw new Error(
+        `${packageName} source package is missing: ${packageSource}`,
+      );
+    }
     const targetDir = packageDirectory(packageName);
     const sourcePackageJson = path.join(packageSource, "package.json");
     const sourceDistDir = path.join(packageSource, "dist");
+    const sourceRequiredEntry = path.join(packageSource, requiredEntry);
+    if (!fs.existsSync(sourceRequiredEntry)) {
+      throw new Error(
+        `${packageName} required runtime entry is missing: ${sourceRequiredEntry}`,
+      );
+    }
     if (!fs.existsSync(targetDir)) stale = true;
     if (!checkOnly) fs.mkdirSync(targetDir, { recursive: true });
-    if (fs.existsSync(sourcePackageJson)) {
-      const targetPackageJson = path.join(targetDir, "package.json");
-      const sourceContent = fs.readFileSync(sourcePackageJson, "utf8");
-      if (
-        !fs.existsSync(targetPackageJson) ||
-        fs.readFileSync(targetPackageJson, "utf8") !== sourceContent
-      ) {
-        stale = true;
-        if (!checkOnly) fs.writeFileSync(targetPackageJson, sourceContent);
-      }
+    const targetPackageJson = path.join(targetDir, "package.json");
+    const sourceContent = fs.readFileSync(sourcePackageJson, "utf8");
+    if (
+      !fs.existsSync(targetPackageJson) ||
+      fs.readFileSync(targetPackageJson, "utf8") !== sourceContent
+    ) {
+      stale = true;
+      if (!checkOnly) fs.writeFileSync(targetPackageJson, sourceContent);
     }
-    if (fs.existsSync(sourceDistDir)) {
-      stale =
-        syncDirectoryContents(sourceDistDir, path.join(targetDir, "dist"), {
-          checkOnly,
-        }) || stale;
-    }
+    stale =
+      syncDirectoryContents(sourceDistDir, path.join(targetDir, "dist"), {
+        checkOnly,
+      }) || stale;
   }
 
   return stale;

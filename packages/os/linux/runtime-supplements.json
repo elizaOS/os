@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "packages": [
+    {
+      "packageName": "@elizaos/plugin-app-manager",
+      "sourcePath": "plugins/plugin-app-manager",
+      "buildMode": "bun-runtime-index",
+      "requiredEntry": "dist/index.js"
+    },
+    {
+      "packageName": "@elizaos/plugin-health",
+      "sourcePath": "plugins/plugin-health",
+      "buildMode": "package-js",
+      "requiredEntry": "dist/index.js"
+    },
+    {
+      "packageName": "@elizaos/plugin-registry",
+      "sourcePath": "plugins/plugin-registry",
+      "buildMode": "package-js",
+      "requiredEntry": "dist/index.js"
+    }
+  ]
+}
