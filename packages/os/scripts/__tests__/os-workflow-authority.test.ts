@@ -8,10 +8,13 @@ import { fileURLToPath } from "node:url";
 interface WorkflowStep {
   name?: string;
   run?: string;
+  shell?: string;
   uses?: string;
+  with?: Record<string, string>;
 }
 
 interface WorkflowJob {
+  env?: Record<string, string>;
   steps?: WorkflowStep[];
   uses?: string;
 }
@@ -58,7 +61,91 @@ function namedStep(workflow: Workflow, name: string): WorkflowStep {
   return step as WorkflowStep;
 }
 
+function namedJobStep(
+  workflow: Workflow,
+  jobName: string,
+  name: string,
+): WorkflowStep {
+  const step = workflow.jobs?.[jobName]?.steps?.find(
+    (candidate) => candidate.name === name,
+  );
+  expect(step).toBeDefined();
+  return step as WorkflowStep;
+}
+
 describe("OS release workflow authority", () => {
+  test("standalone verification owns its Bun and Eliza source inputs", () => {
+    const workflow = parseWorkflow("ci.yml");
+    const packageMetadata = JSON.parse(
+      readFileSync(join(repositoryRoot, "package.json"), "utf8"),
+    ) as { engines?: { node?: string }; packageManager?: string };
+    const verifyNodeSetup = namedJobStep(workflow, "verify", "Setup Node 24");
+    const verifyBunSetup = namedJobStep(
+      workflow,
+      "verify",
+      "Setup Bun from packageManager",
+    );
+    const sourceCheckout = namedJobStep(
+      workflow,
+      "linux-static-smoke",
+      "Checkout application source",
+    );
+    const linuxBunSetup = namedJobStep(
+      workflow,
+      "linux-static-smoke",
+      "Setup Bun from packageManager",
+    );
+    const linuxNodeSetup = namedJobStep(
+      workflow,
+      "linux-static-smoke",
+      "Setup Node 24",
+    );
+    const ripgrepSetup = namedJobStep(
+      workflow,
+      "linux-static-smoke",
+      "Provision ripgrep for Linux static smoke",
+    );
+    const linuxJob = workflow.jobs?.["linux-static-smoke"];
+    const linuxSteps = linuxJob?.steps ?? [];
+
+    expect(packageMetadata.packageManager).toBe("bun@1.3.14");
+    expect(packageMetadata.packageManager).toMatch(/^bun@\d+\.\d+\.\d+$/);
+    expect(packageMetadata.engines?.node).toBe(">=24.0.0");
+    expect(verifyNodeSetup.uses).toMatch(/^actions\/setup-node@[0-9a-f]{40}$/);
+    expect(linuxNodeSetup.uses).toBe(verifyNodeSetup.uses);
+    expect(verifyNodeSetup.with?.["node-version"]).toBe("24");
+    expect(linuxNodeSetup.with?.["node-version"]).toBe("24");
+    expect(verifyBunSetup.uses).toMatch(/^oven-sh\/setup-bun@[0-9a-f]{40}$/);
+    expect(linuxBunSetup.uses).toBe(verifyBunSetup.uses);
+    expect(verifyBunSetup.with?.["bun-version-file"]).toBe("package.json");
+    expect(linuxBunSetup.with?.["bun-version-file"]).toBe("package.json");
+    expect(sourceCheckout.with).toMatchObject({
+      repository: "elizaOS/eliza",
+      ref: "f6d8f8ee7f3006693113bbc313979724e603b355",
+      path: ".eliza-source",
+    });
+    expect(linuxJob?.env?.ELIZAOS_ELIZA_ROOT).toMatch(
+      /github\.workspace.*\.eliza-source/,
+    );
+    expect(ripgrepSetup.shell).toBe("bash");
+    expect(ripgrepSetup.run).toContain("version=15.1.0");
+    expect(ripgrepSetup.run).toContain("sha256sum --check");
+    const ripgrepIndex = linuxSteps.indexOf(ripgrepSetup);
+    const verifyLinuxIndex = linuxSteps.findIndex(
+      (step) => step.run === "bun run verify:linux",
+    );
+    expect(ripgrepIndex).toBeGreaterThan(-1);
+    expect(verifyLinuxIndex).toBeGreaterThan(ripgrepIndex);
+
+    const cuttlefish = parseWorkflow("elizaos-cuttlefish.yml");
+    const cuttlefishBunSetup = Object.values(cuttlefish.jobs ?? {})
+      .flatMap((job) => job.steps ?? [])
+      .find((step) => step.uses === verifyBunSetup.uses);
+    expect(cuttlefishBunSetup?.with?.["bun-version-file"]).toBe(
+      ".eliza-source/package.json",
+    );
+  });
+
   test("every checked-in AOSP brand resolves to an OS-owned vendor tree", () => {
     const brandDirectory = join(repositoryRoot, "scripts", "distro-android");
     const configs = readdirSync(brandDirectory).filter((entry) =>
@@ -78,10 +165,7 @@ describe("OS release workflow authority", () => {
   });
 
   test("release validation provisions ripgrep before Linux metadata checks", () => {
-    const source = readFileSync(
-      workflowPath("elizaos-os-release.yml"),
-      "utf8",
-    );
+    const source = readFileSync(workflowPath("elizaos-os-release.yml"), "utf8");
     const provisionIndex = source.indexOf(
       "- name: Provision ripgrep for Linux metadata validation",
     );
@@ -143,10 +227,8 @@ describe("OS release workflow authority", () => {
       ).run,
     ).toContain("release-asset-inventory.mjs capture");
     expect(
-      namedStep(
-        workflow,
-        "Download and verify the captured release asset set",
-      ).run,
+      namedStep(workflow, "Download and verify the captured release asset set")
+        .run,
     ).toContain("release-asset-inventory.mjs verify");
     expect(
       namedStep(workflow, "Open the draft checksum recovery pull request").run,

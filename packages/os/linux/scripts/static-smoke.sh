@@ -261,27 +261,19 @@ if [ "${SOURCE_ONLY}" != "1" ]; then
         exit 1
     fi
 fi
-# StartupShell is a SHARED app-shell component (@elizaos/ui), and the elizaOS OS
-# ISO bundles it verbatim — there is no downstream OS theme override for the
-# boot splash. Per the per-surface accent system, the *app* surface owns the
-# splash and it uses the launch token whose current intentional fallback is
-# #000000 — the home shader's black base field, so boot flows seamlessly into
-# the home ember glow (#9565). OS chrome such as the greeter/dashboard
-# metadata/failure shell stays on the blue/white palette; first-run stays
-# inside the launch surface. So this gate asserts the splash's current
-# intentional launch token and the neutral bootstrap-gate surface, and only
-# rejects the genuinely-stale hardcoded dark/gradient/glow styling from the
-# pre-redesign shell (the token fallback is a host-overridable seam, not a
-# hardcoded surface).
+# StartupShell is a shared app-shell component that the ISO bundles verbatim,
+# so the shared UI owns the launch-token defaults and the OS has no downstream
+# theme override. Gate both host-supplied launch tokens and the neutral
+# bootstrap surface while rejecting the stale hardcoded dark/gradient styling.
 if rg -n 'bg-\[#08080a\]|bg-\[#0a0a0a\]|radial-gradient|blur-\[' \
     "${REPO_ROOT}/packages/ui/src/components/shell/StartupShell.tsx"
 then
     echo "Startup shell must not reintroduce the old dark/gradient splash." >&2
     exit 1
 fi
-grep -Fq 'bg-[var(--launch-bg,#000000)]' \
+grep -Fq 'bg-[var(--launch-bg)] text-[var(--launch-foreground)]' \
     "${REPO_ROOT}/packages/ui/src/components/shell/StartupShell.tsx"
-grep -q 'bg-\[#F7F6F4\]' \
+grep -Fq 'bg-bg text-txt' \
     "${REPO_ROOT}/packages/ui/src/components/shell/StartupShell.tsx"
 if rg -n 'bg-danger|text-danger|variant="danger"|radial-gradient' \
     "${REPO_ROOT}/packages/ui/src/components/shell/StartupFailureView.tsx"
