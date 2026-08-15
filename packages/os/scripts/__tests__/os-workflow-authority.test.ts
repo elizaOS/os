@@ -76,6 +76,23 @@ function namedJobStep(
 }
 
 describe("OS release workflow authority", () => {
+  test("optional Hetzner runners are opt-in and hosted runners are the default", () => {
+    const optInExpression =
+      "vars.HETZNER_FLEET_ONLINE == 'true' && '[\"self-hosted\",\"hetzner-robot\"]' || '[\"ubuntu-24.04\"]'";
+    const hetznerWorkflows = workflowNames().filter((name) =>
+      readFileSync(workflowPath(name), "utf8").includes(
+        "HETZNER_FLEET_ONLINE",
+      ),
+    );
+
+    expect(hetznerWorkflows.length).toBeGreaterThan(0);
+    for (const name of hetznerWorkflows) {
+      const source = readFileSync(workflowPath(name), "utf8");
+      expect(source).toContain(optInExpression);
+      expect(source).not.toContain("HETZNER_FLEET_ONLINE == 'false'");
+    }
+  });
+
   test("Linux ISO release preflights immutable amd64 boot inputs", () => {
     const workflow = parseWorkflow("build-linux-iso.yml");
     const job = workflow.jobs?.["build-iso"];
