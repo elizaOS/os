@@ -71,6 +71,16 @@ That compiler path requires the pinned Zig 0.13 toolchain; the workflow
 provisions and checksum-verifies it, while local builders must put Zig 0.13 on
 `PATH`.
 
+`build:android:system` deliberately emits an unsigned vendor input. Soong
+signs that input with the product platform certificate and writes the
+installable result to
+`$OUT_DIR/target/product/<product>/system/priv-app/Eliza/Eliza.apk` (with
+`$OUT_DIR` defaulting to `<aosp-root>/out`). The Pixel deployment helper only
+sideloads that exact product output; the raw `vendor/eliza/.../Eliza.apk`
+cannot be installed directly. A stock Pixel also will not accept an elizaOS
+platform-signed privileged package as a substitute for flashing the matching
+OS image.
+
 `scripts/aosp/` contains device deployment and Cuttlefish runtime smoke
 orchestration. App compilation and agent-payload staging remain in the
 external `eliza` application repository; OS scripts locate that checkout via

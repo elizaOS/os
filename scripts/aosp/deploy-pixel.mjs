@@ -117,6 +117,29 @@ export function parseArgs(argv) {
   return args;
 }
 
+export function resolveBuiltPrivilegedApk({
+  aospRoot,
+  productName,
+  env = process.env,
+}) {
+  if (!aospRoot) throw new Error("aospRoot is required");
+  if (!productName) throw new Error("productName is required");
+  const configuredOut = env.OUT_DIR?.trim() || "out";
+  const outRoot = path.isAbsolute(configuredOut)
+    ? configuredOut
+    : path.resolve(aospRoot, configuredOut);
+  return path.join(
+    outRoot,
+    "target",
+    "product",
+    productName,
+    "system",
+    "priv-app",
+    "Eliza",
+    "Eliza.apk",
+  );
+}
+
 function run(cmd, cmdArgs, opts = {}) {
   const display = `${cmd} ${cmdArgs.join(" ")}`;
   console.log(
@@ -273,12 +296,12 @@ async function main(argv = process.argv.slice(2)) {
   const pkg = brand.packageName;
 
   // ── 3. adb install -r -g the APK ─────────────────────────────────────────
-  // The build-aosp step writes the privileged APK into the vendor tree; the
-  // file name follows `<appName>-*.apk`. We let `adb install-multiple` /
-  // `install` find it, falling back to a glob search under the AOSP vendor
-  // priv-app dir. For --skip-aosp-build deploys to a cvd that already has the
-  // app, step 3 is a no-op (the app is already installed) — handled by
-  // continuing on a "device already has the package" check.
+  // The vendor input APK is intentionally unsigned: Soong signs it with the
+  // product platform certificate while assembling the image. Never sideload
+  // that raw input, and never select an arbitrary recently-built priv-app APK.
+  // Install only the exact platform-signed module output for this product.
+  // For --skip-aosp-build deploys to an image that already has the app, step 3
+  // is a no-op.
   console.log("[deploy-pixel] step 3/5: adb install");
   if (!args.dryRun) {
     const pmList = run(
@@ -289,24 +312,11 @@ async function main(argv = process.argv.slice(2)) {
     const alreadyInstalled = pmList.stdout?.includes(`package:${pkg}`);
     let apkPath = null;
     if (args.aospRoot) {
-      // Best-effort: find the freshly-built privileged APK in the AOSP tree.
-      const findRes = spawnSync(
-        "find",
-        [
-          args.aospRoot,
-          "-path",
-          "*priv-app*",
-          "-name",
-          "*.apk",
-          "-newermt",
-          "-1 hour",
-        ],
-        { encoding: "utf8" },
-      );
-      apkPath = (findRes.stdout || "")
-        .split("\n")
-        .map((l) => l.trim())
-        .find((l) => l && fs.existsSync(l));
+      const candidate = resolveBuiltPrivilegedApk({
+        aospRoot: args.aospRoot,
+        productName: brand.productName,
+      });
+      if (fs.existsSync(candidate)) apkPath = candidate;
     }
     if (apkPath) {
       run("adb", adbArgs(device, ["install", "-r", "-g", apkPath]), {});
@@ -315,9 +325,16 @@ async function main(argv = process.argv.slice(2)) {
         `[deploy-pixel]   ${pkg} already installed and no fresh APK found — keeping the on-device build.`,
       );
     } else {
+      const expectedApk = args.aospRoot
+        ? resolveBuiltPrivilegedApk({
+            aospRoot: args.aospRoot,
+            productName: brand.productName,
+          })
+        : "<aosp-root>/out/target/product/<product>/system/priv-app/Eliza/Eliza.apk";
       throw new Error(
         `[deploy-pixel] ${pkg} is not installed and no built APK was found. ` +
-          "Run with --aosp-root to build + install it, or push the privileged APK manually.",
+          `Expected the platform-signed output at ${expectedApk}. ` +
+          "Build the AOSP product first; the unsigned vendor input cannot be sideloaded.",
       );
     }
   }
