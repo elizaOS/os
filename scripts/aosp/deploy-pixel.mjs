@@ -44,9 +44,9 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import {
-  loadAospVariantConfig,
-  resolveAppConfigPath,
-} from "./lib/load-variant-config.mjs";
+  DEFAULT_BRAND_CONFIG,
+  loadBrandConfig,
+} from "../distro-android/brand-config.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const osRepoRoot = path.resolve(here, "../..");
@@ -54,8 +54,12 @@ const repoRoot = path.resolve(
   process.env.ELIZAOS_ELIZA_ROOT ?? path.join(osRepoRoot, ".eliza-source"),
 );
 const appAospScripts = path.join(repoRoot, "packages/app-core/scripts/aosp");
+const androidAgentAssets = path.join(
+  repoRoot,
+  "packages/app-core/platforms/android/app/src/main/assets/agent",
+);
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const args = {
     aospRoot: null,
     abi: "arm64-v8a",
@@ -65,7 +69,7 @@ function parseArgs(argv) {
     voice: false,
     jobs: null,
     dryRun: false,
-    appConfig: null,
+    brandConfig: DEFAULT_BRAND_CONFIG,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -73,7 +77,7 @@ function parseArgs(argv) {
     else if (a === "--abi") args.abi = argv[++i];
     else if (a === "--device") args.device = argv[++i];
     else if (a === "--jobs") args.jobs = Number.parseInt(argv[++i], 10);
-    else if (a === "--app-config") args.appConfig = argv[++i];
+    else if (a === "--brand-config") args.brandConfig = argv[++i];
     else if (a === "--skip-libllama") args.skipLibllama = true;
     else if (a === "--skip-aosp-build") args.skipAospBuild = true;
     else if (a === "--voice") args.voice = true;
@@ -82,7 +86,7 @@ function parseArgs(argv) {
       console.log(
         "Usage: node scripts/aosp/deploy-pixel.mjs " +
           "[--aosp-root <DIR>] [--abi arm64-v8a|x86_64|riscv64] [--device <serial>] " +
-          "[--skip-libllama] [--skip-aosp-build] [--voice] [--jobs N] [--dry-run]",
+          "[--brand-config <PATH>] [--skip-libllama] [--skip-aosp-build] [--voice] [--jobs N] [--dry-run]",
       );
       process.exit(0);
     } else {
@@ -152,6 +156,7 @@ function listAdbDevices() {
 
 async function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
+  const brand = loadBrandConfig(args.brandConfig);
   // arm64 keeps its Vulkan-fused default (real-phone deploy path). x86_64
   // and riscv64 stay on CPU-fused — neither has Android Vulkan wired in
   // compile-libllama.mjs yet (parseAndroidTarget refuses
@@ -169,7 +174,14 @@ async function main(argv = process.argv.slice(2)) {
   // ── 1. Build the fused libllama + libelizainference ──────────────────────
   if (!args.skipLibllama) {
     console.log("[deploy-pixel] step 1/5: build fused libllama for", args.abi);
-    const libllamaArgs = ["--abi", args.abi];
+    const inferenceTargets = ["android-arm64-vulkan-fused", target].filter(
+      (candidate, index, values) => values.indexOf(candidate) === index,
+    );
+    const libllamaArgs = inferenceTargets.flatMap((candidate) => [
+      "--target",
+      candidate,
+    ]);
+    libllamaArgs.unshift("--assets-dir", androidAgentAssets);
     if (args.jobs) libllamaArgs.push("--jobs", String(args.jobs));
     if (args.dryRun) {
       console.log(
@@ -184,9 +196,13 @@ async function main(argv = process.argv.slice(2)) {
       // Also build the in-process speculative shim (path b) — compile-shim.mjs
       // picks up the speculative-shim source alongside the seccomp + pointer
       // shims; --skip-if-present so re-runs are cheap.
-      run("node", [path.join(appAospScripts, "compile-shim.mjs"), "--skip-if-present"], {
-        allowFail: true,
-      });
+      run(
+        "node",
+        [path.join(appAospScripts, "compile-shim.mjs"), "--skip-if-present"],
+        {
+          allowFail: true,
+        },
+      );
     }
   } else {
     console.log("[deploy-pixel] step 1/5: --skip-libllama → reuse last build");
@@ -205,23 +221,38 @@ async function main(argv = process.argv.slice(2)) {
       path.join(osRepoRoot, "scripts/distro-android/build-aosp.mjs"),
       "--aosp-root",
       args.aospRoot,
+      "--brand-config",
+      brand.brandConfigPath,
       "--rebuild-privileged-apk",
-      "--skip-libllama", // step 1 already did it
     ];
     if (args.jobs) aospArgs.push("--jobs", String(args.jobs));
-    if (args.appConfig) aospArgs.push("--app-config", args.appConfig);
     if (args.dryRun) {
       console.log(
         `[deploy-pixel] (dry-run) would run: node ${aospArgs.join(" ")}`,
       );
     } else {
-      run("node", aospArgs, {});
+      run("node", aospArgs, {
+        env: {
+          ELIZA_MTP_ANDROID_LIBDIR: path.join(androidAgentAssets, "arm64-v8a"),
+          ELIZA_MTP_ANDROID_LIBDIR_X86_64: path.join(
+            androidAgentAssets,
+            "x86_64",
+          ),
+          ELIZA_MTP_ANDROID_LIBDIR_RISCV64: path.join(
+            androidAgentAssets,
+            "riscv64",
+          ),
+          ...(args.abi === "riscv64"
+            ? {}
+            : { ELIZA_BUN_RISCV64_OPTIONAL: "1" }),
+        },
+      });
     }
   } else {
     console.log("[deploy-pixel] step 2/5: --skip-aosp-build → reuse last APK");
   }
 
-  // ── resolve device + the package name from app.config ────────────────────
+  // ── resolve device + package name from the OS-owned brand config ─────────
   let device = args.device;
   if (!device && !args.dryRun) {
     const devices = listAdbDevices();
@@ -239,17 +270,7 @@ async function main(argv = process.argv.slice(2)) {
     device = devices[0];
   }
 
-  const appConfigPath = resolveAppConfigPath({
-    repoRoot,
-    flagValue: args.appConfig,
-  });
-  const variant = loadAospVariantConfig({ appConfigPath });
-  const pkg = variant?.aosp?.packageName || variant?.packageName;
-  if (!pkg) {
-    throw new Error(
-      `[deploy-pixel] could not read aosp.packageName from ${appConfigPath}`,
-    );
-  }
+  const pkg = brand.packageName;
 
   // ── 3. adb install -r -g the APK ─────────────────────────────────────────
   // The build-aosp step writes the privileged APK into the vendor tree; the
@@ -324,7 +345,7 @@ async function main(argv = process.argv.slice(2)) {
   if (args.dryRun) {
     console.log(
       `[deploy-pixel] (dry-run) would run: node scripts/aosp/smoke-cuttlefish.mjs` +
-        (args.appConfig ? ` --app-config ${args.appConfig}` : ""),
+        ` --package-name ${pkg} --app-name ${brand.appName}`,
     );
     if (args.voice) {
       console.log(
@@ -336,8 +357,13 @@ async function main(argv = process.argv.slice(2)) {
     console.log("[deploy-pixel] (dry-run) complete — 5 steps queued, 0 spent.");
     return;
   }
-  const smokeArgs = [path.join(here, "smoke-cuttlefish.mjs")];
-  if (args.appConfig) smokeArgs.push("--app-config", args.appConfig);
+  const smokeArgs = [
+    path.join(here, "smoke-cuttlefish.mjs"),
+    "--package-name",
+    pkg,
+    "--app-name",
+    brand.appName,
+  ];
   const smoke = run("node", smokeArgs, { allowFail: true });
   let ok = smoke.status === 0;
 
@@ -405,4 +431,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   });
 }
 
-export { main, parseArgs };
+export { main };

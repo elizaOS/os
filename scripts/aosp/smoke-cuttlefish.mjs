@@ -630,8 +630,14 @@ export async function runSmoke({
   return results;
 }
 
-function parseSmokeArgs(argv) {
-  const out = { json: false, appConfigPath: null, expectedAbi: null };
+export function parseSmokeArgs(argv) {
+  const out = {
+    json: false,
+    appConfigPath: null,
+    packageName: null,
+    appName: null,
+    expectedAbi: null,
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--json") {
@@ -650,9 +656,17 @@ function parseSmokeArgs(argv) {
       }
       out.expectedAbi = value;
       i += 1;
+    } else if (arg === "--package-name" || arg === "--app-name") {
+      const value = argv[i + 1];
+      if (!value || value.startsWith("--")) {
+        throw new Error(`${arg} requires a value`);
+      }
+      if (arg === "--package-name") out.packageName = value;
+      else out.appName = value;
+      i += 1;
     } else if (arg === "-h" || arg === "--help") {
       console.log(
-        "Usage: node scripts/aosp/smoke-cuttlefish.mjs [--json] [--app-config <PATH>] [--expected-abi <ABI>]",
+        "Usage: node scripts/aosp/smoke-cuttlefish.mjs [--json] [--app-config <PATH> | --package-name <ID> [--app-name <NAME>]] [--expected-abi <ABI>]",
       );
       process.exit(0);
     } else {
@@ -663,25 +677,34 @@ function parseSmokeArgs(argv) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
-  const { json: wantJson, appConfigPath, expectedAbi } = parseSmokeArgs(argv);
-  const cfgPath = resolveAppConfigPath({ repoRoot, flagValue: appConfigPath });
-  if (!fs.existsSync(cfgPath)) {
-    throw new Error(
-      `[smoke-cuttlefish] app.config.ts not found at ${cfgPath}.`,
-    );
-  }
-  const variant = loadAospVariantConfig({ appConfigPath: cfgPath });
-  if (!variant) {
-    throw new Error(
-      `[smoke-cuttlefish] No \`aosp:\` block in ${cfgPath}; cannot resolve packageName.`,
-    );
+  const parsed = parseSmokeArgs(argv);
+  let packageName = parsed.packageName;
+  let appName = parsed.appName;
+  if (!packageName) {
+    const cfgPath = resolveAppConfigPath({
+      repoRoot,
+      flagValue: parsed.appConfigPath,
+    });
+    if (!fs.existsSync(cfgPath)) {
+      throw new Error(
+        `[smoke-cuttlefish] app.config.ts not found at ${cfgPath}. Pass --package-name for an OS-owned brand.`,
+      );
+    }
+    const variant = loadAospVariantConfig({ appConfigPath: cfgPath });
+    if (!variant) {
+      throw new Error(
+        `[smoke-cuttlefish] No \`aosp:\` block in ${cfgPath}; pass --package-name for an OS-owned brand.`,
+      );
+    }
+    packageName = variant.packageName;
+    appName ??= variant.appName;
   }
   const results = await runSmoke({
-    packageName: variant.packageName,
-    appName: variant.appName,
-    expectedAbi,
+    packageName,
+    appName,
+    expectedAbi: parsed.expectedAbi,
   });
-  if (wantJson) {
+  if (parsed.json) {
     console.log(JSON.stringify(results, null, 2));
   } else {
     for (const r of results) {

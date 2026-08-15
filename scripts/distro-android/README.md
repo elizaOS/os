@@ -133,6 +133,12 @@ node scripts/distro-android/build-aosp.mjs \
   --source-vendor packages/os/android/vendor/mybrand \
   --aosp-root /aosp \
   --jobs 16 \
+  --rebuild-privileged-apk \
   --launch \
   --boot-validate
 ```
+
+For x86_64 or arm64 application staging, set
+`ELIZA_BUN_RISCV64_OPTIONAL=1`; those images cannot execute a RISC-V slice.
+For a riscv64 brand, instead provide `ELIZA_BUN_RISCV64_FILE` or
+`ELIZA_BUN_RISCV64_URL` and the matching `ELIZA_BUN_RISCV64_SHA256`.

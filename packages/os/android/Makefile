@@ -31,9 +31,11 @@ ARGS    ?=
 SUPPORTED_ARCHES := x86_64 arm64 riscv64
 
 HERE      := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
-REPO_ROOT := $(abspath $(HERE)/../../../..)
+REPO_ROOT := $(abspath $(HERE)/../../..)
 DISTRO    := $(REPO_ROOT)/scripts/distro-android
 VENDOR    := $(HERE)vendor/eliza
+ELIZAOS_ELIZA_ROOT ?= $(REPO_ROOT)/.eliza-source
+ANDROID_AGENT_ASSETS := $(ELIZAOS_ELIZA_ROOT)/packages/app-core/platforms/android/app/src/main/assets/agent
 
 # ARCH -> brand config (x86_64 uses the unsuffixed default).
 BRAND_x86_64  := brand.eliza.json
@@ -51,7 +53,12 @@ DEVICE_DIR_arm64   := vsoc_arm64
 DEVICE_DIR_riscv64 := vsoc_riscv64
 DEVICE_DIR := $(DEVICE_DIR_$(ARCH))
 
-.PHONY: help build sim splash bootanimation check-arch
+INFERENCE_TARGETS_x86_64 := android-arm64-vulkan-fused android-x86_64-cpu-fused
+INFERENCE_TARGETS_arm64 := android-arm64-vulkan-fused
+INFERENCE_TARGETS_riscv64 := android-arm64-vulkan-fused android-riscv64-cpu-fused
+INFERENCE_TARGETS := $(INFERENCE_TARGETS_$(ARCH))
+
+.PHONY: help build native-inference sim splash bootanimation check-arch
 
 help:
 	@echo "elizaOS Mobile (AOSP) targets:"
@@ -64,8 +71,11 @@ help:
 	@echo "to bake the elizaOS splash into the image; otherwise the build falls"
 	@echo "through to the stock AOSP boot animation (eliza_common.mk guards the copy)."
 
-build: check-arch
-	node $(DISTRO)/build-aosp.mjs --brand-config $(BRAND_CONFIG) --aosp-root $(AOSP_ROOT) --launch --boot-validate $(ARGS)
+build: check-arch native-inference
+	ELIZAOS_ELIZA_ROOT="$(ELIZAOS_ELIZA_ROOT)" ELIZA_MTP_ANDROID_LIBDIR="$(ANDROID_AGENT_ASSETS)/arm64-v8a" ELIZA_MTP_ANDROID_LIBDIR_X86_64="$(ANDROID_AGENT_ASSETS)/x86_64" ELIZA_MTP_ANDROID_LIBDIR_RISCV64="$(ANDROID_AGENT_ASSETS)/riscv64" $(if $(filter riscv64,$(ARCH)),,ELIZA_BUN_RISCV64_OPTIONAL=1) node $(DISTRO)/build-aosp.mjs --brand-config $(BRAND_CONFIG) --aosp-root $(AOSP_ROOT) --rebuild-privileged-apk --launch --boot-validate $(ARGS)
+
+native-inference: check-arch
+	cd "$(ELIZAOS_ELIZA_ROOT)" && node packages/app-core/scripts/aosp/compile-libllama.mjs --assets-dir "$(ANDROID_AGENT_ASSETS)" $(foreach target,$(INFERENCE_TARGETS),--target $(target))
 
 sim: check-arch
 	node $(DISTRO)/sim.mjs --brand-config $(BRAND_CONFIG) --device-dir $(DEVICE_DIR) --aosp-root $(AOSP_ROOT) $(ARGS)

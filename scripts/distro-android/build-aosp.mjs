@@ -106,13 +106,18 @@ export function parseSubArgs(argv) {
   return args;
 }
 
-function assertLinuxBuilder(brand) {
+export function assertBuildHost({
+  brand,
+  launch = false,
+  kvmPath = "/dev/kvm",
+}) {
   if (process.platform !== "linux" || process.arch !== "x64") {
     throw new Error(
-      `${brand.distroName} AOSP/Cuttlefish builds require a Linux x86_64 builder with KVM.`,
+      `${brand.distroName} AOSP builds require a Linux x86_64 builder.`,
     );
   }
-  if (!fs.existsSync("/dev/kvm")) {
+  const usesRiscvTcg = brand.productName.includes("riscv64");
+  if (launch && !usesRiscvTcg && !fs.existsSync(kvmPath)) {
     throw new Error(`${brand.distroName} Cuttlefish launch requires /dev/kvm.`);
   }
 }
@@ -222,7 +227,7 @@ function rebuildPrivilegedApk(brand) {
 export async function main(argv = process.argv.slice(2)) {
   const { brand, remaining } = loadBrandFromArgv(argv);
   const args = parseSubArgs(remaining);
-  assertLinuxBuilder(brand);
+  assertBuildHost({ brand, launch: args.launch });
   assertAospRoot(args.aospRoot);
 
   const brandConfigArgs = ["--brand-config", brand.brandConfigPath];

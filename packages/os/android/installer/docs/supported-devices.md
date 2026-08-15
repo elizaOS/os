@@ -27,6 +27,21 @@ A release may list stricter requirements, but supported devices generally need:
 Carrier-locked or enterprise-managed devices often fail the bootloader
 requirement even when their retail model name matches a supported device.
 
+## Current Target Status
+
+- **Cuttlefish:** checked-in x86_64, arm64, and riscv64 product definitions are
+  emulator targets. Release support still requires a completed build and boot
+  validation run for the exact source revisions.
+- **Pixel:** the vendor tree declares `oriole`, `panther`, `shiba`, `caiman`,
+  and `tegu` products. These are build targets, not a claim that any particular
+  release is lab-validated; the release manifest remains authoritative.
+- **Light Phone III (`TLP301`):** Eliza's application repository has a direct
+  debug APK policy for this device, but this OS repository has no Light Phone
+  III AOSP device tree, vendor-blob manifest, kernel/boot image contract, or
+  validated unlock/flash/rollback procedure. It is therefore not an elizaOS
+  image target yet. `tegu` is the Pixel 9a target and must not be treated as a
+  Light Phone codename.
+
 ## Manifest Entries
 
 Each release manifest should include one entry per supported codename:
