@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   build-deb:
-    runs-on: ${{ fromJSON(vars.HETZNER_FLEET_ONLINE == 'false' && '["ubuntu-24.04"]' || '["self-hosted","hetzner-robot"]') }}
+    runs-on: ${{ fromJSON(vars.HETZNER_FLEET_ONLINE == 'true' && '["self-hosted","hetzner-robot"]' || '["ubuntu-24.04"]') }}
     timeout-minutes: 30
     env:
       ELIZA_ROOT: ${{ github.workspace }}/.eliza-source
