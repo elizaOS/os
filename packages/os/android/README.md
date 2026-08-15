@@ -51,11 +51,25 @@ x86_64 host with KVM and a synced AOSP checkout (`AOSP_ROOT`, default
 `$HOME/aosp`); riscv64 Cuttlefish runs under QEMU TCG (no KVM) and boots
 slower — `sim.mjs` sizes its boot timeout for that automatically.
 
-`make build` syncs `vendor/eliza`, validates the product layer against the
-AOSP source, runs `lunch eliza_cf_<arch>_phone-trunk_staging-userdebug && m`,
+`make build` rebuilds the privileged APK from the Eliza checkout, syncs
+`vendor/eliza`, validates the product layer against the AOSP source, runs
+`lunch eliza_cf_<arch>_phone-trunk_staging-userdebug && m`,
 launches Cuttlefish, and then runs the boot validator. The underlying
 command is `node scripts/distro-android/build-aosp.mjs
---brand-config <arch-config> --aosp-root <root> --launch --boot-validate`.
+--brand-config <arch-config> --aosp-root <root> --rebuild-privileged-apk
+--launch --boot-validate`.
+
+x86_64 and arm64 builds intentionally omit the unavailable RISC-V Bun slice.
+The riscv64 target remains fail-closed and requires a locally built or hosted
+`bun-linux-riscv64-musl.zip` plus its SHA-256 through the Eliza build
+environment. The reusable workflow exposes `bun-riscv64-url` and
+`bun-riscv64-sha256` for that lane.
+
+Before assembling the APK, the Make and workflow front doors build the
+mandatory arm64 fused inference library plus the selected Cuttlefish ABI.
+That compiler path requires the pinned Zig 0.13 toolchain; the workflow
+provisions and checksum-verifies it, while local builders must put Zig 0.13 on
+`PATH`.
 
 `scripts/aosp/` contains device deployment and Cuttlefish runtime smoke
 orchestration. App compilation and agent-payload staging remain in the

@@ -48,7 +48,17 @@ on:
       eliza-ref:
         description: "elizaOS/eliza revision used to build the retained Android application"
         required: false
-        default: "develop"
+        default: "a8a65a0480b86080428a661c4e8de74c50f4ebe2"
+        type: string
+      bun-riscv64-url:
+        description: "HTTPS URL for the pinned Bun riscv64-musl zip (required by riscv64 brands)"
+        required: false
+        default: ""
+        type: string
+      bun-riscv64-sha256:
+        description: "SHA-256 for bun-riscv64-url (required by riscv64 brands)"
+        required: false
+        default: ""
         type: string
   workflow_call:
     inputs:
@@ -80,7 +90,17 @@ on:
         description: "elizaOS/eliza revision used to build the retained Android application."
         required: false
         type: string
-        default: "develop"
+        default: "a8a65a0480b86080428a661c4e8de74c50f4ebe2"
+      bun-riscv64-url:
+        description: "HTTPS URL for the pinned Bun riscv64-musl zip (required by riscv64 brands)."
+        required: false
+        type: string
+        default: ""
+      bun-riscv64-sha256:
+        description: "SHA-256 for bun-riscv64-url (required by riscv64 brands)."
+        required: false
+        type: string
+        default: ""
 
 # Default to least privilege. Override per-job where needed.
 permissions:
@@ -117,7 +137,7 @@ jobs:
       # and the brand `build:android:system` runs Gradle which needs a full SDK.
       - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699
         with:
-          packages: "platform-tools build-tools;36.0.0 platforms;android-36"
+          packages: "platform-tools build-tools;36.0.0 platforms;android-36 ndk;29.0.13113456"
 
       - name: Install workspace dependencies
         working-directory: .eliza-source
@@ -133,14 +153,58 @@ jobs:
           echo "config=$BRAND_CONFIG" >> "$GITHUB_OUTPUT"
           BUILD_CMD=$(node -e "const c=JSON.parse(require('fs').readFileSync('$BRAND_CONFIG','utf8')); console.log((c.buildAndroidSystemCmd ?? ['bun','run','build:android:system']).join(' '))")
           echo "build-cmd=$BUILD_CMD" >> "$GITHUB_OUTPUT"
+          REQUIRES_RISCV64=$(node -e "const c=JSON.parse(require('fs').readFileSync('$BRAND_CONFIG','utf8')); console.log(String(c.productName ?? '').includes('riscv64') ? 'true' : 'false')")
+          echo "requires-riscv64=$REQUIRES_RISCV64" >> "$GITHUB_OUTPUT"
+          INFERENCE_TARGETS=$(node -e "const c=JSON.parse(require('fs').readFileSync('$BRAND_CONFIG','utf8')); const p=String(c.productName ?? ''); const target=p.includes('riscv64')?'android-riscv64-cpu-fused':p.includes('x86_64')?'android-x86_64-cpu-fused':null; console.log(['android-arm64-vulkan-fused', target].filter(Boolean).join(' '))")
+          echo "inference-targets=$INFERENCE_TARGETS" >> "$GITHUB_OUTPUT"
           DISTRO_NAME=$(node -p "JSON.parse(require('fs').readFileSync('$BRAND_CONFIG','utf8')).distroName")
           echo "distro-name=$DISTRO_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Provision pinned Zig 0.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/zig-linux-x86_64-0.13.0.tar.xz"
+          root="${RUNNER_TEMP}/zig-0.13.0"
+          curl -fsSL https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz -o "$archive"
+          echo "d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea  $archive" | sha256sum --check
+          mkdir -p "$root"
+          tar -C "$root" --strip-components=1 -xJf "$archive"
+          echo "$root" >> "$GITHUB_PATH"
+
+      - name: Build fused Android inference libraries
+        working-directory: .eliza-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r -a targets <<< "${{ steps.brand.outputs.inference-targets }}"
+          args=()
+          for target in "${targets[@]}"; do
+            args+=(--target "$target")
+          done
+          node packages/app-core/scripts/aosp/compile-libllama.mjs \
+            --assets-dir packages/app-core/platforms/android/app/src/main/assets/agent \
+            "${args[@]}"
 
       - name: Build privileged APK (${{ steps.brand.outputs.distro-name }})
         working-directory: .eliza-source
         env:
           ELIZAOS_OS_REPO_ROOT: ${{ github.workspace }}
-        run: ${{ steps.brand.outputs.build-cmd }}
+          ELIZA_BUN_RISCV64_URL: ${{ inputs.bun-riscv64-url }}
+          ELIZA_BUN_RISCV64_SHA256: ${{ inputs.bun-riscv64-sha256 }}
+          ELIZA_MTP_ANDROID_LIBDIR: ${{ github.workspace }}/.eliza-source/packages/app-core/platforms/android/app/src/main/assets/agent/arm64-v8a
+          ELIZA_MTP_ANDROID_LIBDIR_X86_64: ${{ github.workspace }}/.eliza-source/packages/app-core/platforms/android/app/src/main/assets/agent/x86_64
+          ELIZA_MTP_ANDROID_LIBDIR_RISCV64: ${{ github.workspace }}/.eliza-source/packages/app-core/platforms/android/app/src/main/assets/agent/riscv64
+        run: |
+          if [ "${{ steps.brand.outputs.requires-riscv64 }}" = "true" ]; then
+            if [ -z "$ELIZA_BUN_RISCV64_URL" ] || [ -z "$ELIZA_BUN_RISCV64_SHA256" ]; then
+              echo "::error::riscv64 brands require bun-riscv64-url and bun-riscv64-sha256 inputs"
+              exit 1
+            fi
+          else
+            export ELIZA_BUN_RISCV64_OPTIONAL=1
+          fi
+          ${{ steps.brand.outputs.build-cmd }}
 
       - name: Static brand validation
         run: |

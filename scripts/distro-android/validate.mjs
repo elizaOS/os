@@ -263,12 +263,16 @@ export function validateProductLayer(vendorDir, brand) {
       ? deviceTreePaths[0]
       : "device/google/cuttlefish/vsoc_x86_64_only/phone/aosp_cf.mk";
   assertIncludes(product, primaryInherit, "product");
+  const localVendorPrefix = `vendor/${brand.brand}/`;
+  const productContract = primaryInherit.startsWith(localVendorPrefix)
+    ? `${product}\n${read(path.join(vendorDir, primaryInherit.slice(localVendorPrefix.length)))}`
+    : product;
   assertIncludes(
-    product,
+    productContract,
     `vendor/${brand.brand}/${brand.commonMakefile}`,
     `product (must inherit ${brand.commonMakefile} for shared OS-path invariants)`,
   );
-  assertIncludes(product, `${brand.envPrefix}_PRODUCT_TAG`, "product");
+  assertIncludes(productContract, `${brand.envPrefix}_PRODUCT_TAG`, "product");
 
   const common = read(path.join(vendorDir, brand.commonMakefile));
   assertIncludes(common, "PRODUCT_PACKAGES +=", brand.commonMakefile);
