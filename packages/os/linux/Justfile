@@ -44,37 +44,25 @@ elizaos-app:
     stage="tails/config/chroot_local-includes/usr/share/elizaos/elizaos-app"
 
     ensure_plugin_runtime_dist() {
-        local package_rel="$1"
-        local mode="$2"
+        local package_name="$1"
+        local package_rel="$2"
+        local mode="$3"
+        local required_entry="$4"
         local package_dir="${eliza_root}/${package_rel}"
-        local dist_index="${package_dir}/dist/index.js"
+        local dist_index="${package_dir}/${required_entry}"
 
         if [ -s "${dist_index}" ]; then
             return 0
         fi
 
-        echo "Building ${package_rel} runtime dist for elizaOS Live"
+        echo "Building ${package_name} runtime supplement for elizaOS Live"
         case "${mode}" in
-            package-build)
-                if [ ! -x "${eliza_root}/node_modules/.bin/tsup" ] || [ ! -x "${eliza_root}/node_modules/.bin/tsc" ]; then
-                    echo "Installing workspace build dependencies for ${package_rel}"
-                    ( cd "${eliza_root}" && bun install --no-frozen-lockfile --ignore-scripts )
-                fi
-                ( cd "${package_dir}" && bun run build )
-                ;;
             package-js)
                 if [ ! -x "${eliza_root}/node_modules/.bin/tsup" ]; then
                     echo "Installing workspace build dependencies for ${package_rel}"
                     ( cd "${eliza_root}" && bun install --no-frozen-lockfile --ignore-scripts )
                 fi
                 ( cd "${package_dir}" && bun run build:js )
-                ;;
-            tsup-index)
-                if [ ! -x "${eliza_root}/node_modules/.bin/tsup" ]; then
-                    echo "Installing workspace build dependencies for ${package_rel}"
-                    ( cd "${eliza_root}" && bun install --no-frozen-lockfile --ignore-scripts )
-                fi
-                ( cd "${package_dir}" && bunx tsup src/index.ts --format esm --clean )
                 ;;
             bun-runtime-index)
                 ( cd "${package_dir}" && \
@@ -113,21 +101,32 @@ elizaos-app:
             echo "Build it separately, set ELIZAOS_APP_ARTIFACT, or rerun with ELIZAOS_BUILD_APP=1 to permit this recipe to build it."
             exit 1
         fi
+        case "$(uname -s):$(uname -m)" in
+            Linux:x86_64|Linux:amd64) ;;
+            *)
+                echo "ELIZAOS_BUILD_APP=1 requires a Linux x86_64 host for the Linux x64 Electrobun artifact." >&2
+                echo "Build the artifact in Linux/amd64 and set ELIZAOS_APP_ARTIFACT on this host." >&2
+                exit 2
+                ;;
+        esac
         echo "elizaOS app build not found; ELIZAOS_BUILD_APP=1 so building it now"
         ( cd "${eliza_root}" && bun install --no-frozen-lockfile --ignore-scripts )
         if [ -f "${outer_root}/package.json" ] && [ -d "${outer_root}/eliza" ]; then
             ( cd "${outer_root}" && bun install --no-frozen-lockfile --ignore-scripts )
             ( cd "${outer_root}" && bun install --cwd eliza --no-frozen-lockfile --ignore-scripts )
+            ( cd "${eliza_root}" && bun packages/scripts/ensure-workspace-symlinks.mjs )
             ( cd "${outer_root}" && ELIZAOS_ELIZA_SOURCE=local node scripts/setup-upstreams.mjs )
             if [ -d "${outer_root}/eliza/packages/electrobun-carrots" ]; then
                 ( cd "${outer_root}/eliza/packages/electrobun-carrots" && bun run build )
             fi
             ( cd "${outer_root}" && ELIZAOS_ELIZA_SOURCE=local bun run build:desktop )
         else
+            ( cd "${eliza_root}" && bun packages/scripts/ensure-workspace-symlinks.mjs )
             ( cd "${eliza_root}" && ELIZAOS_ELIZA_SOURCE=local node packages/app-core/scripts/setup-upstreams.mjs )
             if [ -d "${eliza_root}/packages/electrobun-carrots" ]; then
                 ( cd "${eliza_root}/packages/electrobun-carrots" && bun run build )
             fi
+            ( cd "${eliza_root}" && node packages/app-core/scripts/write-homepage-release-data.mjs )
             ( cd "${eliza_root}" && \
                 ELIZA_APP_NAME=elizaOS \
                 ELIZA_APP_ID=org.elizaos.app \
@@ -137,10 +136,18 @@ elizaos-app:
         fi
     fi
     test -x "${app_out}/bin/launcher" || { echo "missing ${app_out}/bin/launcher"; exit 1; }
-    ensure_plugin_runtime_dist "plugins/plugin-health" package-js
-    ensure_plugin_runtime_dist "plugins/plugin-calendly" tsup-index
-    ensure_plugin_runtime_dist "plugins/plugin-registry" package-js
-    ensure_plugin_runtime_dist "plugins/plugin-app-manager" bun-runtime-index
+    runtime_supplements="$(
+        node scripts/runtime-supplements.mjs \
+            --format tsv \
+            --source-root "${eliza_root}"
+    )"
+    while IFS=$'\t' read -r package_name package_rel build_mode required_entry; do
+        ensure_plugin_runtime_dist \
+            "${package_name}" \
+            "${package_rel}" \
+            "${build_mode}" \
+            "${required_entry}"
+    done <<< "${runtime_supplements}"
     if [ -e "${stage}" ] && ! rm -rf "${stage}"; then
         sudo -n rm -rf "${stage}"
     fi

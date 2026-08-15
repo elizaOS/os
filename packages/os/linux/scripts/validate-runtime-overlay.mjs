@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // Supports Linux live-image build and release evidence automation.
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { loadRuntimeSupplements } from "./runtime-supplements.mjs";
 
 const args = process.argv.slice(2);
 const distroRoot = path.resolve(
@@ -58,6 +60,7 @@ function parseArgs(argv) {
 }
 
 const { stage, osOverlayRoot } = parseArgs(args);
+const supplementalRuntimePackages = loadRuntimeSupplements();
 const manifestPath = path.join(
   stage,
   "Resources/app/elizaos-live-overlay-manifest.json",
@@ -202,6 +205,14 @@ function validateGeneratedStubs(manifest) {
     const index = readText(indexPath);
     if (!/\bexport\s+default\b/.test(index)) {
       fail(`${indexPath}: generated optional stub must have a default export`);
+    }
+    const syntaxCheck = spawnSync(process.execPath, ["--check", indexPath], {
+      encoding: "utf8",
+    });
+    if (syntaxCheck.status !== 0) {
+      fail(
+        `${indexPath}: generated optional stub has invalid JavaScript: ${syntaxCheck.stderr.trim()}`,
+      );
     }
   }
 
@@ -440,7 +451,11 @@ function validateAgentApiLazyWalletImport() {
   if (!text.includes("export const handleWalletRoutes")) {
     fail(`${filePath}: agent API barrel must expose lazy handleWalletRoutes`);
   }
-  if (!text.includes('await import("@elizaos/plugin-wallet")')) {
+  if (
+    !/await\s+import\(\s*(?:\/\*[\s\S]*?\*\/\s*)?["']@elizaos\/plugin-wallet["']\s*\)/.test(
+      text,
+    )
+  ) {
     fail(`${filePath}: wallet routes must be loaded lazily`);
   }
   if (text.includes("  handleWalletRoutes,\n  type WalletAddressesSnapshot")) {
@@ -473,8 +488,7 @@ function validateRequiredRuntimePackages() {
     "agent-orchestrator",
     "@elizaos/plugin-agent-orchestrator",
     "@elizaos/plugin-app-control",
-    "@elizaos/plugin-calendly",
-    "@elizaos/plugin-health",
+    ...supplementalRuntimePackages.map((entry) => entry.packageName),
   ]) {
     assertFile(
       packageManifestPath(packageName),
@@ -485,8 +499,10 @@ function validateRequiredRuntimePackages() {
   for (const [packageName, relativeFile] of [
     ["agent-orchestrator", "index.js"],
     ["@elizaos/plugin-agent-orchestrator", "index.js"],
-    ["@elizaos/plugin-calendly", "dist/index.js"],
-    ["@elizaos/plugin-health", "dist/index.js"],
+    ...supplementalRuntimePackages.map((entry) => [
+      entry.packageName,
+      entry.requiredEntry,
+    ]),
   ]) {
     assertFile(
       path.join(packageDirectory(packageName), relativeFile),

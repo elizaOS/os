@@ -7,7 +7,7 @@ published packages and artifacts rather than copying source here.
 
 ## Toolchain
 
-- Bun 1.4.0 on Node 24, ESM only.
+- Bun 1.3.14 on Node 24, ESM only.
 - Turbo orchestrates workspace build, typecheck, lint, and tests.
 - Biome formats and lints TypeScript and JSON.
 - AOSP, Debian/live-build, Gradle, Xcode, CMake, Docker, QEMU, and hardware

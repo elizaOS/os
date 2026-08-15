@@ -12,6 +12,9 @@ coverage/
 
 # Native build output and downloaded toolchains
 **/build/
+# Tails uses this build-named directory for checked-in live-build inputs.
+!packages/os/linux/tails/config/chroot_local-includes/usr/share/tails/build/
+!packages/os/linux/tails/config/chroot_local-includes/usr/share/tails/build/**
 **/.gradle/
 **/Pods/
 **/DerivedData/

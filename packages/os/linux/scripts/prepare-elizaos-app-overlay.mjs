@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { loadRuntimeSupplements } from "./runtime-supplements.mjs";
 
 const args = process.argv.slice(2);
 
@@ -38,6 +39,11 @@ function parseArgs(argv) {
 
 const { check, stageArg } = parseArgs(args);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const osRepositoryRoot = path.resolve(root, "../../..");
+const elizaSourceRoot = path.resolve(
+  process.env.ELIZAOS_ELIZA_ROOT ??
+    path.join(osRepositoryRoot, ".eliza-source"),
+);
 const defaultStage = path.join(
   root,
   "tails/config/chroot_local-includes/usr/share/elizaos/elizaos-app",
@@ -79,25 +85,41 @@ const dependencyTargets = [
   },
 ];
 
-function findWorkspaceRoot() {
-  for (
-    let current = root;
-    current && current !== path.dirname(current);
-    current = path.dirname(current)
-  ) {
-    if (
-      fs.existsSync(path.join(current, "plugins/plugin-health/package.json"))
-    ) {
-      return current;
-    }
-  }
-  return null;
+const elizaSourceSentinels = [
+  ".git",
+  "package.json",
+  "packages/app-core/package.json",
+  "plugins/plugin-health/package.json",
+];
+const missingElizaSourceSentinels = elizaSourceSentinels.filter(
+  (relativePath) => !fs.existsSync(path.join(elizaSourceRoot, relativePath)),
+);
+if (missingElizaSourceSentinels.length > 0) {
+  throw new Error(
+    `ELIZAOS_ELIZA_ROOT must reference an elizaOS/eliza checkout; missing ${missingElizaSourceSentinels.join(
+      ", ",
+    )} under ${elizaSourceRoot}.`,
+  );
+}
+const elizaGitRoot = gitOutput(elizaSourceRoot, [
+  "rev-parse",
+  "--show-toplevel",
+]);
+const elizaSourceCommit = gitOutput(elizaSourceRoot, ["rev-parse", "HEAD"]);
+if (
+  !elizaGitRoot ||
+  fs.realpathSync(elizaGitRoot) !== fs.realpathSync(elizaSourceRoot) ||
+  !/^[0-9a-f]{40}$/.test(elizaSourceCommit ?? "")
+) {
+  throw new Error(
+    `ELIZAOS_ELIZA_ROOT must be the root of a committed elizaOS/eliza checkout: ${elizaSourceRoot}.`,
+  );
 }
 
-const workspaceRoot = findWorkspaceRoot();
-const rmPathRecursiveScriptPath = workspaceRoot
-  ? path.join(workspaceRoot, "packages/scripts/rm-path-recursive.mjs")
-  : null;
+const rmPathRecursiveScriptPath = path.join(
+  osRepositoryRoot,
+  "packages/scripts/rm-path-recursive.mjs",
+);
 const existingOverlayManifest = fs.existsSync(overlayManifestPath)
   ? JSON.parse(fs.readFileSync(overlayManifestPath, "utf8"))
   : null;
@@ -109,7 +131,7 @@ function removePathRecursive(targetPath) {
     );
   }
   execFileSync(process.execPath, [rmPathRecursiveScriptPath, targetPath], {
-    cwd: workspaceRoot,
+    cwd: osRepositoryRoot,
     stdio: "inherit",
   });
 }
@@ -289,7 +311,7 @@ export const personalAssistantPlugin = {
   services: [],
   routes: [],
 };
-export const personalAssistantPlugin = {
+export const personalAssistantRoutesPlugin = {
   name: "lifeops-routes",
   routes: [],
 };
@@ -804,10 +826,6 @@ function walkFiles(dir, visit) {
   }
 }
 
-function workspacePackagePath(relativePath) {
-  return workspaceRoot ? path.join(workspaceRoot, relativePath) : null;
-}
-
 function syncDirectoryContents(
   sourceDir,
   targetDir,
@@ -867,9 +885,10 @@ const sourceRuntimePackages = [
   ["@elizaos/plugin-sql", "plugins/plugin-sql"],
   ["@elizaos/plugin-video", "plugins/plugin-video"],
   ["@elizaos/plugin-workflow", "plugins/plugin-workflow"],
-  ["@elizaos/plugin-remote-manifest", "packages/plugin-remote-manifest"],
-  ["@elizaos/plugin-worker-runtime", "packages/plugin-worker-runtime"],
 ];
+const supplementalRuntimePackages = loadRuntimeSupplements({
+  sourceRoot: elizaSourceRoot,
+});
 
 function includeRuntimePackageFile(relativePath) {
   const parts = relativePath.split(path.sep);
@@ -882,7 +901,7 @@ function includeRuntimePackageFile(relativePath) {
 }
 
 function syncSourceRuntimePackage(packageName, relativeSource, { checkOnly }) {
-  const packageSource = workspacePackagePath(relativeSource);
+  const packageSource = path.join(elizaSourceRoot, relativeSource);
   if (!packageSource || !fs.existsSync(packageSource)) return false;
 
   let stale = false;
@@ -928,36 +947,41 @@ function syncWorkspaceRuntimePackages({ checkOnly }) {
       stale;
   }
 
-  for (const [packageName, relativeSource] of [
-    ["@elizaos/plugin-calendly", "plugins/plugin-calendly"],
-    ["@elizaos/plugin-health", "plugins/plugin-health"],
-    ["@elizaos/plugin-app-manager", "plugins/plugin-app-manager"],
-    ["@elizaos/plugin-registry", "plugins/plugin-registry"],
-  ]) {
-    const packageSource = workspacePackagePath(relativeSource);
-    if (!packageSource || !fs.existsSync(packageSource)) continue;
+  for (const {
+    packageName,
+    sourcePath: relativeSource,
+    requiredEntry,
+  } of supplementalRuntimePackages) {
+    const packageSource = path.join(elizaSourceRoot, relativeSource);
+    if (!fs.existsSync(packageSource)) {
+      throw new Error(
+        `${packageName} source package is missing: ${packageSource}`,
+      );
+    }
     const targetDir = packageDirectory(packageName);
     const sourcePackageJson = path.join(packageSource, "package.json");
     const sourceDistDir = path.join(packageSource, "dist");
+    const sourceRequiredEntry = path.join(packageSource, requiredEntry);
+    if (!fs.existsSync(sourceRequiredEntry)) {
+      throw new Error(
+        `${packageName} required runtime entry is missing: ${sourceRequiredEntry}`,
+      );
+    }
     if (!fs.existsSync(targetDir)) stale = true;
     if (!checkOnly) fs.mkdirSync(targetDir, { recursive: true });
-    if (fs.existsSync(sourcePackageJson)) {
-      const targetPackageJson = path.join(targetDir, "package.json");
-      const sourceContent = fs.readFileSync(sourcePackageJson, "utf8");
-      if (
-        !fs.existsSync(targetPackageJson) ||
-        fs.readFileSync(targetPackageJson, "utf8") !== sourceContent
-      ) {
-        stale = true;
-        if (!checkOnly) fs.writeFileSync(targetPackageJson, sourceContent);
-      }
+    const targetPackageJson = path.join(targetDir, "package.json");
+    const sourceContent = fs.readFileSync(sourcePackageJson, "utf8");
+    if (
+      !fs.existsSync(targetPackageJson) ||
+      fs.readFileSync(targetPackageJson, "utf8") !== sourceContent
+    ) {
+      stale = true;
+      if (!checkOnly) fs.writeFileSync(targetPackageJson, sourceContent);
     }
-    if (fs.existsSync(sourceDistDir)) {
-      stale =
-        syncDirectoryContents(sourceDistDir, path.join(targetDir, "dist"), {
-          checkOnly,
-        }) || stale;
-    }
+    stale =
+      syncDirectoryContents(sourceDistDir, path.join(targetDir, "dist"), {
+        checkOnly,
+      }) || stale;
   }
 
   return stale;
@@ -1075,7 +1099,10 @@ function agentApiLazyWalletWrites() {
   );
   if (!fs.existsSync(filePath)) return [];
 
-  const sourcePath = workspacePackagePath("packages/agent/src/api/index.ts");
+  const sourcePath = path.join(
+    elizaSourceRoot,
+    "packages/agent/src/api/index.ts",
+  );
   const walletExportBlock = [
     "export {",
     "  handleWalletRoutes,",
@@ -1303,24 +1330,8 @@ function liveOverlayManifestWrite() {
       liveStub: pkg.stubVersion === "0.0.0-elizaos-live-stub",
     }));
   const packageInventory = collectPackageInventory(projectedPackages);
-  const sourceRoot =
-    check && existingOverlayManifest?.source?.gitRoot
-      ? existingOverlayManifest.source.gitRoot
-      : (workspaceRoot ?? gitOutput(root, ["rev-parse", "--show-toplevel"]));
-  const sourceCommit =
-    check && existingOverlayManifest?.source?.gitCommit
-      ? existingOverlayManifest.source.gitCommit
-      : gitOutput(sourceRoot, ["rev-parse", "HEAD"]);
-  const dirtyStatus =
-    check && typeof existingOverlayManifest?.source?.gitDirty === "boolean"
-      ? null
-      : gitOutput(sourceRoot, ["status", "--short"]);
-  const gitDirty =
-    check && typeof existingOverlayManifest?.source?.gitDirty === "boolean"
-      ? existingOverlayManifest.source.gitDirty
-      : dirtyStatus !== null
-        ? dirtyStatus.length > 0
-        : null;
+  const dirtyStatus = gitOutput(elizaGitRoot, ["status", "--short"]);
+  const gitDirty = dirtyStatus !== null ? dirtyStatus.length > 0 : null;
 
   return [
     {
@@ -1338,8 +1349,8 @@ function liveOverlayManifestWrite() {
                 : (process.env.SOURCE_DATE_EPOCH ?? null),
           },
           source: {
-            gitRoot: sourceRoot,
-            gitCommit: sourceCommit,
+            gitRoot: elizaGitRoot,
+            gitCommit: elizaSourceCommit,
             gitDirty,
             distroRoot: root,
           },
