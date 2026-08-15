@@ -68,6 +68,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Snapshot mirrors expire independently of this repository. Resolve and
+      # preflight every Release file before caches, toolchains, or application
+      # dependencies consume runner time.
+      - name: Resolve available Tails APT snapshots
+        run: |
+          set -euo pipefail
+          SNAPSHOTS=$(node "${LINUX_DIR}/scripts/resolve-apt-snapshots.mjs")
+          echo "APT_SNAPSHOTS_SERIALS=${SNAPSHOTS}" >> "$GITHUB_ENV"
+          echo "::notice::Using verified Tails APT snapshots ${SNAPSHOTS}"
+
       - name: Checkout application source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -81,7 +91,7 @@ jobs:
         with:
           path: |
             ${{ env.LINUX_DIR }}/cache
-          key: elizaos-iso-${{ env.ELIZAOS_ARCH }}-${{ hashFiles('packages/os/linux/tails/auto/config', 'packages/os/linux/tails/config/chroot_local-packageslists/**', 'packages/os/linux/Dockerfile') }}
+          key: elizaos-iso-${{ env.ELIZAOS_ARCH }}-${{ hashFiles('packages/os/linux/tails/auto/config', 'packages/os/linux/tails/config/chroot_local-packageslists/**', 'packages/os/linux/tails/config/binary_local-hooks/**', 'packages/os/linux/patches/**', 'packages/os/linux/Dockerfile') }}
           restore-keys: elizaos-iso-${{ env.ELIZAOS_ARCH }}-
 
       - name: Set up Docker Buildx
@@ -121,13 +131,6 @@ jobs:
           set -euo pipefail
           bun install --frozen-lockfile --ignore-scripts
           git diff --exit-code -- package.json bun.lock
-
-      - name: Resolve available Tails APT snapshots
-        run: |
-          set -euo pipefail
-          SNAPSHOTS=$(node "${LINUX_DIR}/scripts/resolve-apt-snapshots.mjs")
-          echo "APT_SNAPSHOTS_SERIALS=${SNAPSHOTS}" >> "$GITHUB_ENV"
-          echo "::notice::Using verified Tails APT snapshots ${SNAPSHOTS}"
 
       - name: Verify non-amd64 static contracts
         run: |
@@ -191,14 +194,18 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Smoke test ISO through SeaBIOS and OVMF
-        timeout-minutes: 35
+        timeout-minutes: 40
         env:
-          ELIZAOS_ISO_SMOKE_TIMEOUT_SECONDS: 600
+          ELIZAOS_ISO_SMOKE_TIMEOUT_SECONDS: 900
+          ELIZAOS_ISO_SMOKE_CPU_MODEL: Haswell-v4
           ELIZAOS_ISO_SMOKE_LOG_DIR: ${{ runner.temp }}/elizaos-iso-smoke-logs
         run: |
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends ovmf qemu-system-x86 seabios xorriso
+          if [ -e /dev/kvm ]; then
+            sudo chmod 0666 /dev/kvm
+          fi
           bash "${LINUX_DIR}/scripts/smoke-test-iso.sh" "${{ steps.iso.outputs.path }}"
 
       - name: Upload ISO boot diagnostics

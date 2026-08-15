@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 interface WorkflowStep {
+  env?: Record<string, string>;
   name?: string;
   run?: string;
   shell?: string;
@@ -75,6 +76,54 @@ function namedJobStep(
 }
 
 describe("OS release workflow authority", () => {
+  test("Linux ISO release preflights immutable amd64 boot inputs", () => {
+    const workflow = parseWorkflow("build-linux-iso.yml");
+    const job = workflow.jobs?.["build-iso"];
+    const steps = job?.steps ?? [];
+    const snapshotPreflight = namedJobStep(
+      workflow,
+      "build-iso",
+      "Resolve available Tails APT snapshots",
+    );
+    const cacheRestore = namedJobStep(
+      workflow,
+      "build-iso",
+      "Restore live-build cache",
+    );
+    const toolchainSetup = namedJobStep(
+      workflow,
+      "build-iso",
+      "Set up Docker Buildx",
+    );
+    const dependencyInstall = namedJobStep(
+      workflow,
+      "build-iso",
+      "Install workspace dependencies from frozen lockfile",
+    );
+    const smoke = namedJobStep(
+      workflow,
+      "build-iso",
+      "Smoke test ISO through SeaBIOS and OVMF",
+    );
+    const cacheInputs = cacheRestore.with?.key ?? "";
+
+    expect(job?.env?.ELIZAOS_ARCH).toBe("amd64");
+    expect(steps.indexOf(snapshotPreflight)).toBeLessThan(
+      steps.indexOf(cacheRestore),
+    );
+    expect(steps.indexOf(snapshotPreflight)).toBeLessThan(
+      steps.indexOf(toolchainSetup),
+    );
+    expect(steps.indexOf(snapshotPreflight)).toBeLessThan(
+      steps.indexOf(dependencyInstall),
+    );
+    expect(snapshotPreflight.run).toContain("resolve-apt-snapshots.mjs");
+    expect(cacheInputs).toContain("config/binary_local-hooks/**");
+    expect(cacheInputs).toContain("packages/os/linux/patches/**");
+    expect(smoke.env?.ELIZAOS_ISO_SMOKE_CPU_MODEL).toBe("Haswell-v4");
+    expect(smoke.run).toContain("smoke-test-iso.sh");
+  });
+
   test("standalone verification owns its Bun and Eliza source inputs", () => {
     const workflow = parseWorkflow("ci.yml");
     const packageMetadata = JSON.parse(
