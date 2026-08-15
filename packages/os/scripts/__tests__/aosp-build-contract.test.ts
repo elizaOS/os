@@ -4,7 +4,10 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseArgs as parseDeployArgs } from "../../../../scripts/aosp/deploy-pixel.mjs";
+import {
+  parseArgs as parseDeployArgs,
+  resolveBuiltPrivilegedApk,
+} from "../../../../scripts/aosp/deploy-pixel.mjs";
 import { parseSmokeArgs } from "../../../../scripts/aosp/smoke-cuttlefish.mjs";
 import { assertBuildHost } from "../../../../scripts/distro-android/build-aosp.mjs";
 
@@ -85,6 +88,36 @@ describe("AOSP build contracts", () => {
     });
   });
 
+  test("Pixel deployment selects only the product platform-signed APK", () => {
+    expect(
+      resolveBuiltPrivilegedApk({
+        aospRoot: "/aosp",
+        productName: "eliza_tegu_phone",
+        env: {},
+      }),
+    ).toBe(
+      "/aosp/out/target/product/eliza_tegu_phone/system/priv-app/Eliza/Eliza.apk",
+    );
+    expect(
+      resolveBuiltPrivilegedApk({
+        aospRoot: "/aosp",
+        productName: "eliza_tegu_phone",
+        env: { OUT_DIR: "/build/aosp-out" },
+      }),
+    ).toBe(
+      "/build/aosp-out/target/product/eliza_tegu_phone/system/priv-app/Eliza/Eliza.apk",
+    );
+
+    const deploySource = readFileSync(
+      join(repositoryRoot, "scripts/aosp/deploy-pixel.mjs"),
+      "utf8",
+    );
+    expect(deploySource).not.toContain('"find",');
+    expect(deploySource).toContain(
+      "unsigned vendor input cannot be sideloaded",
+    );
+  });
+
   test("Cuttlefish pins application and native-runtime build inputs", () => {
     const workflow = readFileSync(
       join(repositoryRoot, ".github/workflows/elizaos-cuttlefish.yml"),
@@ -92,7 +125,7 @@ describe("AOSP build contracts", () => {
     );
 
     expect(workflow).toContain(
-      'default: "a8a65a0480b86080428a661c4e8de74c50f4ebe2"',
+      'default: "53da01c6d02c022e3a3593cf9b92633ff5b1c6d6"',
     );
     expect(workflow).toContain("Provision pinned Zig 0.13");
     expect(workflow).toContain("ndk;29.0.13113456");

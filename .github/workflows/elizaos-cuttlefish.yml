@@ -48,7 +48,7 @@ on:
       eliza-ref:
         description: "elizaOS/eliza revision used to build the retained Android application"
         required: false
-        default: "a8a65a0480b86080428a661c4e8de74c50f4ebe2"
+        default: "53da01c6d02c022e3a3593cf9b92633ff5b1c6d6"
         type: string
       bun-riscv64-url:
         description: "HTTPS URL for the pinned Bun riscv64-musl zip (required by riscv64 brands)"
@@ -90,7 +90,7 @@ on:
         description: "elizaOS/eliza revision used to build the retained Android application."
         required: false
         type: string
-        default: "a8a65a0480b86080428a661c4e8de74c50f4ebe2"
+        default: "53da01c6d02c022e3a3593cf9b92633ff5b1c6d6"
       bun-riscv64-url:
         description: "HTTPS URL for the pinned Bun riscv64-musl zip (required by riscv64 brands)."
         required: false
