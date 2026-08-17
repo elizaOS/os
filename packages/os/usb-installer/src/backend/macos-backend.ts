@@ -327,7 +327,9 @@ async function fetchGitHubIsoImages(): Promise<ElizaOsImage[]> {
                 });
               }
             }
-            resolve(images.length > 0 ? images : DEFAULT_ELIZAOS_IMAGES);
+            resolve(
+              images.filter((image) => !/^0+$/.test(image.checksumSha256)),
+            );
           } catch {
             resolve(DEFAULT_ELIZAOS_IMAGES);
           }

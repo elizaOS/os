@@ -151,37 +151,6 @@ function parseAdbDevices(output: string): RawAdbDevice[] {
 }
 
 // ---------------------------------------------------------------------------
-// Mock build list
-// ---------------------------------------------------------------------------
-
-export const MOCK_BUILDS: AospBuild[] = [
-  {
-    id: "elizaos-android-beta-2026.05.16",
-    label: "elizaOS Android Beta",
-    version: "2.0.0-beta.2-os.20260516",
-    channel: "beta",
-    targetDevice: "caiman",
-    architecture: "arm64-v8a",
-    publishedAt: "2026-05-16T00:00:00.000Z",
-    manifestUrl:
-      "https://downloads.elizaos.ai/android/beta/2026.05.16/manifest.json",
-    sizeBytes: 8 * 1024 ** 3,
-  },
-  {
-    id: "elizaos-android-beta-bluejay-2026.05.16",
-    label: "elizaOS Android Beta — Pixel 6a",
-    version: "2.0.0-beta.2-os.20260516",
-    channel: "beta",
-    targetDevice: "bluejay",
-    architecture: "arm64-v8a",
-    publishedAt: "2026-05-16T00:00:00.000Z",
-    manifestUrl:
-      "https://downloads.elizaos.ai/android/beta/2026.05.16/bluejay/manifest.json",
-    sizeBytes: 8 * 1024 ** 3,
-  },
-];
-
-// ---------------------------------------------------------------------------
 // Artifact download with SHA-256 verification
 // ---------------------------------------------------------------------------
 
@@ -383,76 +352,77 @@ export class AdbFlasherBackend implements AospFlasherBackend {
   }
 
   async listBuilds(): Promise<AospBuild[]> {
-    try {
-      const response = await fetch(
-        "https://api.github.com/repos/elizaos/eliza/releases",
-        {
-          headers: {
-            Accept: "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-          },
-          signal: AbortSignal.timeout(10_000),
+    const response = await fetch(
+      "https://api.github.com/repos/elizaOS/os/releases",
+      {
+        headers: {
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
         },
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Android release discovery failed: GitHub returned HTTP ${response.status}`,
       );
-
-      if (!response.ok) {
-        return MOCK_BUILDS;
-      }
-
-      const releases = (await response.json()) as Array<{
-        assets: Array<{ name: string; browser_download_url: string }>;
-      }>;
-
-      const builds: AospBuild[] = [];
-
-      for (const release of releases) {
-        for (const asset of release.assets) {
-          if (!/^android-release-manifest-.+\.json$/.test(asset.name)) {
-            continue;
-          }
-
-          const manifestResp = await fetch(asset.browser_download_url, {
-            signal: AbortSignal.timeout(10_000),
-          });
-          if (!manifestResp.ok) continue;
-
-          const manifest = (await manifestResp.json()) as {
-            releaseId?: string;
-            generatedAt?: string;
-            supportedDevices?: Array<{
-              codename?: string;
-              marketingName?: string;
-            }>;
-            artifacts?: Array<{ sizeBytes?: number }>;
-          };
-
-          const supportedDevice = manifest.supportedDevices?.[0];
-          const totalSize =
-            manifest.artifacts?.reduce(
-              (sum, a) => sum + (a.sizeBytes ?? 0),
-              0,
-            ) ?? 0;
-
-          builds.push({
-            id: manifest.releaseId ?? asset.name,
-            label: supportedDevice?.marketingName
-              ? `elizaOS for ${supportedDevice.marketingName}`
-              : "elizaOS Android",
-            version: manifest.releaseId ?? "unknown",
-            channel: "stable",
-            targetDevice: supportedDevice?.codename ?? "unknown",
-            architecture: "arm64-v8a",
-            publishedAt: manifest.generatedAt ?? new Date().toISOString(),
-            manifestUrl: asset.browser_download_url,
-            sizeBytes: totalSize,
-          });
-        }
-      }
-
-      return builds.length > 0 ? builds : MOCK_BUILDS;
-    } catch {
-      return MOCK_BUILDS;
     }
+
+    const releases = (await response.json()) as Array<{
+      assets: Array<{ name: string; browser_download_url: string }>;
+    }>;
+
+    const builds: AospBuild[] = [];
+
+    for (const release of releases) {
+      for (const asset of release.assets) {
+        if (!/^android-release-manifest-.+\.json$/.test(asset.name)) {
+          continue;
+        }
+
+        const manifestResp = await fetch(asset.browser_download_url, {
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!manifestResp.ok) continue;
+
+        const manifest = (await manifestResp.json()) as {
+          releaseId?: string;
+          generatedAt?: string;
+          supportedDevices?: Array<{
+            codename?: string;
+            marketingName?: string;
+          }>;
+          artifacts?: Array<{ sizeBytes?: number }>;
+        };
+
+        const supportedDevice = manifest.supportedDevices?.[0];
+        const totalSize =
+          manifest.artifacts?.reduce((sum, a) => sum + (a.sizeBytes ?? 0), 0) ??
+          0;
+
+        builds.push({
+          id: manifest.releaseId ?? asset.name,
+          label: supportedDevice?.marketingName
+            ? `elizaOS for ${supportedDevice.marketingName}`
+            : "elizaOS Android",
+          version: manifest.releaseId ?? "unknown",
+          channel: "stable",
+          targetDevice: supportedDevice?.codename ?? "unknown",
+          architecture: "arm64-v8a",
+          publishedAt: manifest.generatedAt ?? new Date().toISOString(),
+          manifestUrl: asset.browser_download_url,
+          sizeBytes: totalSize,
+        });
+      }
+    }
+
+    if (builds.length === 0) {
+      throw new Error(
+        "No published elizaOS Android release manifests are available.",
+      );
+    }
+    return builds;
   }
 
   async createFlashPlan(request: FlashRequest): Promise<FlashPlan> {

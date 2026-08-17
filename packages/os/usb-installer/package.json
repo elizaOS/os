@@ -2,7 +2,7 @@
   "name": "@elizaos/os-usb-installer",
   "version": "0.1.0",
   "private": true,
-  "description": "Electrobun microapp scaffold for preparing bootable elizaOS USB installers.",
+  "description": "Electrobun application for preparing bootable elizaOS USB installers.",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",

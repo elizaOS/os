@@ -4,10 +4,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import {
-  downloadAndVerifyArtifacts,
-  MOCK_BUILDS,
-} from "../backend/adb-backend";
+import { downloadAndVerifyArtifacts } from "../backend/adb-backend";
 import {
   IosAuthNotReadyError,
   SideloaderIosBackend,
@@ -20,6 +17,7 @@ import type {
   FlashStepId,
   FlashStepStatus,
 } from "../backend/types";
+import { FIXTURE_BUILDS } from "./fixtures";
 
 // ---------------------------------------------------------------------------
 // wipeData plumbing
@@ -39,7 +37,7 @@ describe("FlashRequest wipeData plumbing", () => {
   });
 
   it("AospBuild type accepts wipeData boolean", () => {
-    const mockBuild = MOCK_BUILDS[0];
+    const mockBuild = FIXTURE_BUILDS[0];
     expect(mockBuild).toBeDefined();
     if (!mockBuild) throw new Error("Expected at least one mock build");
 
@@ -57,7 +55,7 @@ describe("FlashRequest wipeData plumbing", () => {
 
 describe("dry-run gating", () => {
   function buildPlan(dryRun: boolean): FlashPlan {
-    const build = MOCK_BUILDS[0];
+    const build = FIXTURE_BUILDS[0];
     expect(build).toBeDefined();
     if (!build) throw new Error("Expected at least one mock build");
 

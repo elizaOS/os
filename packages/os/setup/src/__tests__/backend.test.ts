@@ -1,7 +1,7 @@
 // Exercises the AOSP setup flasher backend and dependency gates.
 import { describe, expect, it, vi } from "vitest";
-import { MOCK_BUILDS } from "../backend/adb-backend";
 import type { AospFlasherBackend, ConnectedDevice } from "../backend/types";
+import { FIXTURE_BUILDS } from "./fixtures";
 
 // ---------------------------------------------------------------------------
 // Minimal mock backend — avoids spawning real adb/fastboot in CI
@@ -18,10 +18,10 @@ const MOCK_DEVICE: ConnectedDevice = {
 function makeMockBackend(): AospFlasherBackend {
   return {
     listConnectedDevices: vi.fn().mockResolvedValue([MOCK_DEVICE]),
-    listBuilds: vi.fn().mockResolvedValue(MOCK_BUILDS),
+    listBuilds: vi.fn().mockResolvedValue(FIXTURE_BUILDS),
     createFlashPlan: vi.fn().mockImplementation(async (request) => {
       const device = MOCK_DEVICE;
-      const build = MOCK_BUILDS.find((b) => b.id === request.buildId);
+      const build = FIXTURE_BUILDS.find((b) => b.id === request.buildId);
       if (!build) throw new Error(`Unknown build: ${request.buildId}`);
 
       return {
@@ -117,7 +117,7 @@ function makeMockBackend(): AospFlasherBackend {
 describe("createFlashPlan with mock device", () => {
   it("returns a plan with the correct device and build", async () => {
     const backend = makeMockBackend();
-    const build = MOCK_BUILDS[0];
+    const build = FIXTURE_BUILDS[0];
     if (!build) throw new Error("No mock builds available");
 
     const plan = await backend.createFlashPlan({
@@ -136,7 +136,7 @@ describe("createFlashPlan with mock device", () => {
 
   it("produces all required flash steps in order", async () => {
     const backend = makeMockBackend();
-    const build = MOCK_BUILDS[0];
+    const build = FIXTURE_BUILDS[0];
     if (!build) throw new Error("No mock builds available");
 
     const plan = await backend.createFlashPlan({
@@ -163,7 +163,7 @@ describe("createFlashPlan with mock device", () => {
 
   it("all steps start as pending", async () => {
     const backend = makeMockBackend();
-    const build = MOCK_BUILDS[0];
+    const build = FIXTURE_BUILDS[0];
     if (!build) throw new Error("No mock builds available");
 
     const plan = await backend.createFlashPlan({
@@ -178,7 +178,7 @@ describe("createFlashPlan with mock device", () => {
 
   it("includes --wipe-data in flash-partitions step when wipeData=true", async () => {
     const backend = makeMockBackend();
-    const build = MOCK_BUILDS[0];
+    const build = FIXTURE_BUILDS[0];
     if (!build) throw new Error("No mock builds available");
 
     const plan = await backend.createFlashPlan({
@@ -194,7 +194,7 @@ describe("createFlashPlan with mock device", () => {
 
   it("does NOT include --wipe-data when wipeData=false", async () => {
     const backend = makeMockBackend();
-    const build = MOCK_BUILDS[0];
+    const build = FIXTURE_BUILDS[0];
     if (!build) throw new Error("No mock builds available");
 
     const plan = await backend.createFlashPlan({
@@ -210,7 +210,7 @@ describe("createFlashPlan with mock device", () => {
 
   it("unlock-bootloader step has a userAction describing the physical steps", async () => {
     const backend = makeMockBackend();
-    const build = MOCK_BUILDS[0];
+    const build = FIXTURE_BUILDS[0];
     if (!build) throw new Error("No mock builds available");
 
     const plan = await backend.createFlashPlan({
@@ -240,7 +240,7 @@ describe("createFlashPlan with mock device", () => {
 
   it("all commands in step details reference the correct device serial", async () => {
     const backend = makeMockBackend();
-    const build = MOCK_BUILDS[0];
+    const build = FIXTURE_BUILDS[0];
     if (!build) throw new Error("No mock builds available");
 
     const plan = await backend.createFlashPlan({
@@ -260,10 +260,10 @@ describe("createFlashPlan with mock device", () => {
   });
 });
 
-describe("MOCK_BUILDS", () => {
+describe("FIXTURE_BUILDS", () => {
   it("has at least one build targeting a Pixel device", () => {
-    expect(MOCK_BUILDS.length).toBeGreaterThan(0);
-    const firstBuild = MOCK_BUILDS[0];
+    expect(FIXTURE_BUILDS.length).toBeGreaterThan(0);
+    const firstBuild = FIXTURE_BUILDS[0];
     expect(firstBuild).toBeDefined();
     expect(firstBuild?.targetDevice).toBeTruthy();
     expect(firstBuild?.channel).toMatch(/^(stable|beta|nightly)$/);

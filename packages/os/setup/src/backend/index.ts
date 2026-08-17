@@ -1,5 +1,5 @@
 // Implements backend device and HTTP operations for the AOSP setup flasher.
-export { AdbFlasherBackend, MOCK_BUILDS } from "./adb-backend";
+export { AdbFlasherBackend } from "./adb-backend";
 export type {
   AospBuild,
   AospFlasherBackend,
