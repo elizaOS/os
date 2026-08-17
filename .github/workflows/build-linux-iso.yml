@@ -1,16 +1,14 @@
 name: Build elizaOS Linux ISO
 
-# One canonical live distro at linux. Tails' live-build fork is
-# amd64-only, so this workflow publishes only the architecture it can build and
-# boot-test. Non-amd64 package experiments remain static development contracts;
-# they are not advertised as ISO artifacts.
+# Canonical elizaOS Debian live image. This workflow has no alternate inherited
+# distro path.
 
 on:
   workflow_call:
     inputs:
       eliza-ref:
         type: string
-        default: develop
+        default: 395a90a3ee14d81bf5b97fc9ffdfd4e532440d18
       channel:
         type: string
         default: stable
@@ -22,7 +20,7 @@ on:
       eliza-ref:
         description: elizaOS/eliza ref to include in the image
         type: string
-        default: develop
+        default: 395a90a3ee14d81bf5b97fc9ffdfd4e532440d18
       channel:
         description: Release channel
         type: choice
@@ -59,8 +57,9 @@ jobs:
       CHANNEL: ${{ inputs.channel || (github.event_name == 'release' && 'stable') || 'nightly' }}
       ELIZAOS_ELIZA_ROOT: ${{ github.workspace }}/.eliza-source
       LINUX_DIR: packages/os/linux
-      # The inherited Tails live-build fork rejects every other architecture.
+      ELIZAOS_LINUX_VARIANT: packages/os/linux/elizaos
       ELIZAOS_ARCH: amd64
+      ELIZAOS_PROFILE: gui
 
     steps:
       - name: Checkout
@@ -68,21 +67,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Snapshot mirrors expire independently of this repository. Resolve and
-      # preflight every Release file before caches, toolchains, or application
-      # dependencies consume runner time.
-      - name: Resolve available Tails APT snapshots
-        run: |
-          set -euo pipefail
-          SNAPSHOTS=$(node "${LINUX_DIR}/scripts/resolve-apt-snapshots.mjs")
-          echo "APT_SNAPSHOTS_SERIALS=${SNAPSHOTS}" >> "$GITHUB_ENV"
-          echo "::notice::Using verified Tails APT snapshots ${SNAPSHOTS}"
-
       - name: Checkout application source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: elizaOS/eliza
-          ref: ${{ inputs.eliza-ref || 'develop' }}
+          ref: ${{ inputs.eliza-ref || '395a90a3ee14d81bf5b97fc9ffdfd4e532440d18' }}
           path: .eliza-source
           submodules: recursive
 
@@ -90,17 +79,14 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
-            ${{ env.LINUX_DIR }}/cache
-          key: elizaos-iso-${{ env.ELIZAOS_ARCH }}-${{ hashFiles('packages/os/linux/tails/auto/config', 'packages/os/linux/tails/config/chroot_local-packageslists/**', 'packages/os/linux/tails/config/binary_local-hooks/**', 'packages/os/linux/patches/**', 'packages/os/linux/Dockerfile') }}
-          restore-keys: elizaos-iso-${{ env.ELIZAOS_ARCH }}-
+            ${{ env.ELIZAOS_LINUX_VARIANT }}/cache
+          key: elizaos-debian-${{ env.ELIZAOS_ARCH }}-${{ env.ELIZAOS_PROFILE }}-${{ hashFiles('packages/os/linux/elizaos/auto/config', 'packages/os/linux/elizaos/config/**', 'packages/os/linux/elizaos/Dockerfile') }}
+          restore-keys: elizaos-debian-${{ env.ELIZAOS_ARCH }}-${{ env.ELIZAOS_PROFILE }}-
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
 
       - name: Install just + ripgrep
-        # ripgrep (rg) is a hard dependency of packages/os/linux/scripts/static-smoke.sh
-        # (the static cross-architecture contract step). It is not guaranteed on
-        # every runner image, so install it explicitly before the smoke check.
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends just ripgrep
 
       - name: Resolve Bun version from package metadata
@@ -135,9 +121,7 @@ jobs:
       - name: Verify non-amd64 static contracts
         run: |
           set -euo pipefail
-          bash scripts/verify-riscv64-buildpaths.sh
-          cd "${LINUX_DIR}"
-          ELIZAOS_STATIC_SOURCE_ONLY=1 ./scripts/static-smoke.sh
+          make -C "${ELIZAOS_LINUX_VARIANT}" lint
 
       - name: Build ISO (amd64)
         working-directory: ${{ env.LINUX_DIR }}
@@ -172,7 +156,7 @@ jobs:
           ISO_MAX_BYTES: ${{ env.ELIZAOS_ISO_MAX_BYTES || '3221225472' }}
         run: |
           set -euo pipefail
-          ISO=$(find "${LINUX_DIR}/out" \( -name "binary.iso" -o -name "tails-${ELIZAOS_ARCH}-*.iso" -o -name "elizaos-live-${ELIZAOS_ARCH}-*.iso" -o -name "elizaos-linux-${ELIZAOS_ARCH}-*.iso" \) | sort | tail -1)
+          ISO=$(find "${ELIZAOS_LINUX_VARIANT}/out" -name "elizaos-linux-${ELIZAOS_ARCH}-${ELIZAOS_PROFILE}-*.iso" | sort | tail -1)
           if [ -z "$ISO" ]; then
             echo "ERROR: ISO not found after build"
             exit 1

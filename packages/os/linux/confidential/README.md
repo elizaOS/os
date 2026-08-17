@@ -6,7 +6,7 @@ here as a built or attested artifact.
 
 This directory is the OS-layer confidential profile described in
 `packages/os/docs/tee-os-implementation-plan.md` §1.3 / OS-1. It is **separate
-from** the Tails/Debian live-build USB product under
+from** the Debian live-build product under
 `packages/os/linux/`. The live-build
 ISO is not bit-reproducible by construction and is the wrong base for a measured
 confidential guest; this profile is built from **meta-dstack (Yocto)** instead.

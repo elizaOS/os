@@ -32,7 +32,7 @@ on:
         type: string
         default: ""
       aosp-root:
-        description: "Existing AOSP checkout root on the Linux/KVM runner"
+        description: "AOSP checkout bootstrapped from packages/os/android/aosp.lock.json"
         required: true
         type: string
       jobs:
@@ -48,7 +48,7 @@ on:
       eliza-ref:
         description: "elizaOS/eliza revision used to build the retained Android application"
         required: false
-        default: "53da01c6d02c022e3a3593cf9b92633ff5b1c6d6"
+        default: "395a90a3ee14d81bf5b97fc9ffdfd4e532440d18"
         type: string
       bun-riscv64-url:
         description: "HTTPS URL for the pinned Bun riscv64-musl zip (required by riscv64 brands)"
@@ -73,7 +73,7 @@ on:
         type: string
         default: ""
       aosp-root:
-        description: "Existing AOSP checkout root."
+        description: "AOSP checkout bootstrapped from packages/os/android/aosp.lock.json."
         required: true
         type: string
       jobs:
@@ -90,7 +90,7 @@ on:
         description: "elizaOS/eliza revision used to build the retained Android application."
         required: false
         type: string
-        default: "53da01c6d02c022e3a3593cf9b92633ff5b1c6d6"
+        default: "395a90a3ee14d81bf5b97fc9ffdfd4e532440d18"
       bun-riscv64-url:
         description: "HTTPS URL for the pinned Bun riscv64-musl zip (required by riscv64 brands)."
         required: false
@@ -115,6 +115,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           submodules: recursive
+
+      - name: Set up Node 24
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: "24"
+
+      - name: Provision pinned AOSP repo launcher
+        run: |
+          mkdir -p "${RUNNER_TEMP}/elizaos-bin"
+          bash scripts/distro-android/provision-repo.sh \
+            "${RUNNER_TEMP}/elizaos-bin/repo"
+          echo "${RUNNER_TEMP}/elizaos-bin" >> "${GITHUB_PATH}"
+
+      - name: Bootstrap pinned AOSP platform
+        run: |
+          node scripts/distro-android/bootstrap-aosp.mjs \
+            --aosp-root "${{ inputs.aosp-root }}" \
+            --jobs "${{ inputs.jobs }}"
 
       - name: Check out retained Android application source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -141,7 +159,7 @@ jobs:
 
       - name: Install workspace dependencies
         working-directory: .eliza-source
-        run: bun install --frozen-lockfile || bun install --no-frozen-lockfile
+        run: bun install --frozen-lockfile
       - name: Resolve brand
         id: brand
         run: |

@@ -12,4 +12,18 @@ grub-pc-bin
 shim-signed
 intel-microcode
 amd64-microcode
+
+# Curated laptop/desktop firmware. live-build's automatic firmware sweep is
+# intentionally disabled because it also installs unrelated device drivers.
+firmware-linux
+firmware-intel-graphics
+firmware-intel-sound
+firmware-sof-signed
+firmware-iwlwifi
+firmware-atheros
+firmware-realtek
+firmware-brcm80211
+firmware-mediatek
+firmware-libertas
+firmware-nvidia-graphics
 #endif

@@ -16,7 +16,7 @@
  *     "classPrefix":         "Eliza",                  // Java class name prefix (ElizaDialActivity, ElizaSmsReceiver, …)
  *     "productName":         "eliza_cf_x86_64_phone",  // Cuttlefish product name (used for lunch target + product makefile filename)
  *     "lunchTarget":         "eliza_cf_x86_64_phone-trunk_staging-userdebug",
- *     "envPrefix":           "ELIZA",                  // env var prefix (ELIZA_PIXEL_CODENAME, ELIZA_AOSP_BUILD, …)
+ *     "envPrefix":           "ELIZA",                  // env var prefix (ELIZA_AOSP_BUILD, …)
  *     "vendorDir":            "packages/os/android/vendor/eliza" // source vendor dir relative to repo root
  *     "buildAndroidSystemCmd": ["bun", "run", "build:android:system"]  // command to rebuild the privileged APK
  *   }
@@ -118,7 +118,6 @@ export function loadBrandConfig(configPath) {
     "build:android:system",
   ];
   parsed.commonMakefile = parsed.commonMakefile ?? `${parsed.brand}_common.mk`;
-  parsed.pixelMakefilePrefix = parsed.pixelMakefilePrefix ?? `${parsed.brand}`;
   parsed.cuttlefishMakefile =
     parsed.cuttlefishMakefile ?? `${parsed.productName}.mk`;
   // System property prefix used by init.<brand>.rc and the boot

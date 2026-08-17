@@ -9,16 +9,16 @@
 #   arm64   — aarch64 SBCs and Apple Silicon (UTM), EFI via grub-efi
 #   riscv64 — TH1520 / SiFive boards + QEMU virt, EFI via grub-efi
 #
-# The elizaOS hardening profile (Tor routing, AppArmor enforcement, MAC
-# randomization, amnesic tmpfs home) lives under config/profiles/secure/
-# and is composed in via build.sh when ELIZAOS_PROFILE=secure. The default
-# profile is a headless Debian live image; the GUI/kiosk payload is opt-in
-# with ELIZAOS_PROFILE=gui or secure-gui.
+# The default profile is a headless Debian live image; the GNOME desktop is
+# selected explicitly with ELIZAOS_PROFILE=gui.
 set -eu
 
 ARCH="${ELIZAOS_ARCH:-amd64}"
 DEBIAN_MIRROR="${ELIZAOS_DEBIAN_MIRROR:-https://mirrors.kernel.org/debian}"
-FIRMWARE_OPTIONS=""
+# live-build's automatic firmware discovery currently sweeps unrelated packages
+# (including astronomy camera drivers) into the image. Keep it disabled and
+# declare the hardware firmware contract explicitly in each architecture list.
+FIRMWARE_OPTIONS="--firmware-chroot false --firmware-binary false"
 QEMU_BOOTSTRAP_OPTIONS=""
 
 case "${ARCH}" in
@@ -39,7 +39,6 @@ case "${ARCH}" in
         KERNEL_FLAVOUR="riscv64"
         BOOTLOADERS="grub-efi"
         BOOTAPPEND="boot=live components earlycon=sbi loglevel=7 console=ttyS0,115200n8 console=tty0"
-        FIRMWARE_OPTIONS="--firmware-chroot false --firmware-binary false"
         if [ "$(dpkg --print-architecture 2>/dev/null || true)" != "riscv64" ]; then
             QEMU_BOOTSTRAP_OPTIONS="--bootstrap-qemu-arch riscv64 --bootstrap-qemu-static /usr/bin/qemu-riscv64-static"
         fi
@@ -65,6 +64,7 @@ lb config noauto \
     --apt-recommends false \
     --apt-indices false \
     --apt-source-archives false \
+    --cache false \
     ${QEMU_BOOTSTRAP_OPTIONS} \
     ${FIRMWARE_OPTIONS} \
     --debian-installer none \

@@ -1,13 +1,13 @@
 #!/bin/sh
 # App-local-mode wiring for images that ship the Electrobun app.
 #
-# In the kiosk, the Electrobun app runs its OWN self-contained embedded runtime
+# The Electrobun app runs its OWN self-contained embedded runtime
 # (Resources/app/eliza-dist with full node_modules) and serves :31337 itself.
 # The separate elizaos-agent.service and elizaos-first-boot companion run the
 # bare agent-bundle.js, which is NOT self-contained (it tries to install
 # node_modules at runtime → ENOSPC) and would also compete for :31337. Remove
 # the pair here so the app owns the runtime cleanly. riscv64 has no Electrobun
-# prebuild and keeps the separate agent (its epiphany kiosk renders that agent's
+# prebuild and keeps the separate agent (its Epiphany fallback renders that agent's
 # web UI).
 set -eu
 

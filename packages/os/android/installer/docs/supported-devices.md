@@ -32,9 +32,10 @@ requirement even when their retail model name matches a supported device.
 - **Cuttlefish:** checked-in x86_64, arm64, and riscv64 product definitions are
   emulator targets. Release support still requires a completed build and boot
   validation run for the exact source revisions.
-- **Pixel:** the vendor tree declares `oriole`, `panther`, `shiba`, `caiman`,
-  and `tegu` products. These are build targets, not a claim that any particular
-  release is lab-validated; the release manifest remains authoritative.
+- **Pixel:** blocked. The locked public AOSP checkout does not contain Pixel
+  device projects, and physical builds also require separately licensed vendor
+  binaries. The product menu intentionally advertises no Pixel lunch target
+  until those inputs are pinned and a real device build boots.
 - **Light Phone III (`TLP301`):** Eliza's application repository has a direct
   debug APK policy for this device, but this OS repository has no Light Phone
   III AOSP device tree, vendor-blob manifest, kernel/boot image contract, or

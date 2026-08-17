@@ -60,7 +60,7 @@ run_node_agent_bundle() {
 
 # riscv64 still stages Bun for provenance and future use, but the current
 # no-JIT Bun artifact is not reliable for the full agent entrypoint. Prefer
-# Debian nodejs for the live service so /api/health can come up for the kiosk.
+# Debian nodejs for the live service so /api/health can serve the GUI fallback.
 if [ "${AGENT_RUNTIME}" = "node-agent-bundle" ] || [ "${ARCH}" = "riscv64" ] ||
     { [ "${ARCH}" = "arm64" ] && [ ! -f /opt/elizaos/app/Resources/app/eliza-dist/index.js ]; }; then
     run_node_agent_bundle

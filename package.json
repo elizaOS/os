@@ -9,7 +9,6 @@
     "node": ">=24.0.0"
   },
   "workspaces": [
-    "packages/os/android/system-ui",
     "packages/os/homepage",
     "packages/os/setup",
     "packages/os/shared-system",
@@ -25,7 +24,7 @@
     "migration:manifest": "node scripts/generate-migration-manifest.mjs",
     "verify:layout": "node scripts/verify-os-repository-layout.mjs",
     "verify": "bun run verify:layout && bun run typecheck && bun run lint && bun run test:release",
-    "verify:linux": "ELIZAOS_STATIC_SOURCE_ONLY=1 bash packages/os/linux/scripts/static-smoke.sh",
+    "verify:linux": "make -C packages/os/linux/elizaos lint",
     "verify:riscv64": "node packages/scripts/run-bash-linux-only.mjs scripts/verify-riscv64-buildpaths.sh",
     "build:riscv64-artifacts": "node packages/scripts/run-bash-linux-only.mjs scripts/build-riscv64-artifacts.sh",
     "check:riscv64-artifacts": "node packages/scripts/run-bash-linux-only.mjs scripts/check-riscv64-artifacts.sh"

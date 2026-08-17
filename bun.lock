@@ -14,26 +14,6 @@
         "vitest": "4.1.5",
       },
     },
-    "packages/os/android/system-ui": {
-      "name": "@elizaos/os-android-system-ui",
-      "version": "0.1.0",
-      "dependencies": {
-        "@elizaos/os-shared-system": "workspace:*",
-      },
-      "devDependencies": {
-        "@testing-library/react": "^16.3.2",
-        "@types/react": "^18.0.0 || ^19.0.0",
-        "@types/react-dom": "^18.0.0 || ^19.0.0",
-        "@typescript/native": "npm:typescript@^7.0.2",
-        "jsdom": "^29.0.0",
-        "typescript": "^5.0.0",
-        "vitest": "^4.0.18",
-      },
-      "peerDependencies": {
-        "react": "^18.0.0 || ^19.0.0",
-        "react-dom": "^18.0.0 || ^19.0.0",
-      },
-    },
     "packages/os/homepage": {
       "name": "@elizaos/os-homepage",
       "version": "0.1.0",
@@ -212,8 +192,6 @@
     "@elizaos/core": ["@elizaos/core@2.0.11-beta.7", "", { "dependencies": { "@ai-sdk/anthropic": "^3.0.13", "@ai-sdk/gateway": "3.0.133", "@ai-sdk/google": "^3.0.8", "@ai-sdk/openai": "^3.0.9", "@ai-sdk/provider": "3.0.10", "@ai-sdk/provider-utils": "4.0.26", "@bufbuild/protobuf": "^2.12.0", "@elizaos/contracts": "2.0.11-beta.7", "@elizaos/logger": "2.0.11-beta.7", "@elizaos/prompts": "2.0.11-beta.7", "@noble/ciphers": "2.2.0", "@noble/hashes": "2.2.0", "@openrouter/ai-sdk-provider": "^2.0.0", "@opentelemetry/api": "1.9.1", "adze": "^2.2.5", "ai": "^6.0.30", "dedent": "^1.7.1", "dotenv": "^17.2.3", "drizzle-orm": "0.45.2", "fast-redact": "^3.5.0", "file-type": "^22.0.0", "fs-extra": "^11.3.2", "handlebars": "^4.7.8", "json5": "^2.2.3", "mammoth": "^1.9.0", "markdown-it": "^14.1.0", "underscore": "^1.13.8", "unpdf": "^1.4.0", "uuid": "^14.0.0", "yaml": "^2.7.0", "zod": "^4.4.3" } }, "sha512-jgOaf0/sASTeq+LbkX6lzGPFZOR5p4bVZ9wSdXMbB/V4AS2O7EzLgufQYjSu13wzKIEKFi6hOl1BT/GPltQGiA=="],
 
     "@elizaos/logger": ["@elizaos/logger@2.0.11-beta.7", "", { "dependencies": { "adze": "^2.2.5", "fast-redact": "^3.5.0" } }, "sha512-AShcqLP7Ur5KF/HsFhlr6+eY4/wtHK8FU41Ocb4i5mrNwQ746K2xgY+f8UrKe5HHB8n7nlSGKGkgFdz2rn2S2Q=="],
-
-    "@elizaos/os-android-system-ui": ["@elizaos/os-android-system-ui@workspace:packages/os/android/system-ui"],
 
     "@elizaos/os-homepage": ["@elizaos/os-homepage@workspace:packages/os/homepage"],
 
@@ -1026,8 +1004,6 @@
     "@elizaos/core/@noble/ciphers": ["@noble/ciphers@2.2.0", "", {}, "sha512-Z6pjIZ/8IJcCGzb2S/0Px5J81yij85xASuk1teLNeg75bfT07MV3a/O2Mtn1I2se43k3lkVEcFaR10N4cgQcZA=="],
 
     "@elizaos/core/@noble/hashes": ["@noble/hashes@2.2.0", "", {}, "sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg=="],
-
-    "@elizaos/os-android-system-ui/typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 
     "@elizaos/os-homepage/@types/node": ["@types/node@24.13.3", "", { "dependencies": { "undici-types": "~7.18.0" } }, "sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q=="],
 

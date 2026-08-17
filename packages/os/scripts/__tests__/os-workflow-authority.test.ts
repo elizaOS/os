@@ -80,9 +80,7 @@ describe("OS release workflow authority", () => {
     const optInExpression =
       "vars.HETZNER_FLEET_ONLINE == 'true' && '[\"self-hosted\",\"hetzner-robot\"]' || '[\"ubuntu-24.04\"]'";
     const hetznerWorkflows = workflowNames().filter((name) =>
-      readFileSync(workflowPath(name), "utf8").includes(
-        "HETZNER_FLEET_ONLINE",
-      ),
+      readFileSync(workflowPath(name), "utf8").includes("HETZNER_FLEET_ONLINE"),
     );
 
     expect(hetznerWorkflows.length).toBeGreaterThan(0);
@@ -93,15 +91,10 @@ describe("OS release workflow authority", () => {
     }
   });
 
-  test("Linux ISO release preflights immutable amd64 boot inputs", () => {
+  test("Linux ISO release owns the canonical Debian amd64 GUI inputs", () => {
     const workflow = parseWorkflow("build-linux-iso.yml");
     const job = workflow.jobs?.["build-iso"];
     const steps = job?.steps ?? [];
-    const snapshotPreflight = namedJobStep(
-      workflow,
-      "build-iso",
-      "Resolve available Tails APT snapshots",
-    );
     const cacheRestore = namedJobStep(
       workflow,
       "build-iso",
@@ -125,23 +118,23 @@ describe("OS release workflow authority", () => {
     const cacheInputs = cacheRestore.with?.key ?? "";
 
     expect(job?.env?.ELIZAOS_ARCH).toBe("amd64");
-    expect(steps.indexOf(snapshotPreflight)).toBeLessThan(
-      steps.indexOf(cacheRestore),
-    );
-    expect(steps.indexOf(snapshotPreflight)).toBeLessThan(
+    expect(job?.env?.ELIZAOS_PROFILE).toBe("gui");
+    expect(job?.env?.ELIZAOS_LINUX_VARIANT).toBe("packages/os/linux/elizaos");
+    expect(steps.indexOf(cacheRestore)).toBeLessThan(
       steps.indexOf(toolchainSetup),
     );
-    expect(steps.indexOf(snapshotPreflight)).toBeLessThan(
+    expect(steps.indexOf(cacheRestore)).toBeLessThan(
       steps.indexOf(dependencyInstall),
     );
-    expect(snapshotPreflight.run).toContain("resolve-apt-snapshots.mjs");
-    expect(cacheInputs).toContain("config/binary_local-hooks/**");
-    expect(cacheInputs).toContain("packages/os/linux/patches/**");
+    expect(cacheInputs).toContain("packages/os/linux/elizaos/auto/config");
+    expect(cacheInputs).toContain("packages/os/linux/elizaos/config/**");
+    expect(cacheInputs).toContain("packages/os/linux/elizaos/Dockerfile");
+    expect(cacheInputs).not.toContain("packages/os/linux/tails");
     expect(smoke.env?.ELIZAOS_ISO_SMOKE_CPU_MODEL).toBe("Haswell-v4");
     expect(smoke.run).toContain("smoke-test-iso.sh");
   });
 
-  test("standalone verification owns its Bun and Eliza source inputs", () => {
+  test("verification pins Bun while Linux static checks stay source-only", () => {
     const workflow = parseWorkflow("ci.yml");
     const packageMetadata = JSON.parse(
       readFileSync(join(repositoryRoot, "package.json"), "utf8"),
@@ -152,26 +145,6 @@ describe("OS release workflow authority", () => {
       "verify",
       "Setup Bun from packageManager",
     );
-    const sourceCheckout = namedJobStep(
-      workflow,
-      "linux-static-smoke",
-      "Checkout application source",
-    );
-    const linuxBunSetup = namedJobStep(
-      workflow,
-      "linux-static-smoke",
-      "Setup Bun from packageManager",
-    );
-    const linuxNodeSetup = namedJobStep(
-      workflow,
-      "linux-static-smoke",
-      "Setup Node 24",
-    );
-    const ripgrepSetup = namedJobStep(
-      workflow,
-      "linux-static-smoke",
-      "Provision ripgrep for Linux static smoke",
-    );
     const linuxJob = workflow.jobs?.["linux-static-smoke"];
     const linuxSteps = linuxJob?.steps ?? [];
 
@@ -179,29 +152,12 @@ describe("OS release workflow authority", () => {
     expect(packageMetadata.packageManager).toMatch(/^bun@\d+\.\d+\.\d+$/);
     expect(packageMetadata.engines?.node).toBe(">=24.0.0");
     expect(verifyNodeSetup.uses).toMatch(/^actions\/setup-node@[0-9a-f]{40}$/);
-    expect(linuxNodeSetup.uses).toBe(verifyNodeSetup.uses);
     expect(verifyNodeSetup.with?.["node-version"]).toBe("24");
-    expect(linuxNodeSetup.with?.["node-version"]).toBe("24");
     expect(verifyBunSetup.uses).toMatch(/^oven-sh\/setup-bun@[0-9a-f]{40}$/);
-    expect(linuxBunSetup.uses).toBe(verifyBunSetup.uses);
     expect(verifyBunSetup.with?.["bun-version-file"]).toBe("package.json");
-    expect(linuxBunSetup.with?.["bun-version-file"]).toBe("package.json");
-    expect(sourceCheckout.with).toMatchObject({
-      repository: "elizaOS/eliza",
-      ref: "f6d8f8ee7f3006693113bbc313979724e603b355",
-      path: ".eliza-source",
-    });
-    expect(linuxJob?.env?.ELIZAOS_ELIZA_ROOT).toMatch(
-      /github\.workspace.*\.eliza-source/,
-    );
-    expect(ripgrepSetup.shell).toBe("bash");
-    expect(ripgrepSetup.run).toBe(ripgrepProvisioner);
-    const ripgrepIndex = linuxSteps.indexOf(ripgrepSetup);
-    const verifyLinuxIndex = linuxSteps.findIndex(
-      (step) => step.run === "bun run verify:linux",
-    );
-    expect(ripgrepIndex).toBeGreaterThan(-1);
-    expect(verifyLinuxIndex).toBeGreaterThan(ripgrepIndex);
+    expect(linuxJob?.env).toBeUndefined();
+    expect(linuxSteps).toHaveLength(2);
+    expect(linuxSteps[1]?.run).toBe("make -C packages/os/linux/elizaos lint");
 
     const cuttlefish = parseWorkflow("elizaos-cuttlefish.yml");
     const cuttlefishBunSetup = Object.values(cuttlefish.jobs ?? {})
@@ -210,6 +166,20 @@ describe("OS release workflow authority", () => {
     expect(cuttlefishBunSetup?.with?.["bun-version-file"]).toBe(
       ".eliza-source/package.json",
     );
+  });
+
+  test("workflows use pinned Bun and fail closed on frozen lockfiles", () => {
+    for (const name of workflowNames()) {
+      const source = readFileSync(workflowPath(name), "utf8");
+      expect(source).not.toContain('bun-version: "canary"');
+      expect(source).not.toContain("--no-frozen-lockfile");
+
+      for (const line of source.split("\n")) {
+        if (/\brun:\s*bun install\s*$/.test(line)) {
+          throw new Error(`${name} contains an unfrozen Bun install: ${line}`);
+        }
+      }
+    }
   });
 
   test("every checked-in AOSP brand resolves to an OS-owned vendor tree", () => {
@@ -230,23 +200,15 @@ describe("OS release workflow authority", () => {
     }
   });
 
-  test("release validation provisions ripgrep before Linux metadata checks", () => {
+  test("release validation invokes the canonical Debian source gate", () => {
     const workflow = parseWorkflow("elizaos-os-release.yml");
-    const steps = workflow.jobs?.["validate-os-release"]?.steps ?? [];
-    const provision = namedJobStep(
-      workflow,
-      "validate-os-release",
-      "Provision ripgrep for Linux metadata validation",
-    );
     const validation = namedJobStep(
       workflow,
       "validate-os-release",
-      "Validate Linux live USB metadata",
+      "Validate canonical Debian image source",
     );
 
-    expect(provision.run).toBe(ripgrepProvisioner);
-    expect(steps.indexOf(provision)).toBeGreaterThan(-1);
-    expect(steps.indexOf(validation)).toBeGreaterThan(steps.indexOf(provision));
+    expect(validation.run).toBe("make -C packages/os/linux/elizaos lint");
   });
 
   test("one checked provisioner owns the ripgrep release", () => {

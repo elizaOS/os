@@ -36,22 +36,22 @@ DESKTOP_PACKAGE_REQUIREMENTS = (
     "nautilus",
     "network-manager",
     "network-manager-gnome",
-    "pulseaudio",
     "pipewire",
     "pipewire-pulse",
+    "wireplumber",
+    "pulseaudio-utils",
     "epiphany-browser",
     "plymouth",
     "plymouth-themes",
     "plymouth-label",
 )
-KIOSK_PACKAGE_REQUIREMENTS = (
-    "cage",
-    "seatd",
+GUI_RUNTIME_PACKAGE_REQUIREMENTS = (
     "libwebkit2gtk-4.1-0",
     "libgtk-3-0t64",
     "libgl1-mesa-dri",
     "libegl1",
-    "grim",
+    "gnome-shell-extension-dashtodock",
+    "gnome-shell-extension-appindicator",
 )
 
 DOCKERFILE_REQUIREMENTS = (
@@ -385,18 +385,18 @@ def validate_runtime_matrix(errors: list[str], matrix: dict) -> None:
     validate_runtime_artifacts(errors, matrix)
 
 
-def validate_kiosk_gui_contract(errors: list[str]) -> None:
+def validate_desktop_gui_contract(errors: list[str]) -> None:
     common_packages = package_lines(ROOT / "config/package-lists/elizaos-common.list.chroot")
     gui_package_file = ROOT / "config/profiles/gui/package-lists/elizaos-gui.list.chroot"
     require(errors, gui_package_file.is_file(), "missing GUI profile package list")
     gui_packages = package_lines(gui_package_file) if gui_package_file.is_file() else set()
-    for package in KIOSK_PACKAGE_REQUIREMENTS + DESKTOP_PACKAGE_REQUIREMENTS:
+    for package in GUI_RUNTIME_PACKAGE_REQUIREMENTS + DESKTOP_PACKAGE_REQUIREMENTS:
         require(
             errors,
             package in gui_packages,
             f"elizaos-gui.list.chroot missing GUI package {package}",
         )
-    for package in KIOSK_PACKAGE_REQUIREMENTS:
+    for package in GUI_RUNTIME_PACKAGE_REQUIREMENTS:
         require(
             errors,
             package not in common_packages,
@@ -415,48 +415,29 @@ def validate_kiosk_gui_contract(errors: list[str]) -> None:
         "systemctl set-default graphical.target" in graphical_hook,
         "graphical-session hook must make graphical.target the default boot target when GUI packages exist",
     )
+    require(errors, "systemctl enable gdm3.service" in graphical_hook,
+            "graphical-session hook must enable the GNOME display manager")
+    gdm_config = read("config/includes.chroot/etc/gdm3/daemon.conf")
+    for token in ("WaylandEnable=false", "AutomaticLoginEnable=true", "AutomaticLogin=user"):
+        require(errors, token in gdm_config, f"gdm3 desktop config missing {token}")
+
+    user_hook = read("config/hooks/normal/0020-enable-user-units.hook.chroot")
+    require(errors, "systemctl --global enable elizaos-launcher.service" in user_hook,
+            "desktop image must globally enable the elizaOS user service")
+    launcher_unit = read("config/includes.chroot/etc/systemd/user/elizaos-launcher.service")
+    require(errors, "ExecStart=/usr/local/lib/elizaos/start-launcher" in launcher_unit,
+            "elizaOS desktop user service must start the packaged app")
+    require(errors, not (ROOT / "config/includes.chroot/etc/systemd/user/elizaos-chat-overlay.service").exists(),
+            "desktop image must not launch a duplicate chat-overlay app process")
+
+    audio_hook = read("config/hooks/normal/0027-pipewire-session.hook.chroot")
     require(
         errors,
-        "systemctl mask --force" in graphical_hook and "gdm3" in graphical_hook,
-        "graphical-session hook must mask gdm3/display-manager so the kiosk owns the seat",
+        "wireplumber.service" in audio_hook
+        and "pipewire-pulse.service" in audio_hook
+        and "pulseaudio.service" in audio_hook,
+        "desktop audio hook must enable PipeWire/WirePlumber and disable legacy PulseAudio",
     )
-    require(
-        errors,
-        "systemctl enable seatd.service" in graphical_hook,
-        "graphical-session hook must enable seatd for direct compositor seat access",
-    )
-    require(
-        errors,
-        "systemctl enable elizaos-kiosk.service" in graphical_hook,
-        "graphical-session hook must enable elizaos-kiosk.service",
-    )
-
-    kiosk_unit = read("config/includes.chroot/etc/systemd/system/elizaos-kiosk.service")
-    for token in (
-        "ExecStart=/usr/local/lib/elizaos/start-cage",
-        "WantedBy=graphical.target",
-        "Environment=LIBSEAT_BACKEND=seatd",
-        "SupplementaryGroups=input render video seat",
-    ):
-        require(errors, token in kiosk_unit, f"elizaos-kiosk.service missing {token}")
-
-    start_cage = read("config/includes.chroot/usr/local/lib/elizaos/start-cage")
-    for token in (
-        "pick_renderer()",
-        "virtio_gpu",
-        "grim",
-        "exec /usr/bin/cage -s -- /usr/local/lib/elizaos/start-kiosk",
-    ):
-        require(errors, token in start_cage, f"start-cage missing {token}")
-
-    start_kiosk = read("config/includes.chroot/usr/local/lib/elizaos/start-kiosk")
-    for token in (
-        "epiphany-browser --application-mode",
-        "curl -fsS",
-        "WEBKIT_DISABLE_DMABUF_RENDERER=1",
-        "LIBGL_ALWAYS_SOFTWARE=1",
-    ):
-        require(errors, token in start_kiosk, f"start-kiosk missing {token}")
 
     modules = read("config/includes.chroot/etc/modules-load.d/elizaos-virtio-gpu.conf")
     require(
@@ -464,17 +445,6 @@ def validate_kiosk_gui_contract(errors: list[str]) -> None:
         "virtio_pci" in modules and "virtio_gpu" in modules,
         "virtio GPU modules must be loaded for graphical QEMU boot",
     )
-
-    capture_unit = read(
-        "config/includes.chroot/etc/systemd/system/elizaos-kiosk-capture.service"
-    )
-    require(
-        errors,
-        "ConditionKernelCommandLine=elizaos.capture_dir=" in capture_unit
-        and "Before=elizaos-kiosk.service" in capture_unit,
-        "kiosk capture service must be opt-in and ordered before the kiosk",
-    )
-
 
 def main() -> int:
     errors: list[str] = []
@@ -486,7 +456,19 @@ def main() -> int:
     riscv_harness = read("scripts/qemu_virt_boot_riscv64.sh")
     qemu_virt_smoke = read("scripts/qemu_virt_smoke.py")
     readme = read("README.md")
-    multiarch_matrix = json.loads(read("evidence/multiarch_boot_matrix.json"))
+    matrix_path = ROOT / "evidence/multiarch_boot_matrix.json"
+    if matrix_path.is_file():
+        try:
+            multiarch_matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            errors.append(f"invalid multiarch boot matrix: {exc}")
+            multiarch_matrix = {}
+    else:
+        errors.append(
+            "missing evidence/multiarch_boot_matrix.json; boot evidence must be "
+            "captured from current artifacts before release"
+        )
+        multiarch_matrix = {}
 
     for arch in ARCH_PACKAGE_REQUIREMENTS:
         require(errors, f"{arch})" in auto_config, f"auto/config lacks {arch} case")
@@ -548,9 +530,8 @@ def main() -> int:
     )
     require(
         errors,
-        "default|gui|secure|secure-gui" in build_sh
-        and "config/profiles/gui" in build_sh,
-        "build.sh must support an explicit GUI profile over the default headless config",
+        "default|gui" in build_sh and "config/profiles/gui" in build_sh,
+        "build.sh must support the real GUI profile over the default headless config",
     )
     require(
         errors,
@@ -564,14 +545,9 @@ def main() -> int:
     )
     require(
         errors,
-        "qemu_virt_wrapper_grubfix_20260521T130200Z.report.json" not in readme,
-        "README.md must not cite stale riscv64 grubfix evidence as current release status",
-    )
-    require(
-        errors,
-        "qemu_virt_boot_20260524T030430Z.transcript.log" in readme
-        and "out/elizaos-linux-riscv64-default-20260524T030430Z.iso" in readme,
-        "README.md must cite the fresh passing riscv64 qemu-virt boot evidence",
+        "qemu_virt_wrapper_grubfix_20260521T130200Z.report.json" not in readme
+        and "qemu_virt_boot_20260524T030430Z.transcript.log" not in readme,
+        "README.md must not present dated boot transcripts as current release evidence",
     )
     for token in RISCV64_PORT_CONTRACT.values():
         require(
@@ -627,7 +603,7 @@ def main() -> int:
         and "iso_boot_artifacts" in qemu_virt_smoke,
         "qemu_virt_smoke.py must validate recorded riscv64 ISO boot artifacts",
     )
-    validate_kiosk_gui_contract(errors)
+    validate_desktop_gui_contract(errors)
 
     if errors:
         for error in errors:

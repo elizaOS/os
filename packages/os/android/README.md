@@ -1,8 +1,8 @@
 # Android distro layer
 
 This directory contains the brand vendor tree for building a privileged-system-app
-Android distribution (Cuttlefish for CI validation, Pixel codenames for real
-devices). The toolchain is brand-aware: any downstream brand can build its own
+Android distribution (Cuttlefish for CI validation and the canonical emulated
+OS boundary). The toolchain is brand-aware: any downstream brand can build its own
 distribution by supplying a JSON brand config + vendor tree.
 
 ## Layout
@@ -40,6 +40,7 @@ make build ARCH=x86_64            # build + launch + boot-validate a Cuttlefish 
 make build ARCH=arm64
 make build ARCH=riscv64
 make sim   ARCH=riscv64           # bring up + validate an already-built image
+make bootstrap                    # sync the pinned complete AOSP checkout
 make bootanimation                # render + pack the elizaOS boot splash (needs ImageMagick)
 ```
 
@@ -50,6 +51,15 @@ Each target drives the brand-aware orchestrator in
 x86_64 host with KVM and a synced AOSP checkout (`AOSP_ROOT`, default
 `$HOME/aosp`); riscv64 Cuttlefish runs under QEMU TCG (no KVM) and boots
 slower — `sim.mjs` sizes its boot timeout for that automatically.
+
+The complete platform checkout is reproducible from this repository: `make
+bootstrap AOSP_ROOT=/path/to/aosp` initializes and syncs the manifest locked in
+`aosp.lock.json`. The lock records both the Android 17 release tag object and
+its peeled manifest commit; bootstrap verifies the exact commit before syncing
+and copies the lock into the checkout. The Make target first downloads the AOSP
+`repo` launcher into the ignored local cache and verifies its checked-in SHA-256;
+the Cuttlefish workflow performs the same provisioning on a clean runner.
+Release builds must not use an arbitrary `android-latest-release` workspace.
 
 `make build` rebuilds the privileged APK from the Eliza checkout, syncs
 `vendor/eliza`, validates the product layer against the AOSP source, runs
@@ -79,7 +89,12 @@ installable result to
 sideloads that exact product output; the raw `vendor/eliza/.../Eliza.apk`
 cannot be installed directly. A stock Pixel also will not accept an elizaOS
 platform-signed privileged package as a substitute for flashing the matching
-OS image.
+OS image. No Pixel product is advertised by this fork today: the locked public
+AOSP manifest omits the Pixel device projects, and Google requires separately
+licensed device binaries for hardware builds. Those inputs must be pinned and
+verified before a physical-device lunch target returns to `AndroidProducts.mk`.
+See the AOSP [source download requirements](https://source.android.com/docs/setup/download#obtaining-proprietary-binaries)
+and Google's [Pixel driver binaries](https://developers.google.com/android/drivers).
 
 `scripts/aosp/` contains device deployment and Cuttlefish runtime smoke
 orchestration. App compilation and agent-payload staging remain in the
@@ -105,6 +120,15 @@ elizaOS boot splash:
   gitignored; run `make bootanimation` before `make build` to bake the
   splash in. If the zip is absent, `eliza_common.mk` guards the copy and
   the image falls through to the stock AOSP animation.
+
+The image currently retains AOSP's real SystemUI implementation for status,
+navigation, and keyguard. Eliza owns HOME and the assistant/control surface; it
+does not claim to replace `frameworks/base/packages/SystemUI`. An earlier
+standalone React/native bridge scaffold was removed because no AOSP host copied
+or bound it, while `eliza_common.mk` still named its undefined Soong module.
+Any future SystemUI replacement must land as a build-resolvable, platform-signed
+module with a real surface host, keyguard integration, SELinux policy, and boot
+evidence—not as an unreferenced workspace package.
 
 ## AOSP assistant/full-control contract
 

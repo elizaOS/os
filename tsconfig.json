@@ -11,5 +11,5 @@
       "@elizaos/os-shared-system": ["./packages/os/shared-system/src/index.ts"]
     }
   },
-  "exclude": ["**/node_modules/**", "**/dist/**", "**/build/**", "linux/tails/**"]
+  "exclude": ["**/node_modules/**", "**/dist/**", "**/build/**"]
 }

@@ -19,7 +19,7 @@
 #
 # Tunables:
 #   ELIZAOS_ARCH            amd64 | arm64 | riscv64 (default: amd64)
-#   ELIZAOS_PROFILE         default | gui | secure | secure-gui
+#   ELIZAOS_PROFILE         default | gui
 #   ELIZAOS_OUT_DIR         override host-side output dir
 #   ELIZAOS_MIN_ISO_BYTES   override 200 MiB minimum
 set -euo pipefail
@@ -423,6 +423,29 @@ PY
     rsync -a "${ART}/" "${CHROOT_ART}/"
 }
 
+stage_packaged_app_for_live_build() {
+    PACKAGED_APP="${ELIZAOS_PACKAGED_APP_DIR:-/opt/elizaos-packaged-app}"
+    CHROOT_APP="${HERE}/config/includes.chroot/usr/share/elizaos/elizaos-app"
+
+    if [ ! -d "${PACKAGED_APP}" ]; then
+        echo "    no packaged elizaOS desktop app mounted at ${PACKAGED_APP}."
+        return 0
+    fi
+    if [ ! -x "${PACKAGED_APP}/bin/launcher" ]; then
+        echo "ERROR: packaged app is missing executable bin/launcher: ${PACKAGED_APP}" >&2
+        exit 69
+    fi
+    if [ ! -d "${PACKAGED_APP}/Resources/app/eliza-dist/node_modules" ]; then
+        echo "ERROR: packaged app is missing its offline runtime dependency closure." >&2
+        exit 69
+    fi
+
+    echo "    staging verified packaged elizaOS desktop runtime..."
+    remove_paths_recursive "${CHROOT_APP}"
+    mkdir -p "${CHROOT_APP}"
+    rsync -a "${PACKAGED_APP}/" "${CHROOT_APP}/"
+}
+
 # Clear stale live-build working state from any prior/interrupted run so each
 # build starts from a clean tree (cache/ is kept for download speed). Runs as
 # root here, so it can remove the root-owned chroot from earlier runs.
@@ -445,13 +468,23 @@ echo "    output dir:  ${OUT}"
 echo "    build ts:    ${BUILD_TS}"
 
 case "${PROFILE}" in
-    default|gui|secure|secure-gui) ;;
+    default|gui) ;;
     *)
         echo "ERROR: unsupported ELIZAOS_PROFILE=${PROFILE}" >&2
-        echo "       expected one of: default, gui, secure, secure-gui" >&2
+        echo "       expected one of: default, gui" >&2
         exit 64
         ;;
 esac
+
+if [ -d "${ELIZAOS_PACKAGED_APP_DIR:-/opt/elizaos-packaged-app}" ]; then
+    if [ "${ARCH}" != "amd64" ]; then
+        echo "ERROR: the currently published packaged desktop artifact is amd64-only; refusing to copy it into ${ARCH}." >&2
+        exit 69
+    fi
+elif [ "${PROFILE}" = "gui" ] && [ "${ARCH}" = "amd64" ]; then
+    echo "ERROR: amd64 GUI images require a mounted packaged elizaOS desktop artifact." >&2
+    exit 69
+fi
 
 ensure_foreign_binfmt
 patch_debootstrap_curl_downloader
@@ -466,16 +499,10 @@ ELIZAOS_ARCH="${ARCH}" "${HERE}/auto/config"
 rm -f "${HERE}/.lock"
 
 # Compose optional overlays on top of the base headless config.
-if [ "${PROFILE}" = "gui" ] || [ "${PROFILE}" = "secure-gui" ]; then
+if [ "${PROFILE}" = "gui" ]; then
     if [ -d "${HERE}/config/profiles/gui" ]; then
         echo "    overlaying gui profile..."
         cp -a "${HERE}/config/profiles/gui/." "${HERE}/config/"
-    fi
-fi
-if [ "${PROFILE}" = "secure" ] || [ "${PROFILE}" = "secure-gui" ]; then
-    if [ -d "${HERE}/config/profiles/secure" ]; then
-        echo "    overlaying secure profile..."
-        cp -a "${HERE}/config/profiles/secure/." "${HERE}/config/"
     fi
 fi
 
@@ -499,6 +526,7 @@ else
     echo "    convert (ImageMagick) not found — skipping brand-asset generation." >&2
 fi
 stage_agent_artifacts_for_live_build
+stage_packaged_app_for_live_build
 
 # ── Step 2: lb build ─────────────────────────────────────────────────
 echo

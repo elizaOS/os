@@ -1,0 +1,1 @@
+%sudo ALL=(root) NOPASSWD: /usr/local/lib/elizaos/capability-runner *

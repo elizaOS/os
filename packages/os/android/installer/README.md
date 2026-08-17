@@ -7,7 +7,9 @@ confirmed, flashing ElizaOS Android build artifacts to a device through
 The helper is intentionally conservative:
 
 - It defaults to `--dry-run` and only prints the command plan.
-- Flashing requires both `--execute` and `--confirm-flash`.
+- Flashing requires `--execute`, `--confirm-flash`, and a release manifest
+  whose artifact hashes match and whose device tier is `lab-validated`.
+- Confirmed flashing rejects ad-hoc `--image` overrides and `--skip-preflight`.
 - Bootloader unlocking is never automated. Unlock devices manually and only
   after confirming the data-loss and warranty implications for that device.
 - Data wipe is never implied. Add `--wipe-data` only when you intend to run
@@ -22,6 +24,7 @@ The helper is intentionally conservative:
 - An unlocked bootloader before any image is flashed.
 - Image artifacts from an Android build, usually from
   `out/target/product/<device>/`.
+- A validated release manifest for the exact artifact set and device codename.
 
 ## Dry-run plan
 
@@ -95,8 +98,8 @@ android/installer/install-elizaos-android.sh \
   --artifact-dir out/target/product/caiman
 ```
 
-`--skip-preflight` exists for lab automation that already performs equivalent
-checks. Do not use it for manual flashing.
+`--skip-preflight` is available only for non-flashing diagnostics. The helper
+refuses it whenever `--confirm-flash` is present.
 
 ## Flashing
 
@@ -107,6 +110,7 @@ inputs and add both execution flags:
 android/installer/install-elizaos-android.sh \
   --device ABC123 \
   --artifact-dir out/target/product/caiman \
+  --manifest path/to/release-manifest.json \
   --execute \
   --confirm-flash
 ```
@@ -118,6 +122,7 @@ Android:
 android/installer/install-elizaos-android.sh \
   --device ABC123 \
   --artifact-dir out/target/product/caiman \
+  --manifest path/to/release-manifest.json \
   --execute \
   --confirm-flash \
   --reboot-after-flash
@@ -181,7 +186,8 @@ available:
 
 ```powershell
 packages\os\android\installer\install-elizaos-android.ps1 `
-  -ArtifactDir out\target\product\caiman
+  -ArtifactDir out\target\product\caiman `
+  -Manifest path\to\release-manifest.json
 ```
 
 Device-free checks for this folder live in `tests/run-tests.sh`.
