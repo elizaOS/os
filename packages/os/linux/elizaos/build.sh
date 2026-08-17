@@ -446,10 +446,10 @@ stage_packaged_app_for_live_build() {
     rsync -a "${PACKAGED_APP}/" "${CHROOT_APP}/"
 }
 
-# Clear stale live-build working state from any prior/interrupted run so each
-# build starts from a clean tree (cache/ is kept for download speed). Runs as
-# root here, so it can remove the root-owned chroot from earlier runs.
-remove_paths_recursive "${HERE}/.build" "${HERE}/binary" "${HERE}/chroot" \
+# Clear every live-build working directory from any prior/interrupted run so
+# binary assembly cannot restore an incomplete chroot from a stale cache. Runs
+# as root here, so it can remove root-owned state left by earlier builds.
+remove_paths_recursive "${HERE}/.build" "${HERE}/binary" "${HERE}/cache" "${HERE}/chroot" \
     "${HERE}/config/binary" "${HERE}/config/bootstrap" "${HERE}/config/chroot" \
     "${HERE}/config/common" "${HERE}/config/source" \
     "${HERE}"/chroot.* "${HERE}"/binary.* "${HERE}"/live-image-*

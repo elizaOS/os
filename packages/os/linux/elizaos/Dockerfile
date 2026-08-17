@@ -39,11 +39,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         binfmt-support \
         python3 \
         python3-yaml \
-        apt-cacher-ng \
         rsync \
         git \
         curl \
-        ca-certificates \
         sudo \
         debian-archive-keyring \
         zstd \

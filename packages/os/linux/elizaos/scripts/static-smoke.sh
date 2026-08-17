@@ -54,6 +54,14 @@ fi
 # installer packages that download blobs during the build.
 grep -q '^FIRMWARE_OPTIONS="--firmware-chroot false --firmware-binary false"$' auto/config \
     || { echo "FIRMWARE DISCOVERY ENABLED: declare firmware explicitly"; fail=1; }
+grep -q '^    --cache false \\$' auto/config \
+    || { echo "LIVE-BUILD CACHE ENABLED: release builds must not restore stale chroots"; fail=1; }
+grep -q '"${HERE}/binary" "${HERE}/cache" "${HERE}/chroot"' build.sh \
+    || { echo "STALE CACHE RETENTION: build.sh must remove the live-build cache"; fail=1; }
+if grep -q 'apt-cacher-ng' Dockerfile; then
+    echo "UNWIRED BUILD CACHE: apt-cacher-ng must not be installed when caching is disabled"
+    fail=1
+fi
 if grep -R -E -n '^(indi-dsi|dahdi-firmware-nonfree|firmware-b43-installer|firmware-b43legacy-installer)$' config/package-lists config/profiles 2>/dev/null; then
     echo "UNBOUNDED FIRMWARE PACKAGE: remove unrelated or mutable installer package"
     fail=1
