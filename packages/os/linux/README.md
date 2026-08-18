@@ -41,6 +41,12 @@ equal [`elizaos/app-source.lock.json`](./elizaos/app-source.lock.json). The
 builder rejects any other application bytes and records both that source commit
 and a deterministic packaged-tree digest in the ISO manifest.
 
+Debian's builder base plus the trixie main, updates, and security archives are
+locked in [`elizaos/debian-snapshot.lock.json`](./elizaos/debian-snapshot.lock.json).
+Before live-build runs, the builder downloads all three immutable Release files
+over HTTPS and rejects any digest drift. The resulting manifest records the
+snapshot serial and base-image digest.
+
 The direct entrypoint is equivalent:
 
 ```bash
