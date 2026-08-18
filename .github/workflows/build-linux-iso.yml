@@ -133,6 +133,7 @@ jobs:
         run: |
           set -euo pipefail
           make -C "${ELIZAOS_LINUX_VARIANT}" lint
+          bash "${ELIZAOS_LINUX_VARIANT}/scripts/smoke-test-iso.test.sh"
 
       - name: Build ISO (amd64)
         working-directory: ${{ env.LINUX_DIR }}
@@ -200,7 +201,7 @@ jobs:
           if [ -e /dev/kvm ]; then
             sudo chmod 0666 /dev/kvm
           fi
-          bash "${LINUX_DIR}/scripts/smoke-test-iso.sh" "${{ steps.iso.outputs.path }}"
+          bash "${LINUX_DIR}/elizaos/scripts/smoke-test-iso.sh" "${{ steps.iso.outputs.path }}"
 
       - name: Upload ISO boot diagnostics
         if: always()
