@@ -131,6 +131,7 @@ PY
         }
     done
     remove_paths_recursive "${SNAPSHOT_TMP}"
+    echo "    verified Debian snapshot ${DEBIAN_SNAPSHOT_SERIAL}: main, updates, security Release digests"
 }
 
 if ! command -v lb >/dev/null 2>&1; then
