@@ -226,18 +226,46 @@ if ! "${XORRISO_BIN}" \
     fail "unable to inspect ISO boot equipment"
 fi
 
-require_el_torito_platform() {
+el_torito_image_index() {
     local platform="$1"
+    local index
 
-    if ! grep -Eq \
-        "El Torito boot img[[:space:]]*:[[:space:]]*[0-9]+[[:space:]]+${platform}[[:space:]]+y[[:space:]]" \
-        "${EL_TORITO_REPORT}"; then
+    index="$(awk -v platform="${platform}" '
+        $1 == "El" && $2 == "Torito" && $3 == "boot" && $4 == "img" &&
+        $5 == ":" && $7 == platform && $8 == "y" {
+            print $6
+            exit
+        }
+    ' "${EL_TORITO_REPORT}")"
+    if [ -z "${index}" ]; then
         fail "ISO has no bootable ${platform} El Torito image"
     fi
+    printf '%s\n' "${index}"
 }
 
-require_el_torito_platform BIOS
-require_el_torito_platform UEFI
+el_torito_image_path() {
+    local platform="$1"
+    local image_index="$2"
+    local path
+
+    path="$(awk -v image_index="${image_index}" '
+        $1 == "El" && $2 == "Torito" && $3 == "img" && $4 == "path" &&
+        $5 == ":" && $6 == image_index {
+            print $7
+            exit
+        }
+    ' "${EL_TORITO_REPORT}")"
+    case "${path}" in
+        /*) ;;
+        *) fail "ISO ${platform} El Torito image ${image_index} has no absolute boot asset path" ;;
+    esac
+    printf '%s\n' "${path}"
+}
+
+BIOS_IMAGE_INDEX="$(el_torito_image_index BIOS)"
+UEFI_IMAGE_INDEX="$(el_torito_image_index UEFI)"
+BIOS_IMAGE_PATH="$(el_torito_image_path BIOS "${BIOS_IMAGE_INDEX}")"
+UEFI_IMAGE_PATH="$(el_torito_image_path UEFI "${UEFI_IMAGE_INDEX}")"
 
 extract_required() {
     local source_path="$1"
@@ -255,9 +283,8 @@ extract_required() {
         fail "required ISO boot asset is empty: ${source_path}"
 }
 
-extract_required "/isolinux/isolinux.bin" "${TMP}/isolinux.bin"
-extract_required "/EFI/BOOT/BOOTX64.EFI" "${TMP}/BOOTX64.EFI"
-extract_required "/EFI/debian/grub.cfg" "${TMP}/grub.cfg"
+extract_required "${BIOS_IMAGE_PATH}" "${TMP}/bios-boot.img"
+extract_required "${UEFI_IMAGE_PATH}" "${TMP}/uefi-boot.img"
 
 monitor_send() {
     local command="$1"
@@ -483,7 +510,7 @@ prove_guest_readiness() {
     fail "${firmware} firmware did not reach Linux userspace before the smoke timeout"
 }
 
-echo "ISO boot equipment: bootable BIOS and UEFI El Torito entries present"
+echo "ISO boot equipment: BIOS ${BIOS_IMAGE_PATH}; UEFI ${UEFI_IMAGE_PATH}"
 for firmware in bios uefi; do
     echo "Starting ${firmware} firmware boot and canonical desktop smoke (timeout: ${BOOT_TIMEOUT_SECONDS}s)"
     launch_firmware_vm "${firmware}"

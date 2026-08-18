@@ -30,6 +30,12 @@ if [[ " $* " == *" -report_el_torito plain "* ]]; then
     if [ "${FAKE_XORRISO_MODE:-ok}" != "no-uefi-entry" ]; then
         echo "El Torito boot img :   2  UEFI  y   none  0x0000  0x00   4096          46"
     fi
+    if [ "${FAKE_XORRISO_MODE:-ok}" != "no-bios-path" ]; then
+        echo "El Torito img path :   1  /boot/grub/grub_eltorito"
+    fi
+    if [ "${FAKE_XORRISO_MODE:-ok}" != "no-uefi-path" ]; then
+        echo "El Torito img path :   2  /boot/grub/efi.img"
+    fi
     exit 0
 fi
 
@@ -49,7 +55,7 @@ if [ -z "${source_path}" ] || [ -z "${destination}" ]; then
     exit 64
 fi
 if [ "${FAKE_XORRISO_MODE:-ok}" = "no-uefi-asset" ] &&
-    [ "${source_path}" = "/EFI/BOOT/BOOTX64.EFI" ]; then
+    [ "${source_path}" = "/boot/grub/efi.img" ]; then
     echo "Cannot find path ${source_path}" >&2
     exit 1
 fi
@@ -165,7 +171,13 @@ run_expect_failure \
 FAKE_XORRISO_MODE=no-uefi-asset
 export FAKE_XORRISO_MODE
 run_expect_failure \
-    "required ISO boot asset is missing: /EFI/BOOT/BOOTX64.EFI" \
+    "required ISO boot asset is missing: /boot/grub/efi.img" \
+    "${SCRIPT}" "${ISO}"
+
+FAKE_XORRISO_MODE=no-bios-path
+export FAKE_XORRISO_MODE
+run_expect_failure \
+    "ISO BIOS El Torito image 1 has no absolute boot asset path" \
     "${SCRIPT}" "${ISO}"
 
 FAKE_XORRISO_MODE=ok
