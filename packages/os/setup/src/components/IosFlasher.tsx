@@ -10,7 +10,7 @@ import type {
   IosInstallStepId,
   IosInstallStepStatus,
 } from "../backend/ios-types";
-import { authorizedFetch } from "../runtime/server-url";
+import { authorizedFetch, backendRoute } from "../runtime/server-url";
 
 // ── Design tokens ──────────────────────────────────────────────────────────────
 const C = {
@@ -228,7 +228,9 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
     "found" | "none" | "unavailable"
   > => {
     try {
-      const res = await authorizedFetch(`${serverUrl}/ios/devices`);
+      const res = await authorizedFetch(
+        backendRoute(serverUrl, "/ios/devices"),
+      );
       if (!res.ok) return "unavailable";
       const data = (await res.json()) as IosDevice[];
       setDevices(data);
@@ -239,8 +241,8 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
 
         // Fetch region notice and apps in parallel
         const [regionRes, appsRes] = await Promise.all([
-          authorizedFetch(`${serverUrl}/ios/region`),
-          authorizedFetch(`${serverUrl}/ios/apps`),
+          authorizedFetch(backendRoute(serverUrl, "/ios/region")),
+          authorizedFetch(backendRoute(serverUrl, "/ios/apps")),
         ]);
         if (regionRes.ok)
           setRegionNotice(
@@ -317,11 +319,14 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
     setError(null);
     setLoading(true);
     try {
-      const res = await authorizedFetch(`${serverUrl}/ios/authenticate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ appleId, password }),
-      });
+      const res = await authorizedFetch(
+        backendRoute(serverUrl, "/ios/authenticate"),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ appleId, password }),
+        },
+      );
       const data = (await res.json()) as IosAuthState;
       setAuthState(data);
       if (data.status === "awaiting-2fa") {
@@ -345,7 +350,7 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
     setError(null);
     setLoading(true);
     try {
-      const res = await authorizedFetch(`${serverUrl}/ios/2fa`, {
+      const res = await authorizedFetch(backendRoute(serverUrl, "/ios/2fa"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code: twoFaCode }),
@@ -369,26 +374,32 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
     setLoading(true);
     setError(null);
     try {
-      const planRes = await authorizedFetch(`${serverUrl}/ios/plan`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          deviceUdid: selectedDevice.udid,
-          appId: selectedApp.id,
-          appleId: auth.appleId ?? appleId,
-        }),
-      });
+      const planRes = await authorizedFetch(
+        backendRoute(serverUrl, "/ios/plan"),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            deviceUdid: selectedDevice.udid,
+            appId: selectedApp.id,
+            appleId: auth.appleId ?? appleId,
+          }),
+        },
+      );
       const planData = (await planRes.json()) as IosInstallPlan;
       setPlan(planData);
       setSteps(planData.steps);
       setScreen("installing");
 
       // SSE execute stream
-      const execRes = await authorizedFetch(`${serverUrl}/ios/execute`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan: planData }),
-      });
+      const execRes = await authorizedFetch(
+        backendRoute(serverUrl, "/ios/execute"),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ plan: planData }),
+        },
+      );
 
       if (!execRes.body) throw new Error("No response body");
       const reader = execRes.body.getReader();

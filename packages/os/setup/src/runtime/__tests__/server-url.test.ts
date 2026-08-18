@@ -1,6 +1,6 @@
 // Exercises the AOSP setup flasher backend and dependency gates.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getServerToken, getServerUrl } from "../server-url";
+import { backendRoute, getServerToken, getServerUrl } from "../server-url";
 
 declare global {
   interface Window {
@@ -71,5 +71,23 @@ describe("getServerUrl", () => {
     vi.stubEnv("DEV", false);
     window.__ELIZA_SERVER_URL__ = "http://127.0.0.1:4242";
     expect(getServerUrl()).toBe("http://127.0.0.1:4242");
+  });
+});
+
+describe("backendRoute", () => {
+  it("uses a packaged direct backend base without adding a proxy prefix", () => {
+    expect(backendRoute("http://127.0.0.1:4242", "/devices")).toBe(
+      "http://127.0.0.1:4242/devices",
+    );
+  });
+
+  it("uses the browser development proxy exactly once", () => {
+    expect(backendRoute("/api", "/devices")).toBe("/api/devices");
+    expect(backendRoute("/api/", "/ios/devices")).toBe("/api/ios/devices");
+  });
+
+  it("rejects ambiguous empty bases and malformed routes", () => {
+    expect(() => backendRoute("", "/devices")).toThrow(/must not be empty/);
+    expect(() => backendRoute("/api", "devices")).toThrow(/must start/);
   });
 });
