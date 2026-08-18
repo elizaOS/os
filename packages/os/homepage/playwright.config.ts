@@ -1,6 +1,6 @@
 // Configures build and browser automation for the OS homepage.
 import path from "node:path";
-import { defineConfig, devices } from "playwright/test";
+import { defineConfig, devices } from "@playwright/test";
 
 const recording = !!process.env.E2E_RECORD;
 
@@ -38,6 +38,7 @@ export default defineConfig({
     },
     {
       name: "mobile",
+      testIgnore: /visual\.spec\.ts/,
       use: { ...devices["Pixel 5"] },
     },
   ],

@@ -1,5 +1,5 @@
 // Exercises the OS homepage route, checkout, and visual behavior.
-import { expect, type Page, test } from "playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 async function installCheckoutMocks(
   page: Page,
@@ -11,7 +11,7 @@ async function installCheckoutMocks(
     headers: Record<string, string>;
   }> = [];
 
-  await page.route("https://api.elizacloud.ai/**", async (route) => {
+  await page.route("https://api.eliza.app/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     let body: unknown = null;

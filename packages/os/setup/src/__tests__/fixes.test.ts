@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   downloadAndVerifyArtifacts,
-  MOCK_BUILDS,
+  validateDiscoveredManifest,
 } from "../backend/adb-backend";
 import {
   IosAuthNotReadyError,
@@ -20,6 +20,7 @@ import type {
   FlashStepId,
   FlashStepStatus,
 } from "../backend/types";
+import { FIXTURE_BUILDS } from "./fixtures";
 
 // ---------------------------------------------------------------------------
 // wipeData plumbing
@@ -39,7 +40,7 @@ describe("FlashRequest wipeData plumbing", () => {
   });
 
   it("AospBuild type accepts wipeData boolean", () => {
-    const mockBuild = MOCK_BUILDS[0];
+    const mockBuild = FIXTURE_BUILDS[0];
     expect(mockBuild).toBeDefined();
     if (!mockBuild) throw new Error("Expected at least one mock build");
 
@@ -57,7 +58,7 @@ describe("FlashRequest wipeData plumbing", () => {
 
 describe("dry-run gating", () => {
   function buildPlan(dryRun: boolean): FlashPlan {
-    const build = MOCK_BUILDS[0];
+    const build = FIXTURE_BUILDS[0];
     expect(build).toBeDefined();
     if (!build) throw new Error("Expected at least one mock build");
 
@@ -124,6 +125,31 @@ describe("dry-run gating", () => {
 // ---------------------------------------------------------------------------
 
 describe("downloadAndVerifyArtifacts", () => {
+  function manifestWithArtifacts(
+    artifacts: AndroidReleaseManifest["artifacts"],
+  ): AndroidReleaseManifest {
+    return {
+      schemaVersion: 1,
+      releaseId: "test-release",
+      generatedAt: "2026-08-17T00:00:00Z",
+      buildFingerprint: "elizaos/caiman/caiman:16/test:user/test-keys",
+      buildType: "user",
+      supportedDevices: [
+        {
+          codename: "caiman",
+          marketingName: "Pixel 9 Pro XL",
+          tier: "lab-validated",
+          slots: ["a", "b"],
+          dynamicPartitions: true,
+          rollbackSupported: true,
+        },
+      ],
+      artifacts,
+      validation: { bootTimeoutSeconds: 300 },
+      rollback: { previousReleaseId: "stock" },
+    };
+  }
+
   it("downloads each artifact, verifies sha256, and returns the path map", async () => {
     const tmp = await mkdtemp(join(tmpdir(), "elizaos-setup-test-"));
     try {
@@ -132,23 +158,24 @@ describe("downloadAndVerifyArtifacts", () => {
       const shaA = createHash("sha256").update(contentA).digest("hex");
       const shaB = createHash("sha256").update(contentB).digest("hex");
 
-      const manifest: AndroidReleaseManifest = {
-        releaseId: "test-release",
-        artifacts: [
-          {
-            name: "boot.img",
-            url: "https://example/boot.img",
-            sha256: shaA,
-            sizeBytes: contentA.byteLength,
-          },
-          {
-            name: "vendor_boot.img",
-            url: "https://example/vendor_boot.img",
-            sha256: shaB,
-            sizeBytes: contentB.byteLength,
-          },
-        ],
-      };
+      const manifest = manifestWithArtifacts([
+        {
+          partition: "boot",
+          filename: "boot.img",
+          sha256: shaA,
+          sizeBytes: contentA.byteLength,
+          required: true,
+          fastbootMode: "bootloader",
+        },
+        {
+          partition: "vendor_boot",
+          filename: "vendor_boot.img",
+          sha256: shaB,
+          sizeBytes: contentB.byteLength,
+          required: true,
+          fastbootMode: "bootloader",
+        },
+      ]);
 
       const fetchImpl = vi.fn(async (url: string) => {
         const body = url.endsWith("/boot.img") ? contentA : contentB;
@@ -158,6 +185,12 @@ describe("downloadAndVerifyArtifacts", () => {
       const progress = vi.fn();
       const paths = await downloadAndVerifyArtifacts(
         manifest,
+        {
+          "boot.img":
+            "https://github.com/elizaOS/os/releases/download/test/boot.img",
+          "vendor_boot.img":
+            "https://github.com/elizaOS/os/releases/download/test/vendor_boot.img",
+        },
         tmp,
         progress,
         fetchImpl,
@@ -183,30 +216,90 @@ describe("downloadAndVerifyArtifacts", () => {
     try {
       const content = Buffer.from("boot image bytes");
 
-      const manifest: AndroidReleaseManifest = {
-        artifacts: [
-          {
-            name: "boot.img",
-            url: "https://example/boot.img",
-            sha256: "deadbeef".padEnd(64, "0"),
-            sizeBytes: content.byteLength,
-          },
-        ],
-      };
+      const manifest = manifestWithArtifacts([
+        {
+          partition: "boot",
+          filename: "boot.img",
+          sha256: "deadbeef".padEnd(64, "0"),
+          sizeBytes: content.byteLength,
+          required: true,
+          fastbootMode: "bootloader",
+        },
+      ]);
 
       const fetchImpl = vi.fn(
         async () => new Response(content),
       ) as unknown as typeof fetch;
 
       await expect(
-        downloadAndVerifyArtifacts(manifest, tmp, () => {}, fetchImpl),
-      ).rejects.toThrow(/SHA-256 mismatch/);
+        downloadAndVerifyArtifacts(
+          manifest,
+          {
+            "boot.img":
+              "https://github.com/elizaOS/os/releases/download/test/boot.img",
+          },
+          tmp,
+          () => {},
+          fetchImpl,
+        ),
+      ).rejects.toThrow(/Integrity mismatch/);
 
       // No final file should exist
       await expect(readFile(join(tmp, "boot.img"))).rejects.toThrow();
     } finally {
       await rm(tmp, { recursive: true, force: true });
     }
+  });
+
+  it("rejects a same-hash response with the wrong byte count", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "elizaos-setup-test-"));
+    try {
+      const content = Buffer.from("boot image bytes");
+      const manifest = manifestWithArtifacts([
+        {
+          partition: "boot",
+          filename: "boot.img",
+          sha256: createHash("sha256").update(content).digest("hex"),
+          sizeBytes: content.byteLength + 1,
+          required: true,
+          fastbootMode: "bootloader",
+        },
+      ]);
+      const fetchImpl = vi.fn(
+        async () => new Response(content),
+      ) as unknown as typeof fetch;
+
+      await expect(
+        downloadAndVerifyArtifacts(
+          manifest,
+          {
+            "boot.img":
+              "https://github.com/elizaOS/os/releases/download/test/boot.img",
+          },
+          tmp,
+          () => {},
+          fetchImpl,
+        ),
+      ).rejects.toThrow(/Integrity mismatch/);
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects artifact paths that can escape the staging directory", () => {
+    const manifest = manifestWithArtifacts([
+      {
+        partition: "boot",
+        filename: "../boot.img",
+        sha256: "a".repeat(64),
+        sizeBytes: 1024,
+        required: true,
+        fastbootMode: "bootloader",
+      },
+    ]);
+    expect(() => validateDiscoveredManifest(manifest)).toThrow(
+      /invalid artifact contract/,
+    );
   });
 });
 

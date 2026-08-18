@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
   [string]$ArtifactDir,
+  [string]$Manifest,
   [string]$Device,
   [string]$Slot,
   [string[]]$Image = @(),
@@ -36,6 +37,7 @@ if (-not (Test-Path $bashInstaller)) {
 
 $argsList = @()
 if ($ArtifactDir) { $argsList += @("--artifact-dir", $ArtifactDir) }
+if ($Manifest) { $argsList += @("--manifest", $Manifest) }
 foreach ($spec in $Image) { $argsList += @("--image", $spec) }
 if ($Device) { $argsList += @("--device", $Device) }
 if ($Slot) { $argsList += @("--slot", $Slot) }

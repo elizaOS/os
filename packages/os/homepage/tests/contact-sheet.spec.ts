@@ -2,7 +2,7 @@
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { test } from "playwright/test";
+import { test } from "@playwright/test";
 import { captureScreenshotWithQualityRetry } from "./screenshot-quality";
 
 const outDir = join(

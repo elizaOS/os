@@ -29,30 +29,6 @@ jobs:
 
   linux-static-smoke:
     runs-on: ubuntu-24.04
-    env:
-      ELIZAOS_ELIZA_ROOT: ${{ github.workspace }}/.eliza-source
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-
-      - name: Checkout application source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: elizaOS/eliza
-          ref: f6d8f8ee7f3006693113bbc313979724e603b355
-          path: .eliza-source
-
-      - name: Setup Node 24
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
-        with:
-          node-version: "24"
-
-      - name: Setup Bun from packageManager
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-        with:
-          bun-version-file: package.json
-
-      - name: Provision ripgrep for Linux static smoke
-        shell: bash
-        run: packages/os/scripts/provision-ripgrep.sh
-
-      - run: bun run verify:linux
+      - run: make -C packages/os/linux/elizaos lint

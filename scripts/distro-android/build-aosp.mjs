@@ -18,6 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { assertPinnedAospCheckout } from "./bootstrap-aosp.mjs";
 import { loadBrandFromArgv } from "./brand-config.mjs";
 import { main as syncToAospMain } from "./sync-to-aosp.mjs";
 import { main as validateMain } from "./validate.mjs";
@@ -229,6 +230,7 @@ export async function main(argv = process.argv.slice(2)) {
   const args = parseSubArgs(remaining);
   assertBuildHost({ brand, launch: args.launch });
   assertAospRoot(args.aospRoot);
+  assertPinnedAospCheckout(args.aospRoot);
 
   const brandConfigArgs = ["--brand-config", brand.brandConfigPath];
 

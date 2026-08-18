@@ -9,7 +9,7 @@ installers, platform image tooling, and OS release automation.
 ```text
 packages/os/         OS source preserved at its original monorepo path
   android/           AOSP vendor tree, products, policy, and system UI
-  linux/             Debian/Tails-derived live image and VM builds
+  linux/             Canonical Debian live images and package builds
   setup/             AOSP flashing application
   usb-installer/     Cross-platform USB imaging application
   homepage/          OS product and release site

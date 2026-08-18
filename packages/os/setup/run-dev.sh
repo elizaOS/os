@@ -20,6 +20,9 @@ echo ""
 PORT="${ELIZA_SETUP_PORT:-3743}"
 export ELIZA_SETUP_PORT="$PORT"
 export VITE_ELIZA_SETUP_SERVER_URL="http://127.0.0.1:${PORT}"
+ELIZA_SETUP_TOKEN="${ELIZA_SETUP_TOKEN:-$(openssl rand -hex 32)}"
+export ELIZA_SETUP_TOKEN
+export VITE_ELIZA_SETUP_TOKEN="$ELIZA_SETUP_TOKEN"
 
 bun run server.ts 2>>"$LOG_FILE" &
 SERVER_PID=$!

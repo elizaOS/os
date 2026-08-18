@@ -120,6 +120,8 @@ TEMPLATE_STRING_PLACEHOLDERS: dict[str, str] = {
     "@@BUILD_TIMESTAMP@@": "template",
     "@@ARCH@@": "riscv64",
     "@@PROFILE@@": "template",
+    "@@DEBIAN_SNAPSHOT_SERIAL@@": "20260817T000000Z",
+    "@@DEBIAN_BASE_IMAGE@@": "debian:trixie@sha256:" + "0" * 64,
 }
 # Sentinel string values used by ``_is_template_payload`` to recognise an
 # un-promoted manifest (filled or templated). Cross-check these against
@@ -295,6 +297,93 @@ def _artifact_schema(schema: dict) -> dict:
         ) from exc
 
 
+def _schema_type_matches(value: object, expected: str) -> bool:
+    if expected == "null":
+        return value is None
+    if expected == "object":
+        return isinstance(value, dict)
+    if expected == "array":
+        return isinstance(value, list)
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "boolean":
+        return isinstance(value, bool)
+    return False
+
+
+def _validate_schema_subset(value: object, schema: dict, path: str = "<root>") -> list[str]:
+    """Validate the JSON-Schema features used by the release artifact contract.
+
+    Release hosts must not silently skip validation merely because the optional
+    third-party jsonschema package is absent. This deliberately small validator
+    implements every keyword present in properties.artifacts.items; unsupported
+    keywords fail closed instead of being ignored.
+    """
+    supported = {
+        "type", "additionalProperties", "required", "properties", "enum",
+        "const", "minLength", "minimum", "pattern", "minItems", "uniqueItems",
+        "items", "title", "description",
+    }
+    unknown = sorted(set(schema) - supported)
+    if unknown:
+        return [f"schema uses unsupported keyword(s) at {path}: {', '.join(unknown)}"]
+
+    expected = schema.get("type")
+    if expected is not None:
+        expected_types = expected if isinstance(expected, list) else [expected]
+        if not all(isinstance(item, str) for item in expected_types):
+            return [f"schema type is malformed at {path}"]
+        if not any(_schema_type_matches(value, item) for item in expected_types):
+            return [f"{path}: expected {' or '.join(expected_types)}"]
+
+    if "const" in schema and value != schema["const"]:
+        return [f"{path}: must equal {schema['const']!r}"]
+    if "enum" in schema and value not in schema["enum"]:
+        return [f"{path}: {value!r} is not an allowed value"]
+
+    errors: list[str] = []
+    if isinstance(value, str):
+        if isinstance(schema.get("minLength"), int) and len(value) < schema["minLength"]:
+            errors.append(f"{path}: string is shorter than {schema['minLength']}")
+        pattern = schema.get("pattern")
+        if isinstance(pattern, str) and re.search(pattern, value) is None:
+            errors.append(f"{path}: string does not match {pattern!r}")
+    elif isinstance(value, int) and not isinstance(value, bool):
+        if isinstance(schema.get("minimum"), int) and value < schema["minimum"]:
+            errors.append(f"{path}: value is below {schema['minimum']}")
+    elif isinstance(value, list):
+        if isinstance(schema.get("minItems"), int) and len(value) < schema["minItems"]:
+            errors.append(f"{path}: array has fewer than {schema['minItems']} items")
+        if schema.get("uniqueItems") is True:
+            canonical = [json.dumps(item, sort_keys=True, separators=(",", ":")) for item in value]
+            if len(canonical) != len(set(canonical)):
+                errors.append(f"{path}: array items are not unique")
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            for index, item in enumerate(value):
+                errors.extend(_validate_schema_subset(item, item_schema, f"{path}/{index}"))
+    elif isinstance(value, dict):
+        properties = schema.get("properties", {})
+        required = schema.get("required", [])
+        if not isinstance(properties, dict) or not isinstance(required, list):
+            errors.append(f"schema object keywords are malformed at {path}")
+            return errors
+        for key in required:
+            if key not in value:
+                errors.append(f"{path}: missing required property {key}")
+        if schema.get("additionalProperties") is False:
+            for key in value:
+                if key not in properties:
+                    errors.append(f"{path}: additional property {key} is not allowed")
+        for key, child in value.items():
+            child_schema = properties.get(key)
+            if isinstance(child_schema, dict):
+                errors.extend(_validate_schema_subset(child, child_schema, f"{path}/{key}"))
+    return errors
+
+
 def _is_template_payload(payload: dict) -> bool:
     """A template payload still carries unfilled sentinels.
 
@@ -331,15 +420,12 @@ def _select_manifest(variant_dir: Path) -> tuple[Path, dict, bool]:
 
 def check_schema(manifest: dict, schema: dict) -> list[GateResult]:
     """Validate the variant manifest as a single ``artifacts[]`` entry."""
-    if jsonschema is None:
-        return [
-            GateResult(
-                "BLOCKED",
-                "python dependency missing: jsonschema; run "
-                "`python3 -m pip install jsonschema`",
-            )
-        ]
     artifact_schema = _artifact_schema(schema)
+    if jsonschema is None:
+        errors = _validate_schema_subset(manifest, artifact_schema)
+        if not errors:
+            return [GateResult("PASS", "manifest matches artifacts[] schema fragment (built-in validator)")]
+        return [GateResult("FAIL", f"schema violation at {message}") for message in errors]
     validator = jsonschema.Draft202012Validator(artifact_schema)
     errors = sorted(validator.iter_errors(manifest), key=lambda err: list(err.path))
     if not errors:

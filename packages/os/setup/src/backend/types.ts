@@ -21,23 +21,43 @@ export interface AospBuild {
   manifestUrl: string;
   /** local path if pre-built artifacts are already available */
   artifactDir?: string;
+  /** local validated manifest for pre-built artifacts */
+  manifestPath?: string;
+  /** release manifest retained from authoritative discovery */
+  manifest?: AndroidReleaseManifest;
+  /** GitHub release asset URLs keyed by exact artifact filename */
+  artifactUrls?: Record<string, string>;
   sizeBytes: number;
   /** When true, flash-partitions step appends --wipe-data (factory reset). */
   wipeData?: boolean;
 }
 
 export interface ManifestArtifact {
-  name: string;
-  url: string;
+  partition: string;
+  filename: string;
   sha256: string;
   sizeBytes: number;
+  required: boolean;
+  fastbootMode: "bootloader" | "fastbootd";
 }
 
 export interface AndroidReleaseManifest {
-  releaseId?: string;
-  generatedAt?: string;
-  supportedDevices?: Array<{ codename?: string; marketingName?: string }>;
+  schemaVersion: 1;
+  releaseId: string;
+  generatedAt: string;
+  buildFingerprint: string;
+  buildType?: "user" | "userdebug" | "eng" | "unknown";
+  supportedDevices: Array<{
+    codename: string;
+    marketingName?: string;
+    tier: "lab-validated" | "candidate" | "manual" | "blocked";
+    slots: Array<"a" | "b" | "none">;
+    dynamicPartitions: boolean;
+    rollbackSupported: boolean;
+  }>;
   artifacts: ManifestArtifact[];
+  validation: Record<string, unknown>;
+  rollback: Record<string, unknown>;
 }
 
 export type FlashStepId =
@@ -87,6 +107,8 @@ export interface FlashPlan {
   artifactDir: string | null;
   /** Original request — used by executor to decide dry-run vs real run, wipeData, etc. */
   request: FlashRequest;
+  /** Short-lived, one-use server token binding execution to this exact plan. */
+  executionToken?: string;
   /** Per-artifact local paths after download (filled in by executor). */
   artifactPaths?: Record<string, string>;
 }

@@ -1,6 +1,6 @@
 {
   "id": "elizaos-linux-riscv64-template",
-  "kind": "raw-image",
+  "kind": "iso-hybrid",
   "target": {
     "platform": "linux",
     "architecture": "@@ARCH@@",
@@ -11,11 +11,17 @@
   "filename": "@@FILENAME@@",
   "downloadUrl": null,
   "status": "planned",
-  "sizeBytes": null,
+  "sizeBytes": @@SIZE_BYTES@@,
   "sha256": "@@SHA256@@",
   "signature": {
     "status": "pending",
     "url": null
+  },
+  "inputs": {
+    "debian": {
+      "snapshotSerial": "@@DEBIAN_SNAPSHOT_SERIAL@@",
+      "baseImage": "@@DEBIAN_BASE_IMAGE@@"
+    }
   },
   "validation": {
     "requiredEvidence": [
@@ -45,11 +51,11 @@
       },
       {
         "id": "riscv64-agent-runtime",
-        "status": "collected",
+        "status": "missing",
         "path": "evidence/riscv64_agent_runtime_smoke.json",
         "notes": "Staged RV64 agent runtime smoke and Bun/Node provenance."
       }
     ]
   },
-  "notes": "Template manifest remains planned until ISO, qemu-virt boot, GRUB, and agent-live evidence rows are collected. The staged riscv64 runtime smoke is already collected as static pre-ISO evidence."
+  "notes": "Template manifest remains planned until the exact ISO, qemu-virt boot, GRUB, agent-live, and staged runtime evidence rows are collected."
 }

@@ -10,8 +10,12 @@ WIPE_DATA=0
 REBOOT_AFTER_FLASH=0
 DEVICE_SERIAL=""
 ARTIFACT_DIR=""
+MANIFEST=""
 SLOT=""
+FLASH_SUPPORTED_CODENAMES=""
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 POST_FLASH_VALIDATOR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/validate-post-flash.sh"
+RELEASE_MANIFEST_VALIDATOR="$ROOT/scripts/validate-release-manifest.mjs"
 declare -a IMAGE_SPECS=()
 declare -a PLAN=()
 declare -a VALIDATION_PLAN=()
@@ -33,6 +37,7 @@ Required image input:
                               system_ext.img, and odm.img.
   --image PARTITION=PATH      Add an explicit image. May be repeated. Explicit
                               images override discovered artifact-dir images.
+  --manifest FILE             Validated release manifest. Required for flashing.
 
 Device and safety options:
   --device SERIAL             adb/fastboot serial. Required if multiple devices
@@ -136,6 +141,11 @@ parse_args() {
         DEVICE_SERIAL="$2"
         shift 2
         ;;
+      --manifest)
+        [[ $# -ge 2 ]] || die "--manifest requires a file"
+        MANIFEST="$2"
+        shift 2
+        ;;
       --slot)
         [[ $# -ge 2 ]] || die "--slot requires a slot name"
         SLOT="$2"
@@ -188,6 +198,32 @@ parse_args() {
   if [[ "$CONFIRM_FLASH" -eq 1 && "$EXECUTE" -ne 1 ]]; then
     die "--confirm-flash only has an effect with --execute"
   fi
+  if [[ "$CONFIRM_FLASH" -eq 1 ]]; then
+    [[ -n "$MANIFEST" ]] || die "--confirm-flash requires --manifest"
+    [[ -n "$ARTIFACT_DIR" ]] || die "--confirm-flash requires --artifact-dir"
+    [[ "${#IMAGE_SPECS[@]}" -eq 0 ]] || die "--confirm-flash refuses explicit --image overrides"
+    [[ "$SKIP_PREFLIGHT" -eq 0 ]] || die "--confirm-flash refuses --skip-preflight"
+  fi
+  if [[ "$REBOOT_AFTER_FLASH" -eq 1 && -z "$MANIFEST" ]]; then
+    die "--reboot-after-flash requires --manifest for post-flash validation"
+  fi
+}
+
+validate_release_inputs() {
+  [[ "$CONFIRM_FLASH" -eq 1 ]] || return 0
+  [[ -f "$MANIFEST" ]] || die "release manifest does not exist: $MANIFEST"
+  require_tool node
+  node "$RELEASE_MANIFEST_VALIDATOR" "$MANIFEST" --artifact-dir "$ARTIFACT_DIR"
+  FLASH_SUPPORTED_CODENAMES="$(node -e '
+    const fs = require("node:fs");
+    const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    const devices = (manifest.supportedDevices || [])
+      .filter((device) => device && device.tier === "lab-validated")
+      .map((device) => String(device.codename || ""))
+      .filter((codename) => /^[a-z0-9_]+$/.test(codename));
+    if (devices.length === 0) process.exit(2);
+    process.stdout.write(devices.join(" "));
+  ' "$MANIFEST")" || die "release manifest has no lab-validated device codename"
 }
 
 discover_adb_device() {
@@ -325,9 +361,9 @@ build_plan() {
   if [[ "$REBOOT_AFTER_FLASH" -eq 1 ]]; then
     add_plan "${fastboot_cmd[@]}" reboot
     if [[ -n "$DEVICE_SERIAL" ]]; then
-      add_validation_plan "$POST_FLASH_VALIDATOR" --device "$DEVICE_SERIAL" --execute
+      add_validation_plan "$POST_FLASH_VALIDATOR" --device "$DEVICE_SERIAL" --manifest "$MANIFEST" --execute
     else
-      add_validation_plan "$POST_FLASH_VALIDATOR" --execute
+      add_validation_plan "$POST_FLASH_VALIDATOR" --manifest "$MANIFEST" --execute
     fi
     add_validation_plan "${adb_cmd[@]}" shell pm path ai.elizaos.app
     add_validation_plan "${adb_cmd[@]}" shell cmd role holders android.app.role.HOME
@@ -336,7 +372,6 @@ build_plan() {
     add_validation_plan "${adb_cmd[@]}" shell dumpsys activity activities
     add_validation_plan "${adb_cmd[@]}" shell pidof ai.elizaos.app
     add_validation_plan "${adb_cmd[@]}" shell curl -fsS http://127.0.0.1:31337/api/health
-    add_validation_plan "${adb_cmd[@]}" logcat -d
     add_validation_plan "${adb_cmd[@]}" logcat -d
   fi
 }
@@ -378,6 +413,15 @@ fastboot_preflight() {
   if [[ "$unlocked" != "yes" && "$unlocked" != "true" ]]; then
     die "bootloader does not report unlocked=yes; unlock it manually before flashing"
   fi
+
+  if [[ -n "$FLASH_SUPPORTED_CODENAMES" ]]; then
+    local product
+    product="$("${fastboot_cmd[@]}" getvar product 2>&1 | awk -F': ' '/product:/ {print $2; exit}' | tr -d '\r' || true)"
+    case " $FLASH_SUPPORTED_CODENAMES " in
+      *" $product "*) ;;
+      *) die "fastboot product '$product' is not lab-validated by $MANIFEST" ;;
+    esac
+  fi
 }
 
 execute_plan() {
@@ -415,6 +459,7 @@ main() {
   require_tool adb
   require_tool fastboot
   collect_images
+  validate_release_inputs
 
   if [[ "$DRY_RUN" -eq 0 && "$ASSUME_BOOTLOADER" -eq 0 ]]; then
     preflight_adb

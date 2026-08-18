@@ -26,7 +26,7 @@ import {
 import { useT } from "./providers/I18nProvider";
 
 const cloudApiUrl =
-  import.meta.env.VITE_ELIZA_CLOUD_API_URL || "https://api.elizacloud.ai";
+  import.meta.env.VITE_ELIZA_CLOUD_API_URL || "https://api.eliza.app";
 const stewardApiUrl = `${cloudApiUrl.replace(/\/$/, "")}/steward`;
 const stewardTenantId = STEWARD_TENANT_ID;
 const stewardSessionEndpoint = `${cloudApiUrl.replace(/\/$/, "")}${STEWARD_SESSION_ENDPOINT}`;

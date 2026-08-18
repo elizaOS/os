@@ -28,60 +28,9 @@ interface ImageManifestValidationIssue {
   message: string;
 }
 
-export const DEFAULT_ELIZAOS_IMAGES: ElizaOsImage[] = [
-  {
-    id: "elizaos-linux-live-stable",
-    label: "elizaOS Linux Live",
-    version: "stable",
-    channel: "stable",
-    architecture: "x86_64",
-    buildId: "linux-live-stable-2026.05",
-    publishedAt: "2026-05-15T00:00:00.000Z",
-    url: "https://download.elizaos.ai/os/linux/elizaos-linux-live-stable.iso",
-    checksumSha256:
-      "0000000000000000000000000000000000000000000000000000000000000000",
-    sizeBytes: 4.8 * gib,
-    minUsbSizeBytes: 8 * gib,
-    manifestVersion: 1,
-    releaseNotesUrl: "https://docs.eliza.ai/os/linux",
-    signatureUrl:
-      "https://download.elizaos.ai/os/linux/elizaos-linux-live-stable.iso.sig",
-  },
-  {
-    id: "elizaos-linux-live-nightly",
-    label: "elizaOS Linux Live",
-    version: "nightly",
-    channel: "nightly",
-    architecture: "x86_64",
-    buildId: "linux-live-nightly-2026.05.15",
-    publishedAt: "2026-05-15T00:00:00.000Z",
-    url: "https://download.elizaos.ai/os/linux/elizaos-linux-live-nightly.iso",
-    checksumSha256:
-      "1111111111111111111111111111111111111111111111111111111111111111",
-    sizeBytes: 4.9 * gib,
-    minUsbSizeBytes: 8 * gib,
-    manifestVersion: 1,
-    releaseNotesUrl: "https://docs.eliza.ai/os/linux",
-    signatureUrl:
-      "https://download.elizaos.ai/os/linux/elizaos-linux-live-nightly.iso.sig",
-  },
-  {
-    id: "elizaos-linux-live-riscv64-planned",
-    label: "elizaOS Linux Live (RISC-V 64, planned)",
-    version: "nightly",
-    channel: "nightly",
-    architecture: "riscv64",
-    buildId: "linux-live-riscv64-planned-2026.05.15",
-    publishedAt: "2026-05-15T00:00:00.000Z",
-    url: "https://download.elizaos.ai/os/linux/elizaos-linux-live-riscv64-planned.iso",
-    checksumSha256:
-      "0000000000000000000000000000000000000000000000000000000000000000",
-    sizeBytes: 4.9 * gib,
-    minUsbSizeBytes: 8 * gib,
-    manifestVersion: 1,
-    releaseNotesUrl: "https://docs.eliza.ai/os/linux",
-  },
-];
+// Production discovery is authoritative. Never fabricate downloadable images
+// when GitHub release metadata is unavailable; tests inject their own fixtures.
+export const DEFAULT_ELIZAOS_IMAGES: ElizaOsImage[] = [];
 
 export const MOCK_REMOVABLE_DRIVES: RemovableDrive[] = [
   {

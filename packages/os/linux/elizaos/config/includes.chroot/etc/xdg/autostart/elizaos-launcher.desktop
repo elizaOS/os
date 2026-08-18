@@ -2,7 +2,7 @@
 Type=Application
 Name=elizaOS
 GenericName=elizaOS Application Launcher
-Comment=The elizaOS home surface — launcher and chat overlay
+Comment=The elizaOS agent and persistent chat pill
 Exec=systemctl --user start elizaos-launcher.service
 Icon=elizaos
 Terminal=false

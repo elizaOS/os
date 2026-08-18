@@ -45,6 +45,16 @@ def manifest_with_runtime(path: str | None = "evidence/riscv64_agent_runtime_smo
 
 
 class ReleaseManifestRuntimeEvidenceTests(unittest.TestCase):
+    def test_builtin_schema_validator_accepts_template_and_rejects_bad_arch(self) -> None:
+        schema = json.loads(gate.RELEASE_SCHEMA.read_text(encoding="utf-8"))
+        manifest = gate._load_template(gate.VARIANT_DIR / "manifest.json.template")
+        with mock.patch.object(gate, "jsonschema", None):
+            accepted = gate.check_schema(manifest, schema)
+            self.assertEqual([result.status for result in accepted], ["PASS"])
+            manifest["target"]["architecture"] = "made-up-cpu"
+            rejected = gate.check_schema(manifest, schema)
+            self.assertTrue(any(result.status == "FAIL" for result in rejected))
+
     def test_required_evidence_includes_riscv64_runtime_smoke(self) -> None:
         manifest = manifest_with_runtime()
         manifest["validation"]["requiredEvidence"].remove("riscv64-agent-runtime")

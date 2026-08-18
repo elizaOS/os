@@ -85,6 +85,25 @@ assert_contains "$INSTALL_OUT" "fastboot flash vendor_boot"
 assert_contains "$INSTALL_OUT" "fastboot flash super"
 pass "installer dry-run plans discovered images"
 
+FLASH_REFUSAL_OUT="$TMP_DIR/flash-refusal.out"
+if "$ROOT/install-elizaos-android.sh" \
+  --artifact-dir "$ARTIFACT_DIR" \
+  --execute --confirm-flash >"$FLASH_REFUSAL_OUT" 2>&1; then
+  fail "installer accepted a flash without a release manifest"
+fi
+assert_contains "$FLASH_REFUSAL_OUT" "--confirm-flash requires --manifest"
+pass "installer refuses unmanifested flashing"
+
+CANDIDATE_REFUSAL_OUT="$TMP_DIR/candidate-refusal.out"
+if "$ROOT/install-elizaos-android.sh" \
+  --artifact-dir "$ARTIFACT_DIR" \
+  --manifest "$ROOT/manifests/android-release-manifest.example.json" \
+  --execute --confirm-flash >"$CANDIDATE_REFUSAL_OUT" 2>&1; then
+  fail "installer accepted a non-lab-validated device manifest"
+fi
+assert_contains "$CANDIDATE_REFUSAL_OUT" "no lab-validated device codename"
+pass "installer refuses candidate-only hardware manifests"
+
 VALIDATE_OUT="$TMP_DIR/validate.out"
 "$ROOT/scripts/validate-post-flash.sh" \
   --device TEST123 \

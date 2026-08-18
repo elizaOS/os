@@ -36,6 +36,7 @@ DISTRO    := $(REPO_ROOT)/scripts/distro-android
 VENDOR    := $(HERE)vendor/eliza
 ELIZAOS_ELIZA_ROOT ?= $(REPO_ROOT)/.eliza-source
 ANDROID_AGENT_ASSETS := $(ELIZAOS_ELIZA_ROOT)/packages/app-core/platforms/android/app/src/main/assets/agent
+REPO_LAUNCHER := $(HERE)cache/repo
 
 # ARCH -> brand config (x86_64 uses the unsuffixed default).
 BRAND_x86_64  := brand.eliza.json
@@ -58,10 +59,11 @@ INFERENCE_TARGETS_arm64 := android-arm64-vulkan-fused
 INFERENCE_TARGETS_riscv64 := android-arm64-vulkan-fused android-riscv64-cpu-fused
 INFERENCE_TARGETS := $(INFERENCE_TARGETS_$(ARCH))
 
-.PHONY: help build native-inference sim splash bootanimation check-arch
+.PHONY: help bootstrap provision-repo build native-inference sim splash bootanimation check-arch
 
 help:
 	@echo "elizaOS Mobile (AOSP) targets:"
+	@echo "  make bootstrap                           # sync the pinned full AOSP checkout"
 	@echo "  make build ARCH=x86_64|arm64|riscv64   # build + launch + boot-validate"
 	@echo "  make sim   ARCH=<arch>                  # validate an already-built image"
 	@echo "  make splash                             # render elizaOS blue boot splash (uses sharp)"
@@ -70,6 +72,14 @@ help:
 	@echo "Run 'make bootanimation' before 'make build'"
 	@echo "to bake the elizaOS splash into the image; otherwise the build falls"
 	@echo "through to the stock AOSP boot animation (eliza_common.mk guards the copy)."
+
+provision-repo: $(REPO_LAUNCHER)
+
+$(REPO_LAUNCHER):
+	bash $(DISTRO)/provision-repo.sh "$@"
+
+bootstrap: provision-repo
+	node $(DISTRO)/bootstrap-aosp.mjs --repo-bin "$(REPO_LAUNCHER)" --aosp-root $(AOSP_ROOT) --jobs $(or $(JOBS),$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1))
 
 build: check-arch native-inference
 	ELIZAOS_ELIZA_ROOT="$(ELIZAOS_ELIZA_ROOT)" ELIZA_MTP_ANDROID_LIBDIR="$(ANDROID_AGENT_ASSETS)/arm64-v8a" ELIZA_MTP_ANDROID_LIBDIR_X86_64="$(ANDROID_AGENT_ASSETS)/x86_64" ELIZA_MTP_ANDROID_LIBDIR_RISCV64="$(ANDROID_AGENT_ASSETS)/riscv64" $(if $(filter riscv64,$(ARCH)),,ELIZA_BUN_RISCV64_OPTIONAL=1) node $(DISTRO)/build-aosp.mjs --brand-config $(BRAND_CONFIG) --aosp-root $(AOSP_ROOT) --rebuild-privileged-apk --launch --boot-validate $(ARGS)

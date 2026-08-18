@@ -45,6 +45,24 @@ picture-uri='file:///usr/share/backgrounds/elizaos/desktop.png'
 primary-color='#0B35F1'
 EOF
 
+    cat > /etc/dconf/db/local.d/02-elizaos-shell <<'EOF'
+[org/gnome/shell]
+enabled-extensions=['dash-to-dock@micxgx.gmail.com', 'ubuntu-appindicators@ubuntu.com']
+favorite-apps=['elizaos.desktop', 'org.gnome.Nautilus.desktop', 'org.gnome.Terminal.desktop', 'org.gnome.Settings.desktop', 'org.gnome.Epiphany.desktop']
+
+[org/gnome/shell/extensions/dash-to-dock]
+dock-position='BOTTOM'
+extend-height=true
+dock-fixed=true
+intellihide=false
+autohide=false
+show-trash=false
+show-mounts=false
+show-apps-at-top=true
+transparency-mode='FIXED'
+background-opacity=0.58
+EOF
+
     dconf update || true
 fi
 

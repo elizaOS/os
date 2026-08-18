@@ -8,14 +8,31 @@ import {
 } from "../backend/dry-run-backend";
 import type { ElizaOsImage, RemovableDrive } from "../backend/types";
 
-const stableImage = DEFAULT_ELIZAOS_IMAGES[0] as ElizaOsImage;
+const stableImage: ElizaOsImage = {
+  id: "fixture-linux-live-stable",
+  label: "Fixture elizaOS Linux Live",
+  version: "0.0.0-test",
+  channel: "stable",
+  architecture: "x86_64",
+  buildId: "fixture-linux-live-stable",
+  publishedAt: "2026-01-01T00:00:00.000Z",
+  url: "https://example.invalid/elizaos-linux-live.iso",
+  checksumSha256:
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  sizeBytes: 4 * 1024 ** 3,
+  minUsbSizeBytes: 8 * 1024 ** 3,
+  manifestVersion: 1,
+};
 const safeUsbDrive = MOCK_REMOVABLE_DRIVES[0] as RemovableDrive;
 
 describe("DryRunUsbInstallerBackend", () => {
   it("lists image metadata and removable drive candidates", async () => {
-    const backend = new DryRunUsbInstallerBackend();
+    expect(DEFAULT_ELIZAOS_IMAGES).toEqual([]);
+    const backend = new DryRunUsbInstallerBackend(MOCK_REMOVABLE_DRIVES, [
+      stableImage,
+    ]);
 
-    await expect(backend.listImages()).resolves.toEqual(DEFAULT_ELIZAOS_IMAGES);
+    await expect(backend.listImages()).resolves.toEqual([stableImage]);
     await expect(backend.listRemovableDrives()).resolves.toEqual(
       MOCK_REMOVABLE_DRIVES,
     );
@@ -27,10 +44,12 @@ describe("DryRunUsbInstallerBackend", () => {
   });
 
   it("creates a dry-run write and verify plan for a safe removable drive", async () => {
-    const backend = new DryRunUsbInstallerBackend();
+    const backend = new DryRunUsbInstallerBackend(MOCK_REMOVABLE_DRIVES, [
+      stableImage,
+    ]);
     const plan = await backend.createWritePlan({
       driveId: "mock-usb-32gb",
-      imageId: "elizaos-linux-live-stable",
+      imageId: stableImage.id,
       dryRun: true,
       acknowledgeDataLoss: true,
     });
@@ -69,12 +88,14 @@ describe("DryRunUsbInstallerBackend", () => {
   });
 
   it("rejects unknown drive and image ids", async () => {
-    const backend = new DryRunUsbInstallerBackend();
+    const backend = new DryRunUsbInstallerBackend(MOCK_REMOVABLE_DRIVES, [
+      stableImage,
+    ]);
 
     await expect(
       backend.createWritePlan({
         driveId: "missing-drive",
-        imageId: "elizaos-linux-live-stable",
+        imageId: stableImage.id,
         dryRun: true,
         acknowledgeDataLoss: true,
       }),
@@ -91,10 +112,12 @@ describe("DryRunUsbInstallerBackend", () => {
   });
 
   it("blocks system disks before any write step", async () => {
-    const backend = new DryRunUsbInstallerBackend();
+    const backend = new DryRunUsbInstallerBackend(MOCK_REMOVABLE_DRIVES, [
+      stableImage,
+    ]);
     const plan = await backend.createWritePlan({
       driveId: "mock-internal-system",
-      imageId: "elizaos-linux-live-stable",
+      imageId: stableImage.id,
       dryRun: true,
       acknowledgeDataLoss: true,
     });
@@ -113,7 +136,7 @@ describe("DryRunUsbInstallerBackend", () => {
 
     const plan = await backend.createWritePlan({
       driveId: "mock-usb-4gb",
-      imageId: "elizaos-linux-live-stable",
+      imageId: stableImage.id,
       dryRun: true,
       acknowledgeDataLoss: true,
     });
@@ -123,12 +146,14 @@ describe("DryRunUsbInstallerBackend", () => {
   });
 
   it("blocks non-dry-run write requests because this backend is dry-run only", async () => {
-    const backend = new DryRunUsbInstallerBackend();
+    const backend = new DryRunUsbInstallerBackend(MOCK_REMOVABLE_DRIVES, [
+      stableImage,
+    ]);
 
     await expect(
       backend.createWritePlan({
         driveId: "mock-usb-32gb",
-        imageId: "elizaos-linux-live-stable",
+        imageId: stableImage.id,
         dryRun: false,
         acknowledgeDataLoss: true,
       }),
@@ -136,12 +161,14 @@ describe("DryRunUsbInstallerBackend", () => {
   });
 
   it("requires explicit data-loss acknowledgement", async () => {
-    const backend = new DryRunUsbInstallerBackend();
+    const backend = new DryRunUsbInstallerBackend(MOCK_REMOVABLE_DRIVES, [
+      stableImage,
+    ]);
 
     await expect(
       backend.createWritePlan({
         driveId: "mock-usb-32gb",
-        imageId: "elizaos-linux-live-stable",
+        imageId: stableImage.id,
         dryRun: true,
         acknowledgeDataLoss: false,
       }),

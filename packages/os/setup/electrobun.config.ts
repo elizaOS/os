@@ -34,6 +34,12 @@ export default {
       // Electrobun copies that directory into the packaged app, where the
       // main process loads `renderer/index.html` via a `file://` URL.
       dist: "renderer",
+      "../android/installer/install-elizaos-android.sh":
+        "android-installer/install-elizaos-android.sh",
+      "../android/installer/scripts/validate-release-manifest.mjs":
+        "android-installer/scripts/validate-release-manifest.mjs",
+      "../android/installer/scripts/validate-post-flash.sh":
+        "android-installer/scripts/validate-post-flash.sh",
     },
   },
 } satisfies ElectrobunConfig;

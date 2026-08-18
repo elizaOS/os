@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "manifestUrl": "https://android.googlesource.com/platform/manifest",
+  "manifestRevision": "android-17.0.0_r1",
+  "manifestTagObject": "7a9e46ba6ed424f922a3457f4964e67e0b966201",
+  "manifestCommit": "5bc9a7ce1cd78dd53613bbfd0ebf506e1e4adb0f"
+}

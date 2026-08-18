@@ -13,7 +13,7 @@ on:
     inputs:
       eliza-ref:
         description: elizaOS/eliza ref containing the native application sources
-        default: develop
+        default: 8eccb81617d6a01a0f44835b8488ae450a5c7107
         type: string
   pull_request:
     branches: [main]
@@ -48,7 +48,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: elizaOS/eliza
-          ref: ${{ inputs.eliza-ref || 'develop' }}
+          ref: ${{ inputs.eliza-ref || '8eccb81617d6a01a0f44835b8488ae450a5c7107' }}
           path: .eliza-source
           submodules: recursive
 

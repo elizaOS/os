@@ -5,10 +5,7 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const args = process.argv.slice(2);
-const DEFAULT_RISCV64_ARTIFACT_DIR =
-  "release/beta-2026-05-16/android/partitions";
-const DEFAULT_RISCV64_PRODUCT_OUT =
-  "$AOSP_WORKSPACE/out/target/product/eliza_ai_soc";
+const DEFAULT_ARTIFACT_DIR = "release/android/partitions";
 
 function usage() {
   console.log(`Usage:
@@ -76,28 +73,13 @@ function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function manifestHasRiscv64ChipTarget(manifest) {
-  return (manifest.supportedDevices ?? []).some(
-    (device) =>
-      isObject(device) &&
-      (String(device.architecture ?? "").toLowerCase() === "riscv64" ||
-        String(device.codename ?? "")
-          .toLowerCase()
-          .includes("riscv64")) &&
-      (String(device.deviceClass ?? "").toLowerCase() === "chip" ||
-        String(device.codename ?? "")
-          .toLowerCase()
-          .includes("eliza_ai_soc")),
-  );
-}
-
 function artifactIntegrityDirectory(manifest, artifactDir) {
   if (artifactDir) return artifactDir;
   const integrity = manifest.validation?.artifactIntegrity;
   if (isObject(integrity) && typeof integrity.artifactDirectory === "string") {
     return integrity.artifactDirectory;
   }
-  return DEFAULT_RISCV64_ARTIFACT_DIR;
+  return DEFAULT_ARTIFACT_DIR;
 }
 
 function releaseArtifactInstructions(
@@ -109,17 +91,22 @@ function releaseArtifactInstructions(
   const requiredFiles = (manifest.artifacts ?? [])
     .map((artifact) => artifact?.filename)
     .filter((filename) => typeof filename === "string" && filename.length > 0);
+  const device = (manifest.supportedDevices ?? []).find(
+    (candidate) =>
+      isObject(candidate) &&
+      /^[a-z0-9_]+$/.test(String(candidate.codename ?? "")),
+  );
+  const codename = String(device?.codename ?? "DEVICE_CODENAME");
+  const productName = `eliza_${codename}_phone`;
+  const productOut = `$AOSP_WORKSPACE/out/target/product/${productName}`;
   const copyCommands = requiredFiles.map(
-    (filename) =>
-      `cp "${DEFAULT_RISCV64_PRODUCT_OUT}/${filename}" "${stageDir}/${filename}"`,
+    (filename) => `cp "${productOut}/${filename}" "${stageDir}/${filename}"`,
   );
   return {
-    applies_to: manifestHasRiscv64ChipTarget(manifest)
-      ? "eliza_ai_soc_riscv64"
-      : "generic_android_release",
-    build_commands: [
-      'upstreams/research/chip/sw/aosp-device/build-aosp-riscv64.sh --workspace "$AOSP_WORKSPACE" --lunch-target eliza_openagent_ai_soc_phone-trunk_staging-userdebug --report "$AOSP_WORKSPACE/eliza-build-report.json"',
-    ],
+    applies_to: productName,
+    build_commands: [],
+    blocked_reason:
+      "No physical-device product is checked in. Pin a compatible device tree, kernel/vendor inputs, and licensed binaries before producing release artifacts.",
     stage_commands: [`mkdir -p "${stageDir}"`, ...copyCommands],
     manifest_update_commands: [
       `stat -c '%n %s' "${stageDir}"/*.img`,
@@ -127,12 +114,12 @@ function releaseArtifactInstructions(
       "replace each artifacts[].sizeBytes and artifacts[].sha256 with those exact values; do not use placeholders or copied hashes",
     ],
     validate_commands: [
-      `node android/installer/scripts/validate-release-manifest.mjs "${manifestPath}" --artifact-dir "${stageDir}" --write-evidence release/beta-2026-05-16/evidence/android/android-partition-artifacts-integrity.json`,
+      `node packages/os/android/installer/scripts/validate-release-manifest.mjs "${manifestPath}" --artifact-dir "${stageDir}" --write-evidence evidence/android-partition-artifacts-integrity.json`,
     ],
     provenance_requirements: [
-      "AOSP workspace path and manifest branch",
-      "lunch target eliza_openagent_ai_soc_phone-trunk_staging-userdebug",
-      "build report path and result_code=0",
+      "AOSP workspace path and packages/os/android/aosp.lock.json digest",
+      `lunch target ${productName}-trunk_staging-userdebug`,
+      "elizaOS/eliza source commit used for the retained application",
       "product_out_dir used as source for staged images",
       "per-file byte size and SHA-256 computed from staged boot/vendor_boot/super images",
       "evidence JSON from this validator with status=pass",
@@ -142,6 +129,7 @@ function releaseArtifactInstructions(
 
 function instructionSummary(instructions) {
   return [
+    `blocked: ${instructions.blocked_reason ?? "no"}`,
     `build: ${instructions.build_commands.join(" && ")}`,
     `stage: ${instructions.stage_commands.join(" && ")}`,
     `validate: ${instructions.validate_commands.join(" && ")}`,
@@ -224,14 +212,14 @@ function validateManifest(manifest, { allowPlaceholders = false } = {}) {
         "must be a non-empty array",
       );
       if (Array.isArray(device.slots)) {
-        device.slots.forEach((slot) =>
+        device.slots.forEach((slot) => {
           expect(
             slotValues.has(slot),
             errors,
             `${path}.slots`,
             `invalid slot ${slot}`,
-          ),
-        );
+          );
+        });
       }
       expect(
         typeof device.dynamicPartitions === "boolean",
@@ -426,9 +414,9 @@ function validateArtifacts(
       );
     }
   }
-  if (errors.length > 0 && manifestHasRiscv64ChipTarget(manifest)) {
+  if (errors.length > 0) {
     errors.push(
-      `riscv64 artifact staging instructions: ${instructionSummary(
+      `artifact staging instructions: ${instructionSummary(
         releaseArtifactInstructions(manifest, artifactDir, manifestPath),
       )}`,
     );
@@ -468,7 +456,9 @@ if (writeEvidence) {
   });
 }
 if (errors.length > 0) {
-  errors.forEach((error) => console.error(`error: ${error}`));
+  errors.forEach((error) => {
+    console.error(`error: ${error}`);
+  });
   process.exit(1);
 }
 

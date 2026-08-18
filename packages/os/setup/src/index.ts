@@ -9,5 +9,5 @@ export type {
   FlashStepId,
   FlashStepStatus,
 } from "./backend";
-export { AdbFlasherBackend, MOCK_BUILDS } from "./backend";
+export { AdbFlasherBackend } from "./backend";
 export { FlasherApp } from "./components/FlasherApp";

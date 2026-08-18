@@ -14,32 +14,13 @@
         "vitest": "4.1.5",
       },
     },
-    "packages/os/android/system-ui": {
-      "name": "@elizaos/os-android-system-ui",
-      "version": "0.1.0",
-      "dependencies": {
-        "@elizaos/os-shared-system": "workspace:*",
-      },
-      "devDependencies": {
-        "@testing-library/react": "^16.3.2",
-        "@types/react": "^18.0.0 || ^19.0.0",
-        "@types/react-dom": "^18.0.0 || ^19.0.0",
-        "@typescript/native": "npm:typescript@^7.0.2",
-        "jsdom": "^29.0.0",
-        "typescript": "^5.0.0",
-        "vitest": "^4.0.18",
-      },
-      "peerDependencies": {
-        "react": "^18.0.0 || ^19.0.0",
-        "react-dom": "^18.0.0 || ^19.0.0",
-      },
-    },
     "packages/os/homepage": {
       "name": "@elizaos/os-homepage",
       "version": "0.1.0",
       "dependencies": {
         "@elizaos/shared": "2.0.11-beta.7",
         "@fontsource/poppins": "^5.2.7",
+        "@simplewebauthn/browser": "^13.0.0",
         "@stwd/sdk": "^0.10.1",
         "@tailwindcss/vite": "^4.3.1",
         "@vitejs/plugin-react": "^6.0.0",
@@ -52,13 +33,13 @@
       },
       "devDependencies": {
         "@biomejs/biome": "2.5.6",
+        "@playwright/test": "^1.59.1",
         "@testing-library/react": "^16.3.2",
         "@types/node": "^24.0.0",
         "@types/react": "^19",
         "@types/react-dom": "^19",
         "@typescript/native": "npm:typescript@^7.0.2",
         "jsdom": "^29.0.0",
-        "playwright": "^1.59.1",
         "rollup-plugin-visualizer": "^7.0.1",
         "sharp": "^0.35.3",
         "typescript": "^6.0.3",
@@ -111,13 +92,13 @@
         "vite": "^8.0.0",
       },
       "devDependencies": {
+        "@playwright/test": "^1.59.1",
         "@types/bun": "^1.3.14",
         "@types/node": "^25.0.0",
         "@types/react": "^18.0.0 || ^19.0.0",
         "@types/react-dom": "^18.0.0 || ^19.0.0",
         "@typescript/native": "npm:typescript@^7.0.2",
         "jsdom": "^29.0.0",
-        "playwright": "^1.59.1",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
         "sharp": "^0.35.3",
@@ -212,8 +193,6 @@
     "@elizaos/core": ["@elizaos/core@2.0.11-beta.7", "", { "dependencies": { "@ai-sdk/anthropic": "^3.0.13", "@ai-sdk/gateway": "3.0.133", "@ai-sdk/google": "^3.0.8", "@ai-sdk/openai": "^3.0.9", "@ai-sdk/provider": "3.0.10", "@ai-sdk/provider-utils": "4.0.26", "@bufbuild/protobuf": "^2.12.0", "@elizaos/contracts": "2.0.11-beta.7", "@elizaos/logger": "2.0.11-beta.7", "@elizaos/prompts": "2.0.11-beta.7", "@noble/ciphers": "2.2.0", "@noble/hashes": "2.2.0", "@openrouter/ai-sdk-provider": "^2.0.0", "@opentelemetry/api": "1.9.1", "adze": "^2.2.5", "ai": "^6.0.30", "dedent": "^1.7.1", "dotenv": "^17.2.3", "drizzle-orm": "0.45.2", "fast-redact": "^3.5.0", "file-type": "^22.0.0", "fs-extra": "^11.3.2", "handlebars": "^4.7.8", "json5": "^2.2.3", "mammoth": "^1.9.0", "markdown-it": "^14.1.0", "underscore": "^1.13.8", "unpdf": "^1.4.0", "uuid": "^14.0.0", "yaml": "^2.7.0", "zod": "^4.4.3" } }, "sha512-jgOaf0/sASTeq+LbkX6lzGPFZOR5p4bVZ9wSdXMbB/V4AS2O7EzLgufQYjSu13wzKIEKFi6hOl1BT/GPltQGiA=="],
 
     "@elizaos/logger": ["@elizaos/logger@2.0.11-beta.7", "", { "dependencies": { "adze": "^2.2.5", "fast-redact": "^3.5.0" } }, "sha512-AShcqLP7Ur5KF/HsFhlr6+eY4/wtHK8FU41Ocb4i5mrNwQ746K2xgY+f8UrKe5HHB8n7nlSGKGkgFdz2rn2S2Q=="],
-
-    "@elizaos/os-android-system-ui": ["@elizaos/os-android-system-ui@workspace:packages/os/android/system-ui"],
 
     "@elizaos/os-homepage": ["@elizaos/os-homepage@workspace:packages/os/homepage"],
 
@@ -371,6 +350,8 @@
 
     "@oxc-project/types": ["@oxc-project/types@0.142.0", "", {}, "sha512-7W+2q5AKQVU36fkaryontrHn3YDt1RyUYXatw9i5H8ocYe2sPKSFB6eS8WNPeRKiN1qAWWZUPm7gwFzJGrccqQ=="],
 
+    "@playwright/test": ["@playwright/test@1.62.1", "", { "dependencies": { "playwright": "1.62.1" }, "bin": { "playwright": "cli.js" } }, "sha512-DTcUc8qii+cpHvtOwggMtBRMjKZHXYWdw8syRYu2vtzuq4Wxphqq4NfCs5Zt44L6mA8rfDfj+PHnxFc/FeK6mQ=="],
+
     "@rolldown/binding-android-arm64": ["@rolldown/binding-android-arm64@1.2.1", "", { "os": "android", "cpu": "arm64" }, "sha512-02hOeOSryYxVrOIphmLAsqnCJWxwlzFk+pEt/N/i6OgT3lShHO7xGCU5cpgchRDHboAEbSjzgGh+O/u1GswQmA=="],
 
     "@rolldown/binding-darwin-arm64": ["@rolldown/binding-darwin-arm64@1.2.1", "", { "os": "darwin", "cpu": "arm64" }, "sha512-fMsTOnN0OjFm3CyppWPitKnc8UlliVARUULW6cfU6AIqjdtgmSFWSk9vecHzZduv/yMWIHDlRhM1e8Iff9uAfA=="],
@@ -408,6 +389,8 @@
     "@scure/bip32": ["@scure/bip32@1.7.0", "", { "dependencies": { "@noble/curves": "~1.9.0", "@noble/hashes": "~1.8.0", "@scure/base": "~1.2.5" } }, "sha512-E4FFX/N3f4B80AKWp5dP6ow+flD1LQZo/w8UnLGYZO674jS6YnYeepycOOksv+vLPSpgN35wgKgy+ybfTb2SMw=="],
 
     "@scure/bip39": ["@scure/bip39@1.6.0", "", { "dependencies": { "@noble/hashes": "~1.8.0", "@scure/base": "~1.2.5" } }, "sha512-+lF0BbLiJNwVlev4eKelw1WWLaiKXw7sSl8T6FvBlWkdX+94aGJ4o8XjUdlyhTCjd8c+B3KT3JfS8P0bLRNU6A=="],
+
+    "@simplewebauthn/browser": ["@simplewebauthn/browser@13.3.0", "", {}, "sha512-BE/UWv6FOToAdVk0EokzkqQQDOWtNydYlY6+OrmiZ5SCNmb41VehttboTetUM3T/fr6EAFYVXjz4My2wg230rQ=="],
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 
@@ -685,7 +668,7 @@
 
     "fs-extra": ["fs-extra@11.4.0", "", { "dependencies": { "graceful-fs": "^4.2.0", "jsonfile": "^6.0.1", "universalify": "^2.0.0" } }, "sha512-EQsFzMUJkCKGr1ePqlYADkIUmHW1s3ZXr5Yqy6wbGrfUCphpl2maM/kyOIRA2HpP3AaFQTZXD4ldjek+nccddA=="],
 
-    "fsevents": ["fsevents@2.3.2", "", { "os": "darwin" }, "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA=="],
+    "fsevents": ["fsevents@2.3.3", "", { "os": "darwin" }, "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw=="],
 
     "get-caller-file": ["get-caller-file@2.0.5", "", {}, "sha512-DyFP3BM/3YHTQOCUL/w0OZHR0lpKeGrxotcHWcqNEdnltqFwXVfhEBQ94eIo34AfQpo0rGki4cyIiftY06h2Fg=="],
 
@@ -1027,8 +1010,6 @@
 
     "@elizaos/core/@noble/hashes": ["@noble/hashes@2.2.0", "", {}, "sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg=="],
 
-    "@elizaos/os-android-system-ui/typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
-
     "@elizaos/os-homepage/@types/node": ["@types/node@24.13.3", "", { "dependencies": { "undici-types": "~7.18.0" } }, "sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q=="],
 
     "@elizaos/os-shared-system/typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
@@ -1067,15 +1048,13 @@
 
     "markdown-it/entities": ["entities@4.5.0", "", {}, "sha512-V0hjH4dGPh9Ao5p0MoRY6BVqtwCjhz6vI5LT8AJ55H+4g9/4vbHx1I54fS0XuclLhDHArPQCiMjDxjaL8fPxhw=="],
 
+    "playwright/fsevents": ["fsevents@2.3.2", "", { "os": "darwin" }, "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA=="],
+
     "png-to-ico/@types/node": ["@types/node@17.0.45", "", {}, "sha512-w+tIMs3rq2afQdsPJlODhoUEKzFP1ayaoyl1CcnwtIlsVe7K7bA1NGm4s3PraqTLlXnbIN84zuBlxBWo1u9BLw=="],
 
     "proxy-agent/lru-cache": ["lru-cache@7.18.3", "", {}, "sha512-jumlc0BIUrS3qJGgIkWZsyfAM7NCWiBcCDhnd+3NNM5KbBmLTgHVfWBcg6W+rLUsIpzpERPsvwUP7CckAQSOoA=="],
 
-    "rollup/fsevents": ["fsevents@2.3.3", "", { "os": "darwin" }, "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw=="],
-
     "strip-ansi/ansi-regex": ["ansi-regex@6.2.2", "", {}, "sha512-Bq3SmSpyFHaWjPk8If9yc6svM8c56dB5BAtW4Qbw5jHTwwXXcTLoRMkpDJp6VL0XzlWaCHTXrkFURMYmD0sLqg=="],
-
-    "vite/fsevents": ["fsevents@2.3.3", "", { "os": "darwin" }, "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw=="],
 
     "wrap-ansi/ansi-styles": ["ansi-styles@6.2.3", "", {}, "sha512-4Dj6M28JB+oAH8kFkTLUo+a2jwOFkuqb3yucU0CANcRRUbxS0cP0nZYCGjcc3BNXwRIsUVmDGgzawme7zvJHvg=="],
 

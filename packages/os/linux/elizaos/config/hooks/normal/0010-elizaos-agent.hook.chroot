@@ -3,6 +3,7 @@ set -eu
 
 ARTIFACT_ROOT=/opt/elizaos-artifacts
 INSTALL=/opt/elizaos
+PACKAGED_APP=/usr/share/elizaos/elizaos-app
 PROVENANCE="${ARTIFACT_ROOT}/riscv64-bun-provenance.json"
 MANIFEST="${ARTIFACT_ROOT}/manifest.txt"
 
@@ -14,6 +15,16 @@ fail() {
 require_file() {
     [ -s "$1" ] || fail "missing required artifact $1"
 }
+
+# amd64/arm64 desktop images consume the exact, pre-verified Electrobun
+# package produced by elizaOS/eliza. It owns its embedded agent runtime, so it
+# must not be forced through the unrelated riscv64 Bun provenance contract.
+if [ -x "${PACKAGED_APP}/bin/launcher" ]; then
+    mkdir -p "${INSTALL}/app"
+    ln -sfn "${PACKAGED_APP}/bin/launcher" "${INSTALL}/app/elizaos"
+    echo "installed packaged elizaOS desktop runtime: ${PACKAGED_APP}"
+    exit 0
+fi
 
 require_file "${PROVENANCE}"
 require_file "${MANIFEST}"

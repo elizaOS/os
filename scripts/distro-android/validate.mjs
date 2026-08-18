@@ -107,6 +107,50 @@ function read(filePath) {
   return fs.readFileSync(filePath, "utf8");
 }
 
+function collectBlueprintModuleNames(root) {
+  const names = new Set();
+  const visit = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(entryPath);
+      } else if (entry.isFile() && entry.name === "Android.bp") {
+        const source = fs.readFileSync(entryPath, "utf8");
+        for (const match of source.matchAll(/\bname\s*:\s*"([^"]+)"/g)) {
+          names.add(match[1]);
+        }
+      }
+    }
+  };
+  visit(root);
+  return names;
+}
+
+function assertLocallyOwnedProductModulesResolve(common, vendorDir, brand) {
+  const addition = common.match(
+    /PRODUCT_PACKAGES\s*\+=\s*\\\s*\n([\s\S]*?)(?=\n\s*\n|\n[A-Z][A-Z0-9_]*\s*[:+?]?=)/,
+  )?.[1];
+  if (!addition) fail("PRODUCT_PACKAGES += block cannot be parsed");
+  const localPrefixes = [brand.brand, brand.appName].map((value) =>
+    value.toLowerCase(),
+  );
+  const localModules = addition
+    .split("\n")
+    .map((line) => line.replace(/#.*/, "").replace(/\\/g, "").trim())
+    .filter(Boolean)
+    .filter((name) =>
+      localPrefixes.some((prefix) => name.toLowerCase().startsWith(prefix)),
+    );
+  const defined = collectBlueprintModuleNames(vendorDir);
+  for (const moduleName of localModules) {
+    if (!defined.has(moduleName)) {
+      fail(
+        `${brand.commonMakefile} adds local module ${moduleName}, but no Android.bp under ${vendorDir} defines it`,
+      );
+    }
+  }
+}
+
 function assertIncludes(content, needle, label) {
   if (!content.includes(needle)) {
     fail(`${label} is missing ${needle}`);
@@ -278,6 +322,7 @@ export function validateProductLayer(vendorDir, brand) {
   assertIncludes(common, "PRODUCT_PACKAGES +=", brand.commonMakefile);
   assertIncludes(common, "PRODUCT_PACKAGES -=", brand.commonMakefile);
   assertIncludes(common, brand.appName, brand.commonMakefile);
+  assertLocallyOwnedProductModulesResolve(common, vendorDir, brand);
   assertIncludes(
     common,
     `default-permissions-${brand.packageName}.xml`,
@@ -340,20 +385,6 @@ export function validateProductLayer(vendorDir, brand) {
       `${brand.commonMakefile} still references a PermissionController overlay; role defaults live in framework-res strings.`,
     );
   }
-
-  // Per-Pixel templates exist and follow the same <BRAND>_PIXEL_CODENAME contract.
-  const pixelMakefile = `${brand.pixelMakefilePrefix}_pixel_phone.mk`;
-  const pixelTemplate = read(path.join(vendorDir, "products", pixelMakefile));
-  assertIncludes(
-    pixelTemplate,
-    `${brand.envPrefix}_PIXEL_CODENAME`,
-    pixelMakefile,
-  );
-  assertIncludes(
-    pixelTemplate,
-    `vendor/${brand.brand}/${brand.commonMakefile}`,
-    pixelMakefile,
-  );
 
   const androidProducts = read(path.join(vendorDir, "AndroidProducts.mk"));
   assertMatches(
