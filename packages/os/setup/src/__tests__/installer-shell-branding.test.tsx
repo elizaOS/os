@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { InstallerShell } from "../components/InstallerShell";
@@ -19,16 +17,5 @@ describe("InstallerShell branding and language", () => {
     expect(html).not.toContain("Safe, guided setup");
     expect(html).not.toContain("💾");
     expect(html).not.toContain("🍎");
-  });
-
-  it("shares the direct backend base across Android and iOS", () => {
-    const source = readFileSync(
-      resolve(process.cwd(), "src/components/InstallerShell.tsx"),
-      "utf8",
-    );
-
-    expect(source).toContain("new HttpAospFlasherBackend(serverUrl)");
-    expect(source).toContain("<IosFlasher serverUrl={serverUrl}");
-    expect(source).not.toMatch(/serverUrl}\/api/);
   });
 });

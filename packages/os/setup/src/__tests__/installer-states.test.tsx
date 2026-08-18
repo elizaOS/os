@@ -46,6 +46,32 @@ describe("normal-user installer states", () => {
     expect(container.textContent).toContain("unlock it, and tap Trust");
   });
 
+  it.each([
+    [
+      "packaged direct injection",
+      "http://127.0.0.1:4242",
+      "http://127.0.0.1:4242/ios/devices",
+    ],
+    ["browser development proxy", "/api", "/api/ios/devices"],
+  ])(
+    "keeps iOS device checks on the backend for %s",
+    async (_mode, base, expected) => {
+      window.__ELIZA_SERVER_TOKEN__ = "route-test-token";
+      const fetchMock = vi.fn<
+        (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+      >(async () => Response.json([]));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await act(async () => root.render(<IosFlasher serverUrl={base} />));
+
+      expect(fetchMock).toHaveBeenCalled();
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(expected);
+      expect(fetchMock.mock.calls[0]?.[0]).not.toBe(
+        `${window.location.origin}/ios/devices`,
+      );
+    },
+  );
+
   it("hides raw Android transport errors behind recovery guidance", async () => {
     const backend = {
       listConnectedDevices: vi.fn(async () => {
