@@ -63,4 +63,20 @@ describe("normal-user installer states", () => {
     );
     expect(container.textContent).not.toContain("HTTP 404");
   });
+
+  it("does not discover releases before an Android device is present", async () => {
+    const backend = {
+      listConnectedDevices: vi.fn(async () => []),
+      listBuilds: vi.fn(async () => {
+        throw new Error("No published manifests");
+      }),
+    } as unknown as AospFlasherBackend;
+
+    await act(async () =>
+      root.render(<FlasherApp backend={backend} embedded />),
+    );
+
+    expect(container.textContent).toContain("No Android devices found");
+    expect(backend.listBuilds).not.toHaveBeenCalled();
+  });
 });
