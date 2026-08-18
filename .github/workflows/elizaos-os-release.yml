@@ -6,7 +6,7 @@ on:
       eliza-ref:
         description: elizaOS/eliza ref used for cross-repository validation
         type: string
-        default: 8eccb81617d6a01a0f44835b8488ae450a5c7107
+        default: 2210ad8da9277011a2ee1388b36db0b545c32e5d
   pull_request:
     branches: [develop]
     paths:
@@ -32,7 +32,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: elizaOS/eliza
-          ref: ${{ inputs.eliza-ref || '8eccb81617d6a01a0f44835b8488ae450a5c7107' }}
+          ref: ${{ inputs.eliza-ref || '2210ad8da9277011a2ee1388b36db0b545c32e5d' }}
           path: .eliza-source
 
       - name: Set up Bun

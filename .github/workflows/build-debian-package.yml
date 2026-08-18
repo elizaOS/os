@@ -5,13 +5,13 @@ on:
     inputs:
       eliza-ref:
         type: string
-        default: 8eccb81617d6a01a0f44835b8488ae450a5c7107
+        default: 2210ad8da9277011a2ee1388b36db0b545c32e5d
   workflow_dispatch:
     inputs:
       eliza-ref:
         description: elizaOS/eliza ref to package
         type: string
-        default: 8eccb81617d6a01a0f44835b8488ae450a5c7107
+        default: 2210ad8da9277011a2ee1388b36db0b545c32e5d
   release:
     types: [created]
 
@@ -44,7 +44,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: elizaOS/eliza
-          ref: ${{ inputs.eliza-ref || '8eccb81617d6a01a0f44835b8488ae450a5c7107' }}
+          ref: ${{ inputs.eliza-ref || '2210ad8da9277011a2ee1388b36db0b545c32e5d' }}
           path: .eliza-source
 
       - name: Install Debian build tools
