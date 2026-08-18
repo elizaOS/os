@@ -121,7 +121,9 @@ for name, entry in lock["archives"].items():
     print(name, f'{entry["url"]}/{entry["releasePath"]}', entry["releaseSha256"], sep="\t")
 PY
         FILE="${SNAPSHOT_TMP}/${NAME}.Release"
-        curl --fail --location --silent --show-error --retry 3 --max-time 60 "${URL}" -o "${FILE}"
+        curl --fail --location --silent --show-error --http1.1 \
+            --retry 5 --retry-all-errors --retry-delay 2 \
+            --connect-timeout 15 --max-time 120 "${URL}" -o "${FILE}"
         ACTUAL="$(sha256sum "${FILE}" | awk '{print $1}')"
         [ "${ACTUAL}" = "${EXPECTED}" ] || {
             echo "ERROR: ${NAME} snapshot Release digest mismatch: ${ACTUAL} != ${EXPECTED}" >&2
