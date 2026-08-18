@@ -8,7 +8,6 @@ type TabId = "usb" | "android" | "ios";
 
 interface Tab {
   id: TabId;
-  shortLabel: string;
   title: string;
   description: string;
 }
@@ -16,21 +15,18 @@ interface Tab {
 const TABS: Tab[] = [
   {
     id: "usb",
-    shortLabel: "USB",
     title: "Computer",
-    description: "Make a bootable USB for a desktop or laptop.",
+    description: "Bootable USB",
   },
   {
     id: "android",
-    shortLabel: "A",
-    title: "Android phone",
-    description: "Install elizaOS on a supported Pixel.",
+    title: "Android",
+    description: "Supported Pixel",
   },
   {
     id: "ios",
-    shortLabel: "iOS",
-    title: "iPhone or iPad",
-    description: "Install the Eliza app on an Apple device.",
+    title: "iPhone & iPad",
+    description: "Eliza app",
   },
 ];
 
@@ -90,22 +86,16 @@ function UsbInstallerPanel() {
   return (
     <div className="install-panel-content usb-panel">
       <div className="install-panel-copy">
-        <span className="section-kicker">For a desktop or laptop</span>
-        <h2>Make a bootable elizaOS USB</h2>
+        <h2>Set up a computer</h2>
         <p className="panel-lede">
-          The USB Installer downloads the right image, checks it, and walks you
-          through choosing a drive.
+          Create a bootable USB drive for a desktop or laptop. The installer
+          downloads and verifies the right elizaOS image for you.
         </p>
-        <div className="friendly-note" role="note">
-          <span className="friendly-note-icon" aria-hidden>
-            ✓
+        <div className="safety-note" role="note">
+          <strong>Your drive is not changed automatically.</strong>
+          <span>
+            You will review the exact drive before anything is erased.
           </span>
-          <div>
-            <strong>You stay in control.</strong>
-            <span>
-              Nothing is erased until you review the exact drive and confirm.
-            </span>
-          </div>
         </div>
         <div className="panel-actions">
           <button
@@ -114,7 +104,6 @@ function UsbInstallerPanel() {
             onClick={handleOpenUsbInstaller}
           >
             Open USB Installer
-            <span aria-hidden>→</span>
           </button>
           <button
             type="button"
@@ -126,29 +115,29 @@ function UsbInstallerPanel() {
         </div>
       </div>
 
-      <ol className="how-it-works" aria-label="How USB setup works">
-        <li>
-          <span>1</span>
-          <div>
-            <strong>Connect a spare USB drive</strong>
-            <p>16 GB or larger is a comfortable choice.</p>
-          </div>
-        </li>
-        <li>
-          <span>2</span>
-          <div>
-            <strong>Choose your computer</strong>
-            <p>We’ll select the compatible elizaOS image.</p>
-          </div>
-        </li>
-        <li>
-          <span>3</span>
-          <div>
-            <strong>Review, then create</strong>
-            <p>You’ll see the drive name and size before anything changes.</p>
-          </div>
-        </li>
-      </ol>
+      <div className="requirements">
+        <h3>What you need</h3>
+        <ol className="how-it-works" aria-label="What you need for USB setup">
+          <li>
+            <div>
+              <strong>A spare USB drive</strong>
+              <p>16 GB or larger. Its contents will be erased.</p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <strong>The computer you are setting up</strong>
+              <p>You will choose its hardware type in the next app.</p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <strong>About 15 minutes</strong>
+              <p>Download time depends on your connection.</p>
+            </div>
+          </li>
+        </ol>
+      </div>
     </div>
   );
 }
@@ -166,53 +155,44 @@ export function InstallerShell({ serverUrl }: InstallerShellProps) {
 
   return (
     <div className="installer-shell">
-      <header className="installer-hero">
-        <div className="installer-header-row">
-          <div className="installer-brand">
-            <img
-              className="installer-logo"
-              src="./brand/logos/elizaos_logotext.svg"
-              alt="elizaOS"
-            />
-            <span className="setup-badge">Setup</span>
-          </div>
-          <span className="guided-status">
-            <span aria-hidden />
-            Safe, guided setup
-          </span>
+      <header className="installer-topbar">
+        <div className="installer-brand">
+          <img
+            className="installer-logo"
+            src="./brand/logos/eliza_logotext.svg"
+            alt="Eliza"
+          />
+          <span className="brand-divider" aria-hidden />
+          <span className="setup-label">Installer</span>
         </div>
-        <div className="installer-intro">
-          <span className="hero-kicker">Let’s get you set up</span>
-          <h1>Where do you want to use elizaOS?</h1>
-          <p>
-            Pick a device. We’ll check what you need and guide you through the
-            rest in plain English.
-          </p>
-        </div>
+        <button
+          type="button"
+          className="header-help"
+          onClick={() => openExternal("https://docs.elizaos.ai")}
+        >
+          Help
+        </button>
       </header>
 
       <main className="installer-main">
-        <nav className="install-choice-grid" aria-label="Choose a device">
+        <section className="installer-intro">
+          <h1>Install elizaOS</h1>
+          <p>Choose where you want to use it.</p>
+        </section>
+
+        <nav className="install-tabs" aria-label="Choose a device">
           {TABS.map((tab) => {
             const isActive = tab.id === activeTab;
             return (
               <button
                 key={tab.id}
                 type="button"
-                className={`install-choice${isActive ? " active" : ""}`}
+                className={`install-tab${isActive ? " active" : ""}`}
                 onClick={() => setActiveTab(tab.id)}
                 aria-pressed={isActive}
               >
-                <span className="choice-icon" aria-hidden>
-                  {tab.shortLabel}
-                </span>
-                <span className="choice-copy">
-                  <strong>{tab.title}</strong>
-                  <span>{tab.description}</span>
-                </span>
-                <span className="choice-check" aria-hidden>
-                  {isActive ? "✓" : "→"}
-                </span>
+                <strong>{tab.title}</strong>
+                <span>{tab.description}</span>
               </button>
             );
           })}
@@ -225,14 +205,7 @@ export function InstallerShell({ serverUrl }: InstallerShellProps) {
         </section>
 
         <footer className="installer-footer">
-          <span>Need help? You can stop at any time.</span>
-          <button
-            type="button"
-            className="footer-link"
-            onClick={() => openExternal("https://docs.elizaos.ai")}
-          >
-            View setup help
-          </button>
+          You can close the installer at any time before confirming a change.
         </footer>
       </main>
     </div>

@@ -14,14 +14,12 @@ import { authorizedFetch } from "../runtime/server-url";
 
 // ── Design tokens ──────────────────────────────────────────────────────────────
 const C = {
-  bg: "#f7f7f5",
-  card: "#ffffff",
-  accent: "#0b35f1",
-  accentDim: "#0828b8",
-  text: "#000000",
-  muted: "#5f6067",
-  error: "#c92121",
-  border: "#dedee3",
+  accent: "#ff6a1f",
+  accentDim: "#ff8a24",
+  text: "#fdfaf7",
+  muted: "#8a8a94",
+  error: "#f6465d",
+  border: "#232329",
 };
 
 const s = {
@@ -33,39 +31,39 @@ const s = {
     display: "flex",
     flexDirection: "column" as const,
     alignItems: "stretch",
-    padding: "clamp(24px, 5vw, 52px)",
+    padding: "clamp(28px, 5vw, 48px)",
   },
   card: {
-    background: C.card,
-    borderRadius: "24px",
-    border: `1px solid ${C.border}`,
-    padding: "clamp(24px, 4vw, 38px)",
+    background: "transparent",
+    borderRadius: 0,
+    border: "none",
+    padding: 0,
     width: "100%",
-    maxWidth: "680px",
-    boxShadow: "0 18px 50px rgba(18, 21, 36, 0.08)",
+    maxWidth: "720px",
+    boxShadow: "none",
     margin: "0 auto",
   },
   heading: {
-    fontSize: "clamp(24px, 3vw, 34px)",
-    fontWeight: 800,
-    letterSpacing: "-0.04em",
-    lineHeight: 1.08,
+    fontSize: "clamp(22px, 3vw, 28px)",
+    fontWeight: 600,
+    letterSpacing: "-0.02em",
+    lineHeight: 1.2,
     margin: "0 0 12px",
   },
   subheading: {
     fontSize: "15px",
     color: C.muted,
     margin: "0 0 24px",
-    lineHeight: 1.7,
+    lineHeight: 1.6,
   },
   button: {
     background: C.accent,
-    color: "#fff",
+    color: "#050506",
     border: "none",
-    borderRadius: "999px",
-    padding: "14px 24px",
+    borderRadius: "8px",
+    padding: "13px 18px",
     fontSize: "14px",
-    fontWeight: 700,
+    fontWeight: 600,
     cursor: "pointer",
     width: "100%",
     marginTop: "16px",
@@ -73,11 +71,11 @@ const s = {
     letterSpacing: 0,
   },
   buttonSecondary: {
-    background: "#fff",
+    background: "#17171c",
     color: C.text,
     border: `1px solid ${C.border}`,
-    borderRadius: "999px",
-    padding: "14px 24px",
+    borderRadius: "8px",
+    padding: "13px 18px",
     fontSize: "14px",
     cursor: "pointer",
     width: "100%",
@@ -86,9 +84,9 @@ const s = {
     letterSpacing: 0,
   },
   input: {
-    background: C.bg,
+    background: "#17171c",
     border: `1px solid ${C.border}`,
-    borderRadius: "12px",
+    borderRadius: "8px",
     color: C.text,
     fontSize: "15px",
     padding: "14px 16px",
@@ -103,9 +101,9 @@ const s = {
     marginBottom: "6px",
   },
   notice: {
-    background: "rgba(11, 53, 241, 0.055)",
-    border: "1px solid rgba(11, 53, 241, 0.16)",
-    borderRadius: "14px",
+    background: "#17171c",
+    border: `1px solid ${C.border}`,
+    borderRadius: "8px",
     padding: "16px 18px",
     fontSize: "13px",
     lineHeight: 1.6,
@@ -120,9 +118,9 @@ const s = {
     borderBottom: `1px solid ${C.border}`,
   },
   appCard: {
-    background: C.card,
+    background: "#17171c",
     border: `1px solid ${C.border}`,
-    borderRadius: "16px",
+    borderRadius: "8px",
     padding: "18px",
     marginBottom: "12px",
     cursor: "pointer",
@@ -152,7 +150,6 @@ const s = {
     background: C.accent,
     height: "100%",
     width: `${pct}%`,
-    transition: "width 0.4s ease",
     borderRadius: "4px",
   }),
 };
@@ -418,23 +415,22 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
   function renderNoDeviceScreen() {
     return (
       <div style={s.card} className="ios-connect-card">
-        <div className="device-illustration" aria-hidden>
-          <span className="device-speaker" />
-          <span className="device-screen">iOS</span>
-          <span className="device-home" />
-        </div>
         <div className="ios-connect-copy">
-          <span className="section-kicker">First, connect your device</span>
-          <p style={s.heading}>Plug in your iPhone or iPad</p>
-          <p style={s.subheading}>
-            Use a USB cable, unlock your device, then tap <strong>Trust</strong>{" "}
-            if your device asks.
-          </p>
-          <ul className="connection-checklist">
-            <li>Keep the device unlocked</li>
-            <li>Use a data-capable USB cable</li>
-            <li>Approve “Trust This Computer”</li>
-          </ul>
+          <p style={s.heading}>Connect your device</p>
+          <ol className="connection-checklist">
+            <li>
+              <strong>Connect with a USB cable</strong>
+              <span>Use a cable that supports data, not just charging.</span>
+            </li>
+            <li>
+              <strong>Unlock your device</strong>
+              <span>Keep it unlocked while the installer checks it.</span>
+            </li>
+            <li>
+              <strong>Tap Trust if asked</strong>
+              <span>Approve “Trust This Computer” on your device.</span>
+            </li>
+          </ol>
           <button
             style={s.button}
             type="button"
@@ -451,7 +447,7 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
             {loading ? "Looking for your device…" : "Check for my device"}
           </button>
           <p className="quiet-help">
-            We’ll continue automatically when your device appears.
+            The installer will continue when your device appears.
           </p>
         </div>
       </div>
@@ -868,11 +864,9 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
   return (
     <div style={s.root}>
       <div className="ios-section-header">
-        <span className="section-kicker">iPhone &amp; iPad</span>
-        <h2>Bring Eliza with you</h2>
+        <h2>Install Eliza on iPhone or iPad</h2>
         <p>
-          Connect your device and we’ll guide you through a safe, step-by-step
-          app install.
+          Connect your device to install the Eliza app outside the App Store.
         </p>
       </div>
       {renderScreen()}
