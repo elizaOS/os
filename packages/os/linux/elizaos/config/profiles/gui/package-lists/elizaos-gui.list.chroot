@@ -17,6 +17,10 @@ libegl1
 xorg
 gdm3
 gnome-session
+# live-build disables APT Recommends, while Wayland is intentionally disabled
+# for the Electrobun GTK wrapper. Install the X11 session descriptor explicitly
+# or GDM aborts with "no session desktop files installed" before Eliza starts.
+gnome-session-xsession
 gnome-shell
 gnome-terminal
 gnome-control-center

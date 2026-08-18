@@ -30,6 +30,7 @@ DESKTOP_PACKAGE_REQUIREMENTS = (
     "xorg",
     "gdm3",
     "gnome-session",
+    "gnome-session-xsession",
     "gnome-shell",
     "gnome-terminal",
     "gnome-control-center",
