@@ -936,14 +936,10 @@ export function FlasherApp({ backend, embedded = false }: FlasherAppProps) {
     setDetectLoading(true);
     setDetectError(null);
     try {
-      const [nextDevices, nextBuilds] = await Promise.all([
-        backend.listConnectedDevices(),
-        buildsLoadedRef.current
-          ? Promise.resolve(builds)
-          : backend.listBuilds(),
-      ]);
+      const nextDevices = await backend.listConnectedDevices();
       setDevices(nextDevices);
-      if (!buildsLoadedRef.current) {
+      if (nextDevices.length > 0 && !buildsLoadedRef.current) {
+        const nextBuilds = await backend.listBuilds();
         setBuilds(nextBuilds);
         buildsLoadedRef.current = true;
         if (nextBuilds[0] && !selectedBuildId) {
@@ -955,7 +951,7 @@ export function FlasherApp({ backend, embedded = false }: FlasherAppProps) {
     } finally {
       setDetectLoading(false);
     }
-  }, [backend, builds, selectedBuildId]);
+  }, [backend, selectedBuildId]);
 
   useEffect(() => {
     void loadDevices();

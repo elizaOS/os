@@ -115,6 +115,13 @@ export interface CreateServerOptions {
 
 export type FetchHandler = (req: Request) => Promise<Response>;
 
+export function createServerErrorResponse(_error: unknown): Response {
+  return Response.json(
+    { error: "The setup service could not complete this request." },
+    { status: 500, headers: cors },
+  );
+}
+
 export interface CreateFetchHandlerDeps {
   authToken?: string;
   backend?: AdbFlasherBackend;
@@ -414,7 +421,12 @@ export function createServer(
   if (!bunGlobal) {
     throw new Error("createServer requires the Bun runtime (globalThis.Bun)");
   }
-  return bunGlobal.serve({ hostname: "127.0.0.1", port, fetch: handler });
+  return bunGlobal.serve({
+    hostname: "127.0.0.1",
+    port,
+    fetch: handler,
+    error: createServerErrorResponse,
+  });
 }
 
 // Run as a script: `bun server.ts` boots the production server on PORT.
