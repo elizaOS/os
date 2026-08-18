@@ -91,6 +91,13 @@ grep -q '^openssh-server$' config/package-lists/elizaos-common.list.chroot \
 for generated in config/package-lists/elizaos-gui.list.chroot config/package-lists/live.list.chroot; do
     [ ! -e "${generated}" ] || { echo "GENERATED PROFILE LEAK: ${generated}"; fail=1; }
 done
+if [ -d config/includes.chroot/opt/elizaos-artifacts ] &&
+    find config/includes.chroot/opt/elizaos-artifacts -mindepth 1 -print -quit | grep -q .; then
+    echo "STALE AGENT ARTIFACTS: generated runtime bytes must not be checked into includes.chroot"
+    fail=1
+fi
+grep -q 'mount freshly staged agent artifacts or a packaged desktop app' build.sh \
+    || { echo "UNBOUND AGENT IMAGE: builds must fail without an explicit runtime input"; fail=1; }
 [ ! -d mkosi ] || { echo "STALE BUILD PATH: mkosi/ must not coexist with canonical live-build"; fail=1; }
 
 # Systemd unit files have [Unit] + [Install] (or are .path/.target).

@@ -21,7 +21,6 @@ HERE    := $(shell pwd)
 OUT     := $(HERE)/out
 CONTAINER_BUILD_DIR := /work/elizaos-linux
 AGENT_ARTIFACTS ?= $(HERE)/artifacts/$(ARCH)
-REQUIRE_AGENT_ARTIFACTS ?= 0
 AGENT_ARTIFACTS_MOUNT := $(if $(wildcard $(AGENT_ARTIFACTS)),-v "$(AGENT_ARTIFACTS):/opt/elizaos-artifacts:ro",)
 PACKAGED_APP ?=
 PACKAGED_APP_MOUNT := $(if $(PACKAGED_APP),-v "$(PACKAGED_APP):/opt/elizaos-packaged-app:ro",)
@@ -74,7 +73,6 @@ build: builder check-arch
 		-e ELIZAOS_ARCH="$(or $(ARCH),amd64)" \
 		-e ELIZAOS_PROFILE="$(or $(PROFILE),default)" \
 		-e ELIZAOS_OUT_DIR=/out \
-		-e ELIZAOS_REQUIRE_AGENT_ARTIFACTS="$(REQUIRE_AGENT_ARTIFACTS)" \
 		-e ELIZAOS_PACKAGED_APP_DIR=/opt/elizaos-packaged-app \
 		$(AGENT_ARTIFACTS_MOUNT) \
 		$(PACKAGED_APP_MOUNT) \

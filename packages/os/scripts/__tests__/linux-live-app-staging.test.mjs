@@ -47,6 +47,24 @@ test("GUI builds mount one prepackaged app read-only into a private build tree",
   );
 });
 
+test("image builds cannot reuse checked-in or previously staged agent bytes", () => {
+  assert.equal(
+    existsSync(
+      join(
+        repositoryRoot,
+        "packages/os/linux/elizaos/config/includes.chroot/opt/elizaos-artifacts",
+      ),
+    ),
+    false,
+  );
+  assert.match(imageBuild, /remove_paths_recursive "\$\{CHROOT_ART\}"/);
+  assert.match(
+    imageBuild,
+    /mount freshly staged agent artifacts or a packaged desktop app/,
+  );
+  assert.doesNotMatch(makefile, /ELIZAOS_REQUIRE_AGENT_ARTIFACTS/);
+});
+
 test("the image installs the packaged runtime without a duplicate service", () => {
   assert.match(installHook, /PACKAGED_APP=\/usr\/share\/elizaos\/elizaos-app/);
   assert.match(installHook, /ln -sfn "\$\{PACKAGED_APP\}\/bin\/launcher"/);
