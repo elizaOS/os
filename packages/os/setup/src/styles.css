@@ -670,7 +670,14 @@ button:disabled {
 /* Spinner */
 .spinner {
   display: inline-block;
-  animation: spin 1.2s linear infinite;
+  width: 16px;
+  height: 16px;
+  margin-right: 7px;
+  border: 2px solid rgba(11, 53, 241, 0.18);
+  border-top-color: var(--brand-blue);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: -3px;
 }
 
 @keyframes spin {
@@ -741,5 +748,636 @@ button:disabled {
     flex-direction: column;
     align-items: flex-start;
     gap: 16px;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Guided installer shell
+   -------------------------------------------------------------------------- */
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  background: #f3f3f0;
+}
+
+.installer-shell {
+  min-height: 100vh;
+  background: #f3f3f0;
+  color: var(--brand-black);
+  overflow-x: hidden;
+}
+
+.installer-hero {
+  position: relative;
+  overflow: hidden;
+  min-height: 300px;
+  padding: 28px clamp(24px, 5vw, 68px) 94px;
+  background: var(--brand-blue);
+  color: var(--brand-white);
+}
+
+.installer-hero::before,
+.installer-hero::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.installer-hero::before {
+  width: 360px;
+  height: 360px;
+  right: -130px;
+  top: -210px;
+  border: 70px solid rgba(255, 255, 255, 0.08);
+}
+
+.installer-hero::after {
+  width: 92px;
+  height: 92px;
+  right: 12%;
+  bottom: 30px;
+  background: var(--brand-orange);
+  opacity: 0.95;
+}
+
+.installer-header-row,
+.installer-intro {
+  position: relative;
+  z-index: 1;
+}
+
+.installer-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.installer-brand {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.installer-logo {
+  display: block;
+  width: 174px;
+  height: auto;
+}
+
+.setup-badge {
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 999px;
+  color: var(--brand-white);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.guided-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.guided-status > span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #65ee97;
+  box-shadow: 0 0 0 5px rgba(101, 238, 151, 0.16);
+}
+
+.installer-intro {
+  max-width: 760px;
+  margin-top: 48px;
+}
+
+.hero-kicker,
+.section-kicker {
+  display: inline-block;
+  margin-bottom: 10px;
+  color: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.hero-kicker {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.installer-intro h1 {
+  max-width: 700px;
+  margin: 0;
+  color: var(--brand-white);
+  font-size: clamp(2.25rem, 5vw, 4.8rem);
+  line-height: 0.98;
+  letter-spacing: -0.055em;
+}
+
+.installer-intro p {
+  max-width: 650px;
+  margin: 18px 0 0;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: clamp(0.95rem, 1.6vw, 1.12rem);
+  line-height: 1.65;
+}
+
+.installer-main {
+  position: relative;
+  z-index: 2;
+  width: min(1180px, 100%);
+  margin: -62px auto 0;
+  padding: 0 clamp(18px, 4vw, 48px) 28px;
+}
+
+.install-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+button.install-choice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  min-height: 126px;
+  padding: 20px;
+  border: 1px solid #e0e0e4;
+  border-radius: 22px;
+  background: var(--brand-white);
+  color: var(--brand-black);
+  box-shadow: 0 10px 28px rgba(20, 23, 42, 0.06);
+  text-align: left;
+  text-transform: none;
+  letter-spacing: 0;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+button.install-choice:hover {
+  transform: translateY(-2px);
+  border-color: rgba(11, 53, 241, 0.32);
+}
+
+button.install-choice.active {
+  border: 2px solid var(--brand-blue);
+  box-shadow: 0 14px 34px rgba(11, 53, 241, 0.14);
+}
+
+.choice-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 15px;
+  background: #eff1f7;
+  color: #4f5360;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.install-choice.active .choice-icon {
+  background: var(--brand-blue);
+  color: var(--brand-white);
+}
+
+.choice-copy {
+  display: grid;
+  gap: 5px;
+}
+
+.choice-copy strong {
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.choice-copy > span {
+  color: #686a73;
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.choice-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #f1f1f3;
+  color: #767780;
+  font-size: 0.8rem;
+}
+
+.install-choice.active .choice-check {
+  background: var(--brand-blue);
+  color: var(--brand-white);
+}
+
+.installer-workspace {
+  min-height: 350px;
+  margin-top: 16px;
+  overflow: hidden;
+  border: 1px solid #e1e1e5;
+  border-radius: 28px;
+  background: var(--brand-white);
+  box-shadow: 0 14px 44px rgba(20, 23, 42, 0.055);
+}
+
+.workspace-ios {
+  background: #f7f7f5;
+}
+
+.install-panel-content {
+  padding: clamp(30px, 5vw, 60px);
+}
+
+.usb-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(300px, 0.85fr);
+  gap: clamp(36px, 7vw, 86px);
+  align-items: center;
+}
+
+.section-kicker {
+  color: var(--brand-blue);
+}
+
+.install-panel-copy h2,
+.ios-section-header h2 {
+  margin: 0;
+  color: var(--brand-black);
+  font-size: clamp(1.9rem, 4vw, 3.45rem);
+  font-weight: 800;
+  line-height: 1.03;
+  letter-spacing: -0.055em;
+  text-transform: none;
+}
+
+.panel-lede,
+.ios-section-header p {
+  margin: 16px 0 0;
+  color: #63656d;
+  font-size: 0.98rem;
+  line-height: 1.7;
+}
+
+.friendly-note {
+  display: flex;
+  gap: 13px;
+  align-items: flex-start;
+  margin-top: 24px;
+  padding: 15px 17px;
+  border: 1px solid rgba(255, 88, 0, 0.22);
+  border-radius: 16px;
+  background: rgba(255, 88, 0, 0.055);
+}
+
+.friendly-note-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--brand-orange);
+  color: var(--brand-white);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.friendly-note div {
+  display: grid;
+  gap: 3px;
+}
+
+.friendly-note strong {
+  font-size: 0.85rem;
+}
+
+.friendly-note div span {
+  color: #67686e;
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-top: 24px;
+}
+
+button.brand-button {
+  display: inline-flex;
+  gap: 14px;
+  min-height: 50px;
+  padding: 0 22px;
+  border-radius: 999px;
+  background: var(--brand-blue);
+  color: var(--brand-white);
+  font-size: 0.82rem;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+button.brand-button span {
+  font-size: 1rem;
+}
+
+button.text-button,
+button.footer-link {
+  min-height: auto;
+  padding: 4px 0;
+  border-bottom: 1px solid currentColor;
+  border-radius: 0;
+  background: transparent;
+  color: var(--brand-blue);
+  font-size: 0.78rem;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.how-it-works {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.how-it-works li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 15px;
+  padding: 19px 0;
+  border-bottom: 1px solid #e6e6e8;
+}
+
+.how-it-works li:last-child {
+  border-bottom: 0;
+}
+
+.how-it-works li > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  background: var(--brand-black);
+  color: var(--brand-white);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.how-it-works strong {
+  font-size: 0.88rem;
+}
+
+.how-it-works p {
+  margin: 4px 0 0;
+  color: #73747b;
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.installer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 20px 8px 0;
+  color: #777981;
+  font-size: 0.75rem;
+}
+
+.flasher-embedded {
+  min-height: auto;
+  background: transparent;
+}
+
+.flasher-embedded .workspace-body {
+  background: transparent;
+}
+
+.flasher-embedded .screen {
+  max-width: 780px;
+  padding: clamp(30px, 5vw, 56px);
+}
+
+.flasher-embedded .screen-header {
+  align-items: center;
+  margin-bottom: 18px;
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.flasher-embedded .screen-header h2 {
+  color: var(--brand-black);
+  font-size: clamp(1.65rem, 3vw, 2.55rem);
+  font-weight: 800;
+  letter-spacing: -0.045em;
+  text-transform: none;
+}
+
+.flasher-embedded .notice,
+.flasher-embedded .device-card,
+.flasher-embedded .confirm-box,
+.flasher-embedded .unlock-step-card {
+  border-radius: 16px;
+}
+
+.flasher-embedded .btn-primary,
+.flasher-embedded .btn-small {
+  border-radius: 999px;
+  background: var(--brand-blue);
+  color: var(--brand-white);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* --------------------------------------------------------------------------
+   iPhone and iPad guided flow
+   -------------------------------------------------------------------------- */
+
+.ios-section-header {
+  width: min(680px, 100%);
+  margin: 0 auto 26px;
+  text-align: center;
+}
+
+.ios-section-header p {
+  max-width: 560px;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.ios-connect-card {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: clamp(24px, 5vw, 44px);
+  align-items: center;
+}
+
+.device-illustration {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  align-content: space-between;
+  width: 142px;
+  height: 214px;
+  margin: 0 auto;
+  padding: 17px 12px 13px;
+  border: 8px solid var(--brand-black);
+  border-radius: 28px;
+  background: var(--brand-blue);
+  box-shadow: 12px 14px 0 rgba(11, 53, 241, 0.12);
+}
+
+.device-speaker {
+  width: 38px;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.device-screen {
+  align-self: center;
+  color: var(--brand-white);
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+.device-home {
+  width: 23px;
+  height: 23px;
+  border: 2px solid rgba(255, 255, 255, 0.55);
+  border-radius: 50%;
+}
+
+.connection-checklist {
+  display: grid;
+  gap: 8px;
+  margin: -6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.connection-checklist li {
+  position: relative;
+  padding-left: 24px;
+  color: #4f5158;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.connection-checklist li::before {
+  content: "✓";
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: var(--brand-blue);
+  font-weight: 800;
+}
+
+.quiet-help {
+  margin: 10px 0 0;
+  color: #85868c;
+  font-size: 0.7rem;
+  text-align: center;
+}
+
+@media (max-width: 800px) {
+  .installer-hero {
+    min-height: 330px;
+  }
+
+  .install-choice-grid,
+  .usb-panel {
+    grid-template-columns: 1fr;
+  }
+
+  button.install-choice {
+    min-height: 102px;
+  }
+
+  .usb-panel {
+    gap: 28px;
+  }
+
+  .how-it-works {
+    padding-top: 8px;
+    border-top: 1px solid #e6e6e8;
+  }
+}
+
+@media (max-width: 560px) {
+  .installer-header-row {
+    align-items: flex-start;
+  }
+
+  .guided-status {
+    display: none;
+  }
+
+  .installer-logo {
+    width: 148px;
+  }
+
+  .installer-intro {
+    margin-top: 38px;
+  }
+
+  .install-choice-grid {
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scroll-snap-type: x mandatory;
+  }
+
+  button.install-choice {
+    min-width: 270px;
+    scroll-snap-align: start;
+  }
+
+  .panel-actions,
+  .installer-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .ios-connect-card {
+    grid-template-columns: 1fr;
+  }
+
+  .device-illustration {
+    width: 110px;
+    height: 168px;
+    border-width: 7px;
+    border-radius: 23px;
   }
 }
