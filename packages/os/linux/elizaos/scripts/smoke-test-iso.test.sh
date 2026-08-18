@@ -103,7 +103,7 @@ case "${FAKE_QEMU_MODE:-ready}" in
         [ "${username}" = "user" ] || exit 65
         printf 'Password: ' >&7
         IFS= read -r -d $'\r' password <"${serial_prefix}.in"
-        [ -z "${password}" ] || exit 66
+        [ "${password}" = "live" ] || exit 66
         printf 'user@elizaos:~$ ' >&7
         IFS= read -r -d $'\r' probe <"${serial_prefix}.in"
         if [[ "${probe}" == *"ELIZAOS_ISO_SMOKE_READY"* ]]; then

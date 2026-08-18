@@ -484,7 +484,10 @@ prove_guest_readiness() {
             [ "${password_sent}" = "0" ] &&
             grep -Eq 'Password:' "${serial_log}" 2>/dev/null; then
             password_sent=1
-            serial_write ""
+            # Debian live-config creates the disposable live user with its
+            # documented default password, `live`. GDM uses autologin, but the
+            # independent serial getty still performs normal PAM authentication.
+            serial_write live
         fi
 
         if [ "${login_sent}" = "1" ] &&
