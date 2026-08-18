@@ -32,6 +32,7 @@ import { join, dirname } from "node:path";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { installPinnedSideloader } from "./sideloader-installer.mjs";
 
 // ── Mode ─────────────────────────────────────────────────────────────────────
 
@@ -78,9 +79,13 @@ const CHECKSUMS_PATH = join(__dirname, "checksums.json");
  *   sideloader: {
  *     pinned: {
  *       version: string | null,
- *       darwin: { asset: string | null, sha256: string | null },
- *       linux: { asset: string | null, sha256: string | null },
- *       win32: { asset: string | null, sha256: string | null }
+ *       targets: Record<string, {
+ *         archive: string,
+ *         asset: string,
+ *         binary: string,
+ *         sha256: string,
+ *         size: number
+ *       }>
  *     }
  *   }
  * }}
@@ -277,94 +282,15 @@ async function downloadPlatformTools() {
 
 // ── Sideloader ───────────────────────────────────────────────────────────────
 
-const SIDELOADER_PLATFORM_MAP = {
-  darwin: "darwin",
-  linux: "linux",
-  win32: "windows",
-};
-
-/**
- * Try to find a sibling `.sha256` asset on the release. Returns its content
- * (the hex hash) or null if not present.
- * @param {Array<{ name: string, browser_download_url: string }>} assets
- * @param {string} primaryAssetName
- */
-async function fetchSiblingSha256(assets, primaryAssetName) {
-  const sigName = `${primaryAssetName}.sha256`;
-  const sibling = assets.find((a) => a.name === sigName);
-  if (!sibling) return null;
-  const res = await fetch(sibling.browser_download_url, {
-    headers: { "User-Agent": "elizaos-setup/1.0" },
-  });
-  if (!res.ok) return null;
-  const text = (await res.text()).trim();
-  // Common formats: "<hash>" or "<hash>  <filename>"
-  const first = text.split(/\s+/)[0];
-  return first && /^[0-9a-fA-F]{64}$/.test(first) ? first.toLowerCase() : null;
-}
-
 async function downloadSideloader() {
   console.log(`\n[vendor] === Sideloader ===`);
-
-  const platformKey = SIDELOADER_PLATFORM_MAP[PLATFORM];
-  const destName = PLATFORM === "win32" ? "sideloader.exe" : "sideloader";
-  const destPath = join(VENDOR_ROOT, destName);
-
-  const pinned = CHECKSUMS.sideloader?.pinned?.[PLATFORM];
-  if (pinned && pinned.asset && pinned.sha256) {
-    // Pinned path — download the exact asset URL and verify against the pinned hash.
-    const url = pinned.asset;
-    console.log(`[vendor] using pinned Sideloader asset: ${url}`);
-    await downloadFile(url, destPath, pinned.sha256);
-  } else {
-    console.log(`[vendor] Fetching latest Sideloader release info…`);
-    const apiResponse = await fetch(
-      "https://api.github.com/repos/Dadoum/Sideloader/releases/latest",
-      {
-        headers: {
-          Accept: "application/vnd.github+json",
-          "User-Agent": "elizaos-setup/1.0",
-        },
-      },
-    );
-    if (!apiResponse.ok) {
-      throw new Error(
-        `GitHub API returned HTTP ${apiResponse.status} ${apiResponse.statusText}`,
-      );
-    }
-
-    const release = /** @type {any} */ (await apiResponse.json());
-    const assets = release.assets ?? [];
-
-    const asset = assets.find(
-      (/** @type {any} */ a) =>
-        typeof a.name === "string" &&
-        a.name.toLowerCase().includes(`sideloader-${platformKey}`) &&
-        !a.name.endsWith(".sha256") &&
-        !a.name.endsWith(".sig"),
-    );
-
-    if (!asset) {
-      const names = assets.map((/** @type {any} */ a) => a.name).join(", ");
-      throw new Error(
-        `No Sideloader asset for "${platformKey}". Available: ${names || "(none)"}`,
-      );
-    }
-
-    const expectedSha = await fetchSiblingSha256(assets, asset.name);
-    if (!expectedSha) {
-      throw new Error(
-        "Sideloader checksum unavailable — refusing to install unverified " +
-          "binary. Pin a known-good version in vendor/checksums.json instead.",
-      );
-    }
-    await downloadFile(asset.browser_download_url, destPath, expectedSha);
-  }
-
-  if (PLATFORM !== "win32") {
-    chmodSync(destPath, 0o755);
-  }
-  console.log(`[vendor] Sideloader ready: ${destPath}`);
+  await installPinnedSideloader({
+    vendorRoot: VENDOR_ROOT,
+    platform: PLATFORM,
+    arch: process.arch,
+    config: CHECKSUMS.sideloader,
+    log: (message) => console.log(`[vendor] ${message}`),
+  });
   return true;
 }
 
