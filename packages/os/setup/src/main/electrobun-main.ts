@@ -17,6 +17,7 @@
 // silently falling back to a port that doesn't exist.
 // ---------------------------------------------------------------------------
 
+import { randomBytes } from "node:crypto";
 import { createServer as createNetServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -36,10 +37,12 @@ async function isPortFree(port: number): Promise<boolean> {
   });
 }
 
-async function startBackend(): Promise<{ url: string; port: number }> {
+async function startBackend(
+  authToken: string,
+): Promise<{ url: string; port: number }> {
   const desired = Number(process.env.ELIZA_SETUP_PORT ?? DEFAULT_PORT);
   const port = (await isPortFree(desired)) ? desired : 0;
-  const server = createServer({ port });
+  const server = createServer({ port, authToken });
   const boundPort = server.port;
   if (typeof boundPort !== "number") {
     throw new Error("[elizaos-setup] backend did not bind to a TCP port");
@@ -47,7 +50,7 @@ async function startBackend(): Promise<{ url: string; port: number }> {
   return { url: `http://127.0.0.1:${boundPort}`, port: boundPort };
 }
 
-function buildPreloadScript(serverUrl: string): string {
+function buildPreloadScript(serverUrl: string, authToken: string): string {
   // Runs in the renderer global scope before any other script.
   // Electrobun passes this string directly to the webview's preload hook.
   return `(() => {
@@ -63,6 +66,11 @@ function buildPreloadScript(serverUrl: string): string {
     // getServerUrl() is called.
     window.__ELIZA_SERVER_URL__ = ${JSON.stringify(serverUrl)};
   }
+  Object.defineProperty(window, "__ELIZA_SERVER_TOKEN__", {
+    value: ${JSON.stringify(authToken)},
+    writable: false,
+    configurable: false,
+  });
 })();`;
 }
 
@@ -79,10 +87,11 @@ function resolveRendererIndexUrl(): string {
 }
 
 async function main(): Promise<void> {
-  const { url: serverUrl, port } = await startBackend();
+  const authToken = randomBytes(32).toString("hex");
+  const { url: serverUrl, port } = await startBackend(authToken);
   console.log(`[elizaos-setup] backend bound at ${serverUrl} (port ${port})`);
 
-  const preload = buildPreloadScript(serverUrl);
+  const preload = buildPreloadScript(serverUrl, authToken);
   const rendererUrl = resolveRendererIndexUrl();
 
   const win = new BrowserWindow({

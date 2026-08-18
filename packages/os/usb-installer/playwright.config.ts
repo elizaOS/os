@@ -1,6 +1,6 @@
 // Configures the USB installer build, server, and tests.
 import path from "node:path";
-import { defineConfig, devices } from "playwright/test";
+import { defineConfig, devices } from "@playwright/test";
 
 const recording = !!process.env.E2E_RECORD;
 

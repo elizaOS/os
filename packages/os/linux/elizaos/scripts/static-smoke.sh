@@ -112,6 +112,25 @@ if grep -R -E -n '^pulseaudio$' config/package-lists config/profiles 2>/dev/null
 fi
 grep -q '^openssh-server$' config/package-lists/elizaos-common.list.chroot \
     || { echo "UNWIRED QEMU SSH: common image must install openssh-server"; fail=1; }
+capability_runner=config/includes.chroot/usr/local/lib/elizaos/capability-runner
+admin_mode=config/includes.chroot/etc/elizaos/admin-mode
+sudoers_policy=config/includes.chroot/etc/sudoers.d/elizaos-capability-runner
+[ "$(cat "${admin_mode}")" = disabled ] \
+    || { echo "UNSAFE ADMIN DEFAULT: capability broker must ship disabled"; fail=1; }
+if grep -qE '(^|[|[:space:]])exec\)' "${capability_runner}"; then
+    echo "ARBITRARY ROOT EXECUTION: capability broker must expose closed operations only"
+    fail=1
+fi
+grep -q 'audit failed; refusing privileged operation' "${capability_runner}" \
+    || { echo "FAIL-OPEN AUDIT: privileged operations must stop when logging fails"; fail=1; }
+if grep -qF 'capability-runner *' "${sudoers_policy}"; then
+    echo "UNBOUNDED SUDO POLICY: enumerate each broker operation"
+    fail=1
+fi
+for operation in root-status service package network power; do
+    grep -q "capability-runner ${operation}" "${sudoers_policy}" \
+        || { echo "MISSING SUDO OPERATION: ${operation}"; fail=1; }
+done
 for generated in config/package-lists/elizaos-gui.list.chroot config/package-lists/live.list.chroot; do
     [ ! -e "${generated}" ] || { echo "GENERATED PROFILE LEAK: ${generated}"; fail=1; }
 done

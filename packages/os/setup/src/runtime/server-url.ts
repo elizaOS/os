@@ -20,6 +20,7 @@
 declare global {
   interface Window {
     __ELIZA_SERVER_URL__?: string;
+    __ELIZA_SERVER_TOKEN__?: string;
   }
 }
 
@@ -27,8 +28,28 @@ const DEV_FALLBACK = "http://127.0.0.1:3743";
 
 interface ImportMetaEnvLike {
   readonly VITE_ELIZA_SETUP_SERVER_URL?: string;
+  readonly VITE_ELIZA_SETUP_TOKEN?: string;
   readonly PROD?: boolean;
   readonly DEV?: boolean;
+}
+
+export function getServerToken(): string {
+  if (typeof window !== "undefined") {
+    const injected = window.__ELIZA_SERVER_TOKEN__;
+    if (isNonEmptyString(injected)) return injected;
+  }
+  const token = readEnv()?.VITE_ELIZA_SETUP_TOKEN;
+  if (isNonEmptyString(token)) return token;
+  throw new Error("[elizaos-setup] No backend authorization token configured.");
+}
+
+export function authorizedFetch(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+): Promise<Response> {
+  const headers = new Headers(init.headers);
+  headers.set("X-Eliza-Setup-Token", getServerToken());
+  return fetch(input, { ...init, headers });
 }
 
 function readEnv(): ImportMetaEnvLike | undefined {

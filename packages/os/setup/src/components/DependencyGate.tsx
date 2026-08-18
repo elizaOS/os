@@ -4,7 +4,7 @@ import type {
   DependencyCheckResult,
   DependencyId,
 } from "../dependencies/types";
-import { getServerUrl } from "../runtime/server-url";
+import { authorizedFetch, getServerUrl } from "../runtime/server-url";
 
 const SERVER = getServerUrl();
 
@@ -223,7 +223,7 @@ export function DependencyGate({ onReady }: Props) {
   const fetchDependencies = useCallback(async () => {
     setChecking(true);
     try {
-      const res = await fetch(`${SERVER}/dependencies`);
+      const res = await authorizedFetch(`${SERVER}/dependencies`);
       const data = (await res.json()) as DependencyCheckResult[];
       setResults(data);
     } catch {
@@ -261,9 +261,12 @@ export function DependencyGate({ onReady }: Props) {
       ),
     );
     try {
-      const res = await fetch(`${SERVER}/dependencies/${id}/install`, {
-        method: "POST",
-      });
+      const res = await authorizedFetch(
+        `${SERVER}/dependencies/${id}/install`,
+        {
+          method: "POST",
+        },
+      );
       const updated = (await res.json()) as DependencyCheckResult;
       setResults((prev) => prev.map((r) => (r.id === id ? updated : r)));
     } catch {

@@ -16,6 +16,7 @@ interface WorkflowStep {
 
 interface WorkflowJob {
   env?: Record<string, string>;
+  needs?: string | string[];
   steps?: WorkflowStep[];
   uses?: string;
 }
@@ -200,6 +201,35 @@ describe("OS release workflow authority", () => {
     }
   });
 
+  test("application-source workflows share the audited release lock", () => {
+    const appLock = JSON.parse(
+      readFileSync(
+        join(
+          repositoryRoot,
+          "packages/os/linux/elizaos/app-source.lock.json",
+        ),
+        "utf8",
+      ),
+    ) as { commit?: string };
+    expect(appLock.commit).toMatch(/^[0-9a-f]{40}$/);
+
+    for (const name of [
+      "build-debian-package.yml",
+      "elizaos-cuttlefish.yml",
+      "elizaos-os-release.yml",
+      "riscv64-smoke.yml",
+    ]) {
+      const source = readFileSync(workflowPath(name), "utf8");
+      const pinnedDefaults = [
+        ...source.matchAll(/default:\s*["']?([0-9a-f]{40})["']?/g),
+        ...source.matchAll(/eliza-ref \|\| '([0-9a-f]{40})'/g),
+      ].map((match) => match[1]);
+
+      expect(pinnedDefaults.length).toBeGreaterThan(0);
+      expect(new Set(pinnedDefaults)).toEqual(new Set([appLock.commit]));
+    }
+  });
+
   test("every checked-in AOSP brand resolves to an OS-owned vendor tree", () => {
     const brandDirectory = join(repositoryRoot, "scripts", "distro-android");
     const configs = readdirSync(brandDirectory).filter((entry) =>
@@ -246,6 +276,26 @@ describe("OS release workflow authority", () => {
       for (const calleeName of localReusableCalls(parseWorkflow(callerName))) {
         expect(existsSync(workflowPath(calleeName))).toBe(true);
         expect(parseWorkflow(calleeName).on?.workflow_call).toBeDefined();
+      }
+    }
+  });
+
+  test("every workflow job dependency resolves", () => {
+    for (const name of workflowNames()) {
+      const workflow = parseWorkflow(name);
+      const jobNames = new Set(Object.keys(workflow.jobs ?? {}));
+
+      for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
+        const dependencies = Array.isArray(job.needs)
+          ? job.needs
+          : job.needs
+            ? [job.needs]
+            : [];
+        for (const dependency of dependencies) {
+          expect(jobNames.has(dependency), `${name}:${jobName} needs ${dependency}`).toBe(
+            true,
+          );
+        }
       }
     }
   });

@@ -1,18 +1,31 @@
 // Exercises the AOSP setup flasher backend and dependency gates.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getServerUrl } from "../server-url";
+import { getServerToken, getServerUrl } from "../server-url";
 
 declare global {
   interface Window {
     __ELIZA_SERVER_URL__?: string;
+    __ELIZA_SERVER_TOKEN__?: string;
   }
 }
 
 afterEach(() => {
   if (typeof window !== "undefined") {
     delete window.__ELIZA_SERVER_URL__;
+    delete window.__ELIZA_SERVER_TOKEN__;
   }
   vi.unstubAllEnvs();
+});
+
+describe("getServerToken", () => {
+  it("returns only an explicitly injected token", () => {
+    window.__ELIZA_SERVER_TOKEN__ = "test-token";
+    expect(getServerToken()).toBe("test-token");
+  });
+
+  it("fails closed when no token is configured", () => {
+    expect(() => getServerToken()).toThrow(/No backend authorization token/);
+  });
 });
 
 describe("getServerUrl", () => {

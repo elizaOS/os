@@ -4,26 +4,29 @@ set -eu
 self=/usr/local/lib/elizaos/capability-runner
 
 usage() {
-    echo "usage: capability-runner <root-status|service|package|network|power|exec> [args...]" >&2
+    echo "usage: capability-runner <root-status|service|package|network|power> [args...]" >&2
     exit 64
 }
 
 need_admin_mode() {
-    [ "$(cat /etc/elizaos/admin-mode 2>/dev/null || printf disabled)" = enabled ] || {
+    [ "$(/usr/bin/cat /etc/elizaos/admin-mode 2>/dev/null || printf disabled)" = enabled ] || {
         echo "elizaOS owner admin mode is disabled." >&2
         exit 77
     }
 }
 
 need_root() {
-    if [ "$(id -u)" -ne 0 ]; then
-        exec sudo -n "${self}" "$@"
+    if [ "$(/usr/bin/id -u)" -ne 0 ]; then
+        exec /usr/bin/sudo -n "${self}" "$@"
     fi
 }
 
 audit() {
-    logger -p authpriv.notice -t elizaos-capability \
-        "caller_uid=${SUDO_UID:-$(id -u)} caller_user=${SUDO_USER:-$(id -un)} action=$*" 2>/dev/null || true
+    /usr/bin/logger -p authpriv.notice -t elizaos-capability \
+        "caller_uid=${SUDO_UID:-$(/usr/bin/id -u)} caller_user=${SUDO_USER:-$(/usr/bin/id -un)} action=$*" || {
+        echo "elizaOS capability audit failed; refusing privileged operation." >&2
+        exit 74
+    }
 }
 
 valid_unit() {
@@ -42,7 +45,8 @@ case "${command_name}" in
     root-status)
         [ "$#" -eq 0 ] || usage
         need_root "${command_name}"
-        printf 'root=yes\nbase=debian\nuid=%s\n' "$(id -u)"
+        audit "root-status"
+        printf 'root=yes\nbase=debian\nuid=%s\n' "$(/usr/bin/id -u)"
         ;;
     service)
         [ "$#" -eq 2 ] || usage
@@ -52,7 +56,7 @@ case "${command_name}" in
         need_admin_mode
         need_root "${command_name}" "${action}" "${unit}"
         audit "service ${action} ${unit}"
-        exec systemctl "${action}" -- "${unit}"
+        exec /usr/bin/systemctl "${action}" -- "${unit}"
         ;;
     package)
         [ "$#" -ge 1 ] || usage
@@ -70,9 +74,9 @@ case "${command_name}" in
         audit "package ${action} $*"
         export DEBIAN_FRONTEND=noninteractive
         case "${action}" in
-            update) exec apt-get update ;;
-            install) exec apt-get -y --no-install-recommends install "$@" ;;
-            remove) exec apt-get -y remove "$@" ;;
+            update) exec /usr/bin/apt-get update ;;
+            install) exec /usr/bin/apt-get -y --no-install-recommends install "$@" ;;
+            remove) exec /usr/bin/apt-get -y remove "$@" ;;
         esac
         ;;
     network)
@@ -84,7 +88,7 @@ case "${command_name}" in
         need_admin_mode
         need_root "${command_name}" "${action}" "${connection}"
         audit "network ${action} ${connection}"
-        exec nmcli connection "${action}" id "${connection}"
+        exec /usr/bin/nmcli connection "${action}" id "${connection}"
         ;;
     power)
         [ "$#" -eq 1 ] || usage
@@ -93,24 +97,7 @@ case "${command_name}" in
         need_admin_mode
         need_root "${command_name}" "${action}"
         audit "power ${action}"
-        exec systemctl "${action}"
-        ;;
-    exec)
-        [ "$#" -ge 2 ] || usage
-        [ "$1" = -- ] || usage
-        shift
-        executable="$1"
-        case "${executable}" in /*) ;; *) usage ;; esac
-        [ -x "${executable}" ] || {
-            echo "elizaOS root executable is unavailable: ${executable}" >&2
-            exit 69
-        }
-        need_admin_mode
-        need_root "${command_name}" -- "$@"
-        audit "exec executable=${executable} argc=$#"
-        exec env -i HOME=/root USER=root LOGNAME=root \
-            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-            "$@"
+        exec /usr/bin/systemctl "${action}"
         ;;
     *) usage ;;
 esac

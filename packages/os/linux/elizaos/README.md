@@ -55,17 +55,19 @@ variable or unit test alone is not proof.
 ## Administrative authority
 
 `/usr/local/lib/elizaos/capability-runner` is the only passwordless sudo
-boundary. Structured operations validate their arguments. Owner-enabled admin
-mode also permits:
+boundary. It exposes only the closed `root-status`, `service`, `package`,
+`network`, and `power` operations, and validates every argument. There is no
+arbitrary command or shell operation.
 
 ```bash
-capability-runner exec -- /absolute/executable arg...
+sudo sh -c 'printf "enabled\\n" > /etc/elizaos/admin-mode'
 ```
 
-The runner requires an absolute executable, executes without a shell, uses a
-clean root environment, and logs the operation. Disabling
-`/etc/elizaos/admin-mode` disables arbitrary root execution. This is deliberate
-owner-level authority, not an unaudited `NOPASSWD: ALL` grant.
+Admin mode ships disabled and must be enabled through the owner's normal,
+password-authenticated sudo path. State-changing operations fail closed unless
+admin mode is enabled and the audit record is accepted by the system logger.
+Set the file back to `disabled` to revoke the broker. The application action is
+also restricted to the runtime `OWNER` role.
 
 ## Verification
 

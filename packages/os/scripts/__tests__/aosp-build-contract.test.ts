@@ -223,10 +223,17 @@ describe("AOSP build contracts", () => {
       join(repositoryRoot, ".github/workflows/elizaos-cuttlefish.yml"),
       "utf8",
     );
+    const appLock = JSON.parse(
+      readFileSync(
+        join(
+          repositoryRoot,
+          "packages/os/linux/elizaos/app-source.lock.json",
+        ),
+        "utf8",
+      ),
+    ) as { commit: string };
 
-    expect(workflow).toContain(
-      'default: "395a90a3ee14d81bf5b97fc9ffdfd4e532440d18"',
-    );
+    expect(workflow).toContain(`default: "${appLock.commit}"`);
     expect(workflow).toContain("Provision pinned Zig 0.13");
     expect(workflow).toContain("ndk;29.0.13113456");
     expect(workflow).toContain(

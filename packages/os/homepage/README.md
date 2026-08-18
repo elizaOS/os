@@ -37,7 +37,7 @@ The deploy target is the `elizaos-homepage` Cloudflare Pages project. The custom
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `VITE_ELIZA_CLOUD_API_URL` | `https://api.elizacloud.ai` | Cloud API base for auth and checkout |
+| `VITE_ELIZA_CLOUD_API_URL` | `https://api.eliza.app` | Cloud API base for auth and checkout |
 
 ## Tests
 

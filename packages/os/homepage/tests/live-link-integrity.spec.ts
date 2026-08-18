@@ -3,13 +3,13 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { EXTERNAL_URLS } from "@elizaos/shared/brand";
-import { HARDWARE_PRODUCTS } from "@elizaos/shared/hardware-catalog";
+import { HARDWARE_PRODUCTS } from "@elizaos/shared/hardware-catalog/index";
 import {
   type APIRequestContext,
   expect,
   type Locator,
   test,
-} from "playwright/test";
+} from "@playwright/test";
 
 type ReleaseArtifact = {
   id: string;

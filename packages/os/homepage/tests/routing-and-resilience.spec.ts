@@ -1,5 +1,5 @@
 // Exercises the OS homepage route, checkout, and visual behavior.
-import { expect, test } from "playwright/test";
+import { expect, test } from "@playwright/test";
 
 test("hardware detail navigation survives browser back and forward", async ({
   page,

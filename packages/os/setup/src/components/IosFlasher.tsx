@@ -10,6 +10,7 @@ import type {
   IosInstallStepId,
   IosInstallStepStatus,
 } from "../backend/ios-types";
+import { authorizedFetch } from "../runtime/server-url";
 
 // ── Design tokens ──────────────────────────────────────────────────────────────
 const C = {
@@ -216,7 +217,7 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
 
   const scanDevices = useCallback(async () => {
     try {
-      const res = await fetch(`${serverUrl}/ios/devices`);
+      const res = await authorizedFetch(`${serverUrl}/ios/devices`);
       if (!res.ok) return;
       const data = (await res.json()) as IosDevice[];
       setDevices(data);
@@ -226,8 +227,8 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
 
         // Fetch region notice and apps in parallel
         const [regionRes, appsRes] = await Promise.all([
-          fetch(`${serverUrl}/ios/region`),
-          fetch(`${serverUrl}/ios/apps`),
+          authorizedFetch(`${serverUrl}/ios/region`),
+          authorizedFetch(`${serverUrl}/ios/apps`),
         ]);
         if (regionRes.ok)
           setRegionNotice(
@@ -282,7 +283,7 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
     setError(null);
     setLoading(true);
     try {
-      const res = await fetch(`${serverUrl}/ios/authenticate`, {
+      const res = await authorizedFetch(`${serverUrl}/ios/authenticate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ appleId, password }),
@@ -310,7 +311,7 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
     setError(null);
     setLoading(true);
     try {
-      const res = await fetch(`${serverUrl}/ios/2fa`, {
+      const res = await authorizedFetch(`${serverUrl}/ios/2fa`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code: twoFaCode }),
@@ -334,7 +335,7 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
     setLoading(true);
     setError(null);
     try {
-      const planRes = await fetch(`${serverUrl}/ios/plan`, {
+      const planRes = await authorizedFetch(`${serverUrl}/ios/plan`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -349,7 +350,7 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
       setScreen("installing");
 
       // SSE execute stream
-      const execRes = await fetch(`${serverUrl}/ios/execute`, {
+      const execRes = await authorizedFetch(`${serverUrl}/ios/execute`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ plan: planData }),

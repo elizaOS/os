@@ -2,8 +2,8 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { HARDWARE_PRODUCTS } from "@elizaos/shared/hardware-catalog";
-import { expect, test } from "playwright/test";
+import { HARDWARE_PRODUCTS } from "@elizaos/shared/hardware-catalog/index";
+import { expect, test } from "@playwright/test";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LIVE_ROUTES_SPEC = path.join(HERE, "live-routes.spec.ts");

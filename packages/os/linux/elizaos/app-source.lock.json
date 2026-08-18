@@ -1,6 +1,6 @@
 {
   "schema": "eliza.os.linux.app-source-lock.v1",
   "repository": "https://github.com/elizaOS/eliza",
-  "commit": "2ccc3fe967dedd74ed58a4e0de22e14e41453798",
+  "commit": "8eccb81617d6a01a0f44835b8488ae450a5c7107",
   "buildInfoPath": "Resources/app/eliza-dist/build-info.json"
 }

@@ -255,7 +255,7 @@ jobs:
     secrets: inherit
 
   summary:
-    needs: [trigger-linux-iso, trigger-debian-package, trigger-vm-image, verify-artifacts, populate-and-validate-manifest, publish-apt]
+    needs: [trigger-linux-iso, trigger-debian-package, verify-artifacts, populate-and-validate-manifest, publish-apt]
     runs-on: ${{ fromJSON(vars.HETZNER_FLEET_ONLINE == 'true' && '["self-hosted","hetzner-robot"]' || '["ubuntu-24.04"]') }}
     if: always()
     timeout-minutes: 5
@@ -268,7 +268,6 @@ jobs:
             echo "| -------- | ------ |"
             echo "| Linux ISO | ${{ needs.trigger-linux-iso.result }} |"
             echo "| Debian .deb | ${{ needs.trigger-debian-package.result }} |"
-            echo "| VM Image | ${{ needs.trigger-vm-image.result }} |"
             echo "| Verify artifacts | ${{ needs.verify-artifacts.result }} |"
             echo "| Populate + gate manifest | ${{ needs.populate-and-validate-manifest.result }} |"
             echo "| apt Repo | ${{ needs.publish-apt.result }} |"

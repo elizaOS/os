@@ -1,4 +1,5 @@
 // Implements backend device and HTTP operations for the AOSP setup flasher.
+import { authorizedFetch } from "../runtime/server-url";
 import type {
   AospBuild,
   AospFlasherBackend,
@@ -146,6 +147,7 @@ function validateFlashPlan(v: unknown): FlashPlan {
     // an object here (full field validation is a separate task), so the narrow
     // to its type stays an explicit assertion.
     request: v.request as unknown as FlashPlan["request"],
+    ...(isString(v.executionToken) ? { executionToken: v.executionToken } : {}),
     ...(isObject(v.artifactPaths)
       ? { artifactPaths: v.artifactPaths as Record<string, string> }
       : {}),
@@ -183,7 +185,7 @@ export class HttpAospFlasherBackend implements AospFlasherBackend {
   }
 
   private async getJson(path: string): Promise<unknown> {
-    const res = await fetch(`${this.base}${path}`);
+    const res = await authorizedFetch(`${this.base}${path}`);
     if (!res.ok) {
       throw new Error(`GET ${path} failed: HTTP ${res.status}`);
     }
@@ -191,7 +193,7 @@ export class HttpAospFlasherBackend implements AospFlasherBackend {
   }
 
   private async postJson(path: string, body: unknown): Promise<unknown> {
-    const res = await fetch(`${this.base}${path}`, {
+    const res = await authorizedFetch(`${this.base}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -264,10 +266,13 @@ export class HttpAospFlasherBackend implements AospFlasherBackend {
       detail: string,
     ) => void,
   ): Promise<void> {
-    const res = await fetch(`${this.base}/execute`, {
+    if (!plan.executionToken) {
+      throw new Error("Flash plan is missing its one-use execution token.");
+    }
+    const res = await authorizedFetch(`${this.base}/execute`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plan }),
+      body: JSON.stringify({ executionToken: plan.executionToken }),
     });
 
     if (!res.ok || !res.body) {

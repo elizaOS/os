@@ -7,7 +7,6 @@ import * as https from "node:https";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { DEFAULT_ELIZAOS_IMAGES } from "./dry-run-backend";
 import {
   DiskutilPermissionError,
   InvalidDevicePathError,
@@ -15,6 +14,7 @@ import {
   PlistParseError,
   UserCancelledAuthError,
 } from "./errors";
+import { fetchPublishedIsoImages } from "./release-discovery";
 import type {
   ElizaOsImage,
   InstallerStep,
@@ -275,70 +275,7 @@ async function getDiskUtilInfo(
 // ---------------------------------------------------------------------------
 
 async function fetchGitHubIsoImages(): Promise<ElizaOsImage[]> {
-  return new Promise((resolve) => {
-    const req = https.get(
-      "https://api.github.com/repos/elizaos/eliza/releases",
-      { headers: { "User-Agent": "elizaos-usb-installer/1.0" } },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (chunk: Buffer) => chunks.push(chunk));
-        res.on("end", () => {
-          try {
-            const body = Buffer.concat(chunks).toString("utf8");
-            const releases = JSON.parse(body) as Array<{
-              tag_name: string;
-              published_at: string;
-              prerelease: boolean;
-              assets: Array<{
-                name: string;
-                browser_download_url: string;
-                size: number;
-              }>;
-            }>;
-
-            const images: ElizaOsImage[] = [];
-            for (const release of releases) {
-              for (const asset of release.assets) {
-                if (!asset.name.endsWith(".iso")) continue;
-                const arch: ElizaOsImage["architecture"] = asset.name.includes(
-                  "riscv64",
-                )
-                  ? "riscv64"
-                  : asset.name.includes("arm64")
-                    ? "arm64"
-                    : "x86_64";
-                const channel: ElizaOsImage["channel"] = release.prerelease
-                  ? "nightly"
-                  : "stable";
-                images.push({
-                  id: `github-${release.tag_name}-${asset.name}`,
-                  label: `elizaOS ${release.tag_name}`,
-                  version: release.tag_name,
-                  channel,
-                  architecture: arch,
-                  buildId: release.tag_name,
-                  publishedAt: release.published_at,
-                  url: asset.browser_download_url,
-                  checksumSha256:
-                    "0000000000000000000000000000000000000000000000000000000000000000",
-                  sizeBytes: asset.size,
-                  minUsbSizeBytes: Math.max(asset.size * 1.2, 8 * 1024 ** 3),
-                  manifestVersion: 1,
-                });
-              }
-            }
-            resolve(
-              images.filter((image) => !/^0+$/.test(image.checksumSha256)),
-            );
-          } catch {
-            resolve(DEFAULT_ELIZAOS_IMAGES);
-          }
-        });
-        res.on("error", () => resolve(DEFAULT_ELIZAOS_IMAGES));
-      },
-    );
-    req.on("error", () => resolve(DEFAULT_ELIZAOS_IMAGES));
-  });
+  return fetchPublishedIsoImages();
 }
 
 async function downloadFile(

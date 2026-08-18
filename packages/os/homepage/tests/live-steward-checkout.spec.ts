@@ -8,14 +8,14 @@
 //   LIVE_OS_HOMEPAGE_STEWARD_CHECKOUT=1 \
 //   bun run --cwd homepage test:e2e live-steward-checkout.spec.ts --project desktop
 
+import { expect, type Page, type Route, test } from "@playwright/test";
 import { StewardAuth } from "@stwd/sdk";
-import { expect, type Page, type Route, test } from "playwright/test";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
 const LIVE_STEWARD_CHECKOUT_ENABLED =
   process.env.LIVE_OS_HOMEPAGE_STEWARD_CHECKOUT === "1";
 const CLOUD_API_URL = (
-  process.env.VITE_ELIZA_CLOUD_API_URL || "https://api.elizacloud.ai"
+  process.env.VITE_ELIZA_CLOUD_API_URL || "https://api.eliza.app"
 ).replace(/\/+$/, "");
 const STEWARD_API_URL = (
   process.env.LIVE_STEWARD_API_URL || "https://eliza.steward.fi"

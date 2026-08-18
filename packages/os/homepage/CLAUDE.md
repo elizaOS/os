@@ -78,7 +78,7 @@ Brand assets are versioned in `public/brand/` so the site builds independently.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `VITE_ELIZA_CLOUD_API_URL` | `https://api.elizacloud.ai` | Cloud API base for Steward auth + Stripe checkout |
+| `VITE_ELIZA_CLOUD_API_URL` | `https://api.eliza.app` | Cloud API base for Steward auth + Stripe checkout |
 
 Cloudflare Pages build vars are in `wrangler.toml`:
 - `PUBLIC_SITE_URL` = `https://os.elizacloud.ai` (production)

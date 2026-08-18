@@ -1,5 +1,5 @@
 // Exercises the OS homepage route, checkout, and visual behavior.
-import { expect, test } from "playwright/test";
+import { expect, test } from "@playwright/test";
 
 const CHECKOUT_BASE = "/checkout";
 const USB_SKU = "elizaos-usb";

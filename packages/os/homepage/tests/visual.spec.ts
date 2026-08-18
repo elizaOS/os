@@ -1,7 +1,7 @@
 // Visual regression baselines for os-homepage.
 // Run once with --update-snapshots to generate baselines. See tests/VISUAL-REGRESSION.md.
 
-import { expect, type Page, test } from "playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import { captureScreenshotWithQualityRetry } from "./screenshot-quality";
 
 const ROUTES = [

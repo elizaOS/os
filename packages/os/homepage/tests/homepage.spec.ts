@@ -1,5 +1,6 @@
 // Exercises the OS homepage route, checkout, and visual behavior.
-import { expect, test } from "playwright/test";
+import { EXTERNAL_URLS } from "@elizaos/shared/brand";
+import { expect, test } from "@playwright/test";
 
 const heroCopy = [
   "The agentic operating system.",
@@ -116,11 +117,11 @@ test("footer renders wordmark, link nav, and social links", async ({
   await expect(footer.locator("img")).toHaveCount(1);
   await expect(footer.getByRole("link", { name: "App" })).toHaveAttribute(
     "href",
-    "https://app.elizacloud.ai",
+    EXTERNAL_URLS.app,
   );
   await expect(footer.getByRole("link", { name: "Cloud" })).toHaveAttribute(
     "href",
-    /elizacloud\.ai/,
+    `${EXTERNAL_URLS.cloud}/login?intent=launch`,
   );
 });
 
@@ -169,7 +170,7 @@ test("checkout lives on elizaOS and starts with Eliza Cloud auth", async ({
   await page.goto("/checkout?sku=elizaos-usb");
   await Promise.all([
     page.waitForURL(
-      /api\.elizacloud\.ai\/steward\/auth\/oauth\/google\/authorize.*code_challenge=/,
+      /api\.eliza\.app\/steward\/auth\/oauth\/google\/authorize.*code_challenge=/,
       { timeout: 15000 },
     ),
     page.getByRole("button", { name: "Google" }).click(),

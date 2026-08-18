@@ -2,11 +2,12 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createWriteStream, existsSync } from "node:fs";
-import { mkdir, rename, rm } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { fileURLToPath } from "node:url";
 import type {
   AndroidReleaseManifest,
   AospBuild,
@@ -38,7 +39,122 @@ const ELIZAOS_SUPPORTED_CODENAMES = new Set([
 const ARTIFACT_TMP_ROOT = join(tmpdir(), "elizaos-setup");
 
 function artifactDirFor(buildId: string): string {
+  if (!/^[A-Za-z0-9._-]+$/.test(buildId)) {
+    throw new Error(`Invalid Android release id: ${buildId}`);
+  }
   return join(ARTIFACT_TMP_ROOT, buildId);
+}
+
+function canonicalInstallerPath(): string | undefined {
+  const candidates = [
+    fileURLToPath(
+      new URL(
+        "../../../../os/android/installer/install-elizaos-android.sh",
+        import.meta.url,
+      ),
+    ),
+    fileURLToPath(
+      new URL(
+        "../android-installer/install-elizaos-android.sh",
+        import.meta.url,
+      ),
+    ),
+  ];
+  return candidates.find((candidate) => existsSync(candidate));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+export function validateDiscoveredManifest(
+  value: unknown,
+): AndroidReleaseManifest {
+  if (!isRecord(value)) throw new Error("Android manifest must be an object.");
+  if (value.schemaVersion !== 1) {
+    throw new Error("Android manifest schemaVersion must be 1.");
+  }
+  if (
+    typeof value.releaseId !== "string" ||
+    !/^[A-Za-z0-9._-]+$/.test(value.releaseId)
+  ) {
+    throw new Error("Android manifest releaseId is invalid.");
+  }
+  if (
+    typeof value.generatedAt !== "string" ||
+    Number.isNaN(Date.parse(value.generatedAt))
+  ) {
+    throw new Error("Android manifest generatedAt is invalid.");
+  }
+  if (
+    typeof value.buildFingerprint !== "string" ||
+    value.buildFingerprint.length === 0
+  ) {
+    throw new Error("Android manifest buildFingerprint is invalid.");
+  }
+  if (
+    !Array.isArray(value.supportedDevices) ||
+    !value.supportedDevices.length
+  ) {
+    throw new Error("Android manifest has no supported devices.");
+  }
+  for (const device of value.supportedDevices) {
+    if (
+      !isRecord(device) ||
+      typeof device.codename !== "string" ||
+      !/^[A-Za-z0-9._-]+$/.test(device.codename) ||
+      !["lab-validated", "candidate", "manual", "blocked"].includes(
+        String(device.tier),
+      ) ||
+      !Array.isArray(device.slots) ||
+      !device.slots.length ||
+      device.slots.some((slot) => !["a", "b", "none"].includes(String(slot))) ||
+      typeof device.dynamicPartitions !== "boolean" ||
+      typeof device.rollbackSupported !== "boolean"
+    ) {
+      throw new Error("Android manifest contains an invalid supported device.");
+    }
+  }
+  if (!Array.isArray(value.artifacts) || !value.artifacts.length) {
+    throw new Error("Android manifest has no artifacts.");
+  }
+  const filenames = new Set<string>();
+  const partitions = new Set<string>();
+  for (const artifact of value.artifacts) {
+    if (!isRecord(artifact)) {
+      throw new Error("Android manifest contains an invalid artifact.");
+    }
+    const partition = artifact.partition;
+    const filename = artifact.filename;
+    if (
+      typeof partition !== "string" ||
+      !/^[A-Za-z0-9._-]+$/.test(partition) ||
+      typeof filename !== "string" ||
+      filename !== `${partition}.img` ||
+      !/^[A-Za-z0-9._-]+\.img$/.test(filename) ||
+      typeof artifact.sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/.test(artifact.sha256) ||
+      artifact.sha256 === "0".repeat(64) ||
+      !Number.isSafeInteger(artifact.sizeBytes) ||
+      Number(artifact.sizeBytes) <= 1 ||
+      typeof artifact.required !== "boolean" ||
+      !["bootloader", "fastbootd"].includes(String(artifact.fastbootMode)) ||
+      filenames.has(filename) ||
+      partitions.has(partition)
+    ) {
+      throw new Error(
+        "Android manifest contains an invalid artifact contract.",
+      );
+    }
+    filenames.add(filename);
+    partitions.add(partition);
+  }
+  if (!isRecord(value.validation) || !isRecord(value.rollback)) {
+    throw new Error(
+      "Android manifest validation or rollback contract is missing.",
+    );
+  }
+  return value as unknown as AndroidReleaseManifest;
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +272,7 @@ function parseAdbDevices(output: string): RawAdbDevice[] {
 
 export async function downloadAndVerifyArtifacts(
   manifest: AndroidReleaseManifest,
+  artifactUrls: Readonly<Record<string, string>>,
   destDir: string,
   onProgress: (fraction: number) => void,
   fetchImpl: typeof fetch = fetch,
@@ -170,20 +287,27 @@ export async function downloadAndVerifyArtifacts(
   const paths: Record<string, string> = {};
 
   for (const artifact of manifest.artifacts) {
-    const finalPath = join(destDir, artifact.name);
+    const url = artifactUrls[artifact.filename];
+    if (!url?.startsWith("https://github.com/")) {
+      throw new Error(
+        `Missing trusted GitHub release asset URL for ${artifact.filename}`,
+      );
+    }
+    const finalPath = join(destDir, artifact.filename);
     const partialPath = `${finalPath}.partial`;
 
-    const response = await fetchImpl(artifact.url, {
+    const response = await fetchImpl(url, {
       signal: AbortSignal.timeout(600_000),
     });
     if (!response.ok || !response.body) {
       throw new Error(
-        `Failed to download ${artifact.name}: HTTP ${response.status}`,
+        `Failed to download ${artifact.filename}: HTTP ${response.status}`,
       );
     }
 
     const hash = createHash("sha256");
     const writeStream = createWriteStream(partialPath);
+    let artifactBytes = 0;
 
     const bodyStream = Readable.fromWeb(
       response.body as unknown as Parameters<typeof Readable.fromWeb>[0],
@@ -191,24 +315,30 @@ export async function downloadAndVerifyArtifacts(
 
     bodyStream.on("data", (chunk: Buffer) => {
       hash.update(chunk);
+      artifactBytes += chunk.byteLength;
       bytesWritten += chunk.byteLength;
       if (totalBytes > 0) {
         onProgress(Math.min(bytesWritten / totalBytes, 1));
       }
     });
 
-    await pipeline(bodyStream, writeStream);
+    try {
+      await pipeline(bodyStream, writeStream);
+    } catch (error) {
+      await rm(partialPath, { force: true });
+      throw error;
+    }
 
     const digest = hash.digest("hex");
-    if (digest !== artifact.sha256) {
+    if (artifactBytes !== artifact.sizeBytes || digest !== artifact.sha256) {
       await rm(partialPath, { force: true });
       throw new Error(
-        `SHA-256 mismatch for ${artifact.name}: expected ${artifact.sha256}, got ${digest}`,
+        `Integrity mismatch for ${artifact.filename}: expected ${artifact.sizeBytes} bytes / ${artifact.sha256}, got ${artifactBytes} bytes / ${digest}`,
       );
     }
 
     await rename(partialPath, finalPath);
-    paths[artifact.name] = finalPath;
+    paths[artifact.filename] = finalPath;
   }
 
   return paths;
@@ -369,15 +499,37 @@ export class AdbFlasherBackend implements AospFlasherBackend {
       );
     }
 
-    const releases = (await response.json()) as Array<{
-      assets: Array<{ name: string; browser_download_url: string }>;
+    const payload: unknown = await response.json();
+    if (!Array.isArray(payload)) {
+      throw new Error("Android release discovery returned malformed JSON.");
+    }
+    const releases = payload as Array<{
+      assets?: Array<{ name?: unknown; browser_download_url?: unknown }>;
+      prerelease?: unknown;
+      tag_name?: unknown;
     }>;
 
     const builds: AospBuild[] = [];
 
     for (const release of releases) {
-      for (const asset of release.assets) {
-        if (!/^android-release-manifest-.+\.json$/.test(asset.name)) {
+      const assets = Array.isArray(release.assets) ? release.assets : [];
+      const releaseAssetUrls = new Map<string, string>();
+      for (const asset of assets) {
+        if (
+          typeof asset.name === "string" &&
+          typeof asset.browser_download_url === "string" &&
+          asset.browser_download_url.startsWith("https://github.com/")
+        ) {
+          releaseAssetUrls.set(asset.name, asset.browser_download_url);
+        }
+      }
+
+      for (const asset of assets) {
+        if (
+          typeof asset.name !== "string" ||
+          typeof asset.browser_download_url !== "string" ||
+          !/^android-release-manifest-.+\.json$/.test(asset.name)
+        ) {
           continue;
         }
 
@@ -386,33 +538,51 @@ export class AdbFlasherBackend implements AospFlasherBackend {
         });
         if (!manifestResp.ok) continue;
 
-        const manifest = (await manifestResp.json()) as {
-          releaseId?: string;
-          generatedAt?: string;
-          supportedDevices?: Array<{
-            codename?: string;
-            marketingName?: string;
-          }>;
-          artifacts?: Array<{ sizeBytes?: number }>;
-        };
+        const manifest = validateDiscoveredManifest(await manifestResp.json());
+        const supportedDevice = manifest.supportedDevices.find(
+          (device) =>
+            device.tier === "lab-validated" &&
+            ELIZAOS_SUPPORTED_CODENAMES.has(device.codename),
+        );
+        if (!supportedDevice) continue;
 
-        const supportedDevice = manifest.supportedDevices?.[0];
-        const totalSize =
-          manifest.artifacts?.reduce((sum, a) => sum + (a.sizeBytes ?? 0), 0) ??
-          0;
+        const artifactUrls: Record<string, string> = {};
+        let missingAsset = false;
+        for (const artifact of manifest.artifacts) {
+          const url = releaseAssetUrls.get(artifact.filename);
+          if (!url) {
+            missingAsset = true;
+            break;
+          }
+          artifactUrls[artifact.filename] = url;
+        }
+        if (missingAsset) continue;
+
+        const totalSize = manifest.artifacts.reduce(
+          (sum, artifact) => sum + artifact.sizeBytes,
+          0,
+        );
 
         builds.push({
-          id: manifest.releaseId ?? asset.name,
-          label: supportedDevice?.marketingName
+          id: manifest.releaseId,
+          label: supportedDevice.marketingName
             ? `elizaOS for ${supportedDevice.marketingName}`
             : "elizaOS Android",
-          version: manifest.releaseId ?? "unknown",
-          channel: "stable",
-          targetDevice: supportedDevice?.codename ?? "unknown",
+          version: manifest.releaseId,
+          channel:
+            release.prerelease === true
+              ? typeof release.tag_name === "string" &&
+                release.tag_name.toLowerCase().includes("nightly")
+                ? "nightly"
+                : "beta"
+              : "stable",
+          targetDevice: supportedDevice.codename,
           architecture: "arm64-v8a",
-          publishedAt: manifest.generatedAt ?? new Date().toISOString(),
+          publishedAt: manifest.generatedAt,
           manifestUrl: asset.browser_download_url,
           sizeBytes: totalSize,
+          manifest,
+          artifactUrls,
         });
       }
     }
@@ -421,6 +591,9 @@ export class AdbFlasherBackend implements AospFlasherBackend {
       throw new Error(
         "No published elizaOS Android release manifests are available.",
       );
+    }
+    if (new Set(builds.map((build) => build.id)).size !== builds.length) {
+      throw new Error("Published Android release ids are not unique.");
     }
     return builds;
   }
@@ -674,6 +847,8 @@ export class AdbFlasherBackend implements AospFlasherBackend {
     // 5. download-artifacts
     let artifactDir = plan.artifactDir;
     let artifactPaths: Record<string, string> = plan.artifactPaths ?? {};
+    let manifestPath = build.manifestPath;
+    let manifest = build.manifest;
     if (!artifactDir) {
       const dest = artifactDirFor(build.id);
       await mkdir(dest, { recursive: true });
@@ -684,32 +859,16 @@ export class AdbFlasherBackend implements AospFlasherBackend {
         `Downloading manifest from ${build.manifestUrl}`,
       );
 
-      const manifestResp = await fetch(build.manifestUrl, {
-        signal: AbortSignal.timeout(300_000),
-      });
-      if (!manifestResp.ok) {
-        onProgress(
-          "download-artifacts",
-          "failed",
-          `Manifest download failed: HTTP ${manifestResp.status}`,
-        );
+      if (!manifest || !build.artifactUrls) {
         throw new Error(
-          `Failed to download manifest: HTTP ${manifestResp.status}`,
+          "Build is missing its validated release manifest or GitHub asset map.",
         );
-      }
-
-      const manifest = (await manifestResp.json()) as AndroidReleaseManifest;
-      if (
-        !Array.isArray(manifest.artifacts) ||
-        manifest.artifacts.length === 0
-      ) {
-        onProgress("download-artifacts", "failed", "Manifest has no artifacts");
-        throw new Error("Manifest has no artifacts");
       }
 
       try {
         artifactPaths = await downloadAndVerifyArtifacts(
           manifest,
+          build.artifactUrls,
           dest,
           (fraction) => {
             onProgress(
@@ -729,6 +888,11 @@ export class AdbFlasherBackend implements AospFlasherBackend {
       }
 
       artifactDir = dest;
+      manifestPath = join(dest, "android-release-manifest.json");
+      await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, {
+        encoding: "utf8",
+        mode: 0o600,
+      });
       plan.artifactPaths = artifactPaths;
       onProgress(
         "download-artifacts",
@@ -736,6 +900,14 @@ export class AdbFlasherBackend implements AospFlasherBackend {
         `${manifest.artifacts.length} artifacts downloaded to ${dest}`,
       );
     } else {
+      if (!manifestPath || !existsSync(manifestPath)) {
+        throw new Error(
+          "Local Android artifacts require a validated release manifest path.",
+        );
+      }
+      manifest = validateDiscoveredManifest(
+        JSON.parse(await readFile(manifestPath, "utf8")),
+      );
       onProgress(
         "download-artifacts",
         "complete",
@@ -743,14 +915,18 @@ export class AdbFlasherBackend implements AospFlasherBackend {
       );
     }
 
+    if (!manifestPath) {
+      throw new Error("Android release manifest path is unavailable.");
+    }
+
     // 6. verify-artifacts
     onProgress("verify-artifacts", "running", "Checking artifact files...");
-    const requiredImages = [
-      "boot.img",
-      "vendor_boot.img",
-      "super.img",
-      "vbmeta.img",
-    ];
+    const requiredImages = (manifest?.artifacts ?? [])
+      .filter((artifact) => artifact.required)
+      .map((artifact) => artifact.filename);
+    if (requiredImages.length === 0) {
+      throw new Error("Android release manifest has no required artifacts.");
+    }
     const missing: string[] = [];
     for (const img of requiredImages) {
       const path = artifactPaths[img] ?? join(artifactDir, img);
@@ -775,33 +951,27 @@ export class AdbFlasherBackend implements AospFlasherBackend {
       "Flashing partitions via install-elizaos-android.sh...",
     );
 
-    const scriptPath = new URL(
-      "../../../../os/android/installer/install-elizaos-android.sh",
-      import.meta.url,
-    ).pathname;
+    const scriptPath = canonicalInstallerPath();
 
     const flashArgs: string[] = [
       "--device",
       serial,
       "--artifact-dir",
       artifactDir,
+      "--manifest",
+      manifestPath,
       "--execute",
       "--confirm-flash",
       "--reboot-after-flash",
     ];
     if (build.wipeData) flashArgs.push("--wipe-data");
 
-    let flashResult: RunResult;
-    if (existsSync(scriptPath)) {
-      flashResult = run("bash", [scriptPath, ...flashArgs], 600_000);
-    } else {
-      flashResult = await this.flashPartitionsDirectly(
-        serial,
-        artifactDir,
-        artifactPaths,
-        onProgress,
+    if (!scriptPath) {
+      throw new Error(
+        "Canonical Android installer is unavailable; refusing direct flashing.",
       );
     }
+    const flashResult = run("bash", [scriptPath, ...flashArgs], 600_000);
 
     if (flashResult.status !== 0) {
       onProgress(
@@ -868,87 +1038,6 @@ export class AdbFlasherBackend implements AospFlasherBackend {
 
     // 10. complete
     onProgress("complete", "complete", "elizaOS installed successfully");
-  }
-
-  private async flashPartitionsDirectly(
-    serial: string,
-    artifactDir: string,
-    artifactPaths: Record<string, string>,
-    onProgress: (
-      stepId: FlashStepId,
-      status: FlashStepStatus,
-      detail: string,
-    ) => void,
-  ): Promise<RunResult> {
-    const resolveImg = (filename: string): string =>
-      artifactPaths[filename] ?? join(artifactDir, filename);
-
-    const failureFrom = (partition: string, result: RunResult): RunResult => ({
-      status: result.status === 0 ? 1 : result.status,
-      stdout: result.stdout,
-      stderr:
-        result.stderr.trim() ||
-        `Failed to flash partition '${partition}' (exit ${result.status})`,
-    });
-
-    const partitions: Array<[string, string]> = [
-      ["boot", "boot.img"],
-      ["vendor_boot", "vendor_boot.img"],
-      ["vbmeta", "vbmeta.img"],
-    ];
-
-    for (const [partition, filename] of partitions) {
-      const imgPath = resolveImg(filename);
-      if (!existsSync(imgPath)) continue;
-
-      onProgress(
-        "flash-partitions",
-        "running",
-        `fastboot -s ${serial} flash ${partition} ${imgPath}`,
-      );
-      const result = run(
-        this.fastboot,
-        ["-s", serial, "flash", partition, imgPath],
-        120_000,
-      );
-      if (result.status !== 0) {
-        return failureFrom(partition, result);
-      }
-    }
-
-    const superPath = resolveImg("super.img");
-    if (existsSync(superPath)) {
-      onProgress(
-        "flash-partitions",
-        "running",
-        `fastboot -s ${serial} reboot fastboot (entering fastbootd for super)`,
-      );
-      const enterFastbootd = run(
-        this.fastboot,
-        ["-s", serial, "reboot", "fastboot"],
-        30_000,
-      );
-      if (enterFastbootd.status !== 0) {
-        return failureFrom("super (fastbootd reboot)", enterFastbootd);
-      }
-      await sleep(5_000);
-
-      onProgress(
-        "flash-partitions",
-        "running",
-        `fastboot -s ${serial} flash super ${superPath}`,
-      );
-      const result = run(
-        this.fastboot,
-        ["-s", serial, "flash", "super", superPath],
-        300_000,
-      );
-      if (result.status !== 0) {
-        return failureFrom("super", result);
-      }
-    }
-
-    return { stdout: "Partitions flashed", stderr: "", status: 0 };
   }
 }
 
