@@ -27,6 +27,7 @@ elizaos-app:
             exit 66
         }
         test -f "${eliza_root}/packages/app-core/scripts/desktop-build.mjs"
+        ./scripts/apply-eliza-compat-patches.sh "${eliza_root}"
         (cd "${eliza_root}" && bun install --frozen-lockfile)
         (cd "${eliza_root}" && BUILD_ENV=dev bun packages/app-core/scripts/desktop-build.mjs build --env dev)
     fi

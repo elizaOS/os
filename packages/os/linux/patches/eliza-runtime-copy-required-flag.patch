@@ -1,0 +1,28 @@
+diff --git a/packages/app-core/scripts/copy-runtime-node-modules.ts b/packages/app-core/scripts/copy-runtime-node-modules.ts
+--- a/packages/app-core/scripts/copy-runtime-node-modules.ts
++++ b/packages/app-core/scripts/copy-runtime-node-modules.ts
+@@ -2610,7 +2610,7 @@ function main(): void {
+       const request = queue.shift();
+       if (!request) continue;
+ 
+-      const { name, spec, optional, requesterDir, requesterDestDir } = request;
++      const { name, spec, required, requesterDir, requesterDestDir } = request;
+       if (
+         !name ||
+         DEP_SKIP.has(name) ||
+@@ -2621,6 +2621,6 @@ function main(): void {
+ 
+       const resolved = resolvePackage(name, spec, requesterDir);
+       if (!resolved) {
+-        (optional ? missingOptional : missingRequired).add(name);
++        (required ? missingRequired : missingOptional).add(name);
+         continue;
+       }
+@@ -2673,6 +2673,6 @@ function main(): void {
+           targetDist,
+         )
+       ) {
+-        (optional ? missingOptional : missingRequired).add(name);
++        (required ? missingRequired : missingOptional).add(name);
+         continue;
+       }

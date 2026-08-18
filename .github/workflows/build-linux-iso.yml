@@ -134,6 +134,7 @@ jobs:
           set -euo pipefail
           make -C "${ELIZAOS_LINUX_VARIANT}" lint
           bash "${ELIZAOS_LINUX_VARIANT}/scripts/smoke-test-iso.test.sh"
+          bash "${LINUX_DIR}/scripts/apply-eliza-compat-patches.test.sh"
 
       - name: Build ISO (amd64)
         working-directory: ${{ env.LINUX_DIR }}
