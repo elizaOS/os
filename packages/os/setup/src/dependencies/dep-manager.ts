@@ -115,7 +115,7 @@ const DEPENDENCY_DEFINITIONS: Record<DependencyId, Dependency> = {
     id: "libimobiledevice",
     name: "libimobiledevice",
     description: "Detects and communicates with iOS devices",
-    commands: ["ideviceid", "ideviceinfo", "ideviceinstaller"],
+    commands: ["idevice_id", "ideviceinfo", "ideviceinstaller"],
     requiredFor: ["ios"],
   },
   sideloader: {
@@ -170,7 +170,7 @@ function getVersion(binary: string, foundPath: string): string | undefined {
   const versionFlags: Record<string, string> = {
     adb: "--version",
     fastboot: "--version",
-    ideviceid: "--version",
+    idevice_id: "--version",
     ideviceinfo: "--version",
     ideviceinstaller: "--version",
     sideloader: "--version",
@@ -293,8 +293,8 @@ function getManualInstructions(id: DependencyId): ManualInstallInstructions {
           title: "Install libimobiledevice (macOS)",
           steps: [
             "Install Homebrew from https://brew.sh",
-            "Run: brew install libimobiledevice",
-            "Verify: ideviceid --version",
+            "Run: brew install libimobiledevice ideviceinstaller",
+            "Verify: idevice_id --version && ideviceinstaller --version",
           ],
           url: "https://libimobiledevice.org",
         };
@@ -316,7 +316,7 @@ function getManualInstructions(id: DependencyId): ManualInstallInstructions {
           steps: [
             steps[distro],
             "Ensure usbmuxd is running so udev rules under /etc/udev/rules.d/39-libimobiledevice.rules are honored.",
-            "Verify: ideviceid --version",
+            "Verify: idevice_id --version",
           ],
           url: "https://libimobiledevice.org",
         };
@@ -547,6 +547,7 @@ export class DependencyManager {
             "brew",
             "install",
             "libimobiledevice",
+            "ideviceinstaller",
           ]);
         } else if (platform === "linux") {
           installed = await this.runLinuxInstall("libimobiledevice");

@@ -2,6 +2,9 @@
 import { defineConfig } from "vite";
 
 export default defineConfig({
+  // Keep packaged asset URLs relative so the generated renderer remains
+  // relocatable inside Electrobun's app bundle and loopback static server.
+  base: "./",
   plugins: [],
   server: {
     port: 5175,
