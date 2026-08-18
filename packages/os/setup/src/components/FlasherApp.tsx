@@ -60,11 +60,7 @@ type Screen =
 // ---------------------------------------------------------------------------
 
 function Spinner() {
-  return (
-    <span className="spinner" aria-hidden>
-      ⏳
-    </span>
-  );
+  return <span className="spinner" role="status" aria-label="Loading" />;
 }
 
 // ---- Screen 1: Device Detection ----
@@ -902,9 +898,10 @@ function ErrorScreen({ message, onRetry }: ErrorScreenProps) {
 
 interface FlasherAppProps {
   backend: AospFlasherBackend;
+  embedded?: boolean;
 }
 
-export function FlasherApp({ backend }: FlasherAppProps) {
+export function FlasherApp({ backend, embedded = false }: FlasherAppProps) {
   const [screen, setScreen] = useState<Screen>("detecting");
   const [devices, setDevices] = useState<ConnectedDevice[]>([]);
   const [builds, setBuilds] = useState<AospBuild[]>([]);
@@ -1074,16 +1071,18 @@ export function FlasherApp({ backend }: FlasherAppProps) {
   const selectedBuild = builds.find((b) => b.id === selectedBuildId);
 
   return (
-    <main className="flasher-shell">
-      <section className="header-band">
-        <div>
-          <p className="eyebrow">elizaOS media tool</p>
-          <h1>AOSP Flasher</h1>
-        </div>
-        {selectedDevice && (
-          <span className="status-pill">{selectedDevice.model}</span>
-        )}
-      </section>
+    <main className={`flasher-shell${embedded ? " flasher-embedded" : ""}`}>
+      {!embedded && (
+        <section className="header-band">
+          <div>
+            <p className="eyebrow">elizaOS media tool</p>
+            <h1>AOSP Flasher</h1>
+          </div>
+          {selectedDevice && (
+            <span className="status-pill">{selectedDevice.model}</span>
+          )}
+        </section>
+      )}
 
       <section className="workspace-body">
         {screen === "detecting" && (
@@ -1170,17 +1169,19 @@ export function FlasherApp({ backend }: FlasherAppProps) {
         )}
       </section>
 
-      <section className="footer-band">
-        <span className="footer-brand">elizaOS AOSP Flasher</span>
-        <a
-          className="cta-link"
-          href="https://elizaos.ai"
-          target="_blank"
-          rel="noreferrer"
-        >
-          elizaOS docs
-        </a>
-      </section>
+      {!embedded && (
+        <section className="footer-band">
+          <span className="footer-brand">elizaOS AOSP Flasher</span>
+          <a
+            className="cta-link"
+            href="https://elizaos.ai"
+            target="_blank"
+            rel="noreferrer"
+          >
+            elizaOS docs
+          </a>
+        </section>
+      )}
     </main>
   );
 }

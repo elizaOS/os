@@ -1,33 +1,39 @@
-// Renders AOSP setup flasher UI controls and installer state.
-import { useState } from "react";
+// Renders the branded, guided entry point for every elizaOS install path.
+import { useMemo, useState } from "react";
 import { HttpAospFlasherBackend } from "../backend/http-backend";
 import { FlasherApp } from "./FlasherApp";
 import { IosFlasher } from "./IosFlasher";
-
-// ---------------------------------------------------------------------------
-// Tab definitions
-// ---------------------------------------------------------------------------
 
 type TabId = "usb" | "android" | "ios";
 
 interface Tab {
   id: TabId;
-  label: string;
+  shortLabel: string;
+  title: string;
+  description: string;
 }
 
 const TABS: Tab[] = [
-  { id: "usb", label: "💾 USB Boot Drive" },
-  { id: "android", label: "📱 Android Flash" },
-  { id: "ios", label: "🍎 iPhone / iPad" },
+  {
+    id: "usb",
+    shortLabel: "USB",
+    title: "Computer",
+    description: "Make a bootable USB for a desktop or laptop.",
+  },
+  {
+    id: "android",
+    shortLabel: "A",
+    title: "Android phone",
+    description: "Install elizaOS on a supported Pixel.",
+  },
+  {
+    id: "ios",
+    shortLabel: "iOS",
+    title: "iPhone or iPad",
+    description: "Install the Eliza app on an Apple device.",
+  },
 ];
 
-// ---------------------------------------------------------------------------
-// Linked installer panels
-// ---------------------------------------------------------------------------
-
-// USB installer integration note: this shell launches the standalone
-// `usb-installer` as a separate dev server or the packaged
-// `elizaOS USB Installer.app`, so raw USB writes stay in the dedicated app.
 const USB_INSTALLER_DEV_URL = "http://127.0.0.1:3742";
 const USB_INSTALLER_DOWNLOAD_URL = "https://elizaos.ai/downloads#usb-installer";
 
@@ -82,92 +88,70 @@ function handleOpenUsbInstaller(): void {
 
 function UsbInstallerPanel() {
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        height: "100%",
-        padding: "40px 24px",
-      }}
-    >
-      <div
-        style={{
-          background: "#1a1a1a",
-          border: "1px solid #2a2a2a",
-          borderRadius: "12px",
-          padding: "40px 48px",
-          maxWidth: "520px",
-          width: "100%",
-          textAlign: "center",
-        }}
-      >
-        <div style={{ fontSize: "48px", marginBottom: "16px" }}>💾</div>
-        <h2
-          style={{
-            color: "#ffffff",
-            fontSize: "20px",
-            fontWeight: 600,
-            margin: "0 0 12px",
-          }}
-        >
-          USB Boot Drive
-        </h2>
-        <p
-          style={{
-            color: "#888888",
-            fontSize: "14px",
-            lineHeight: "1.6",
-            margin: "0 0 20px",
-          }}
-        >
-          Create a bootable elizaOS USB drive with the standalone{" "}
-          <strong style={{ color: "#cccccc" }}>elizaOS USB Installer</strong>.
+    <div className="install-panel-content usb-panel">
+      <div className="install-panel-copy">
+        <span className="section-kicker">For a desktop or laptop</span>
+        <h2>Make a bootable elizaOS USB</h2>
+        <p className="panel-lede">
+          The USB Installer downloads the right image, checks it, and walks you
+          through choosing a drive.
         </p>
-        <button
-          type="button"
-          onClick={handleOpenUsbInstaller}
-          style={{
-            background: "#00ff88",
-            color: "#000",
-            border: "none",
-            borderRadius: "8px",
-            padding: "12px 24px",
-            fontSize: "14px",
-            fontWeight: 700,
-            cursor: "pointer",
-            marginBottom: "12px",
-          }}
-        >
-          Open USB Installer
-        </button>
-        <div style={{ fontSize: "12px", color: "#666" }}>
-          Or{" "}
+        <div className="friendly-note" role="note">
+          <span className="friendly-note-icon" aria-hidden>
+            ✓
+          </span>
+          <div>
+            <strong>You stay in control.</strong>
+            <span>
+              Nothing is erased until you review the exact drive and confirm.
+            </span>
+          </div>
+        </div>
+        <div className="panel-actions">
           <button
             type="button"
-            onClick={() => openExternal(USB_INSTALLER_DOWNLOAD_URL)}
-            style={{
-              background: "none",
-              border: "none",
-              color: "#00ff88",
-              cursor: "pointer",
-              padding: 0,
-              fontSize: "12px",
-              textDecoration: "underline",
-            }}
+            className="brand-button"
+            onClick={handleOpenUsbInstaller}
           >
-            download the USB Installer here
+            Open USB Installer
+            <span aria-hidden>→</span>
           </button>
-          .
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => openExternal(USB_INSTALLER_DOWNLOAD_URL)}
+          >
+            Download it instead
+          </button>
         </div>
       </div>
+
+      <ol className="how-it-works" aria-label="How USB setup works">
+        <li>
+          <span>1</span>
+          <div>
+            <strong>Connect a spare USB drive</strong>
+            <p>16 GB or larger is a comfortable choice.</p>
+          </div>
+        </li>
+        <li>
+          <span>2</span>
+          <div>
+            <strong>Choose your computer</strong>
+            <p>We’ll select the compatible elizaOS image.</p>
+          </div>
+        </li>
+        <li>
+          <span>3</span>
+          <div>
+            <strong>Review, then create</strong>
+            <p>You’ll see the drive name and size before anything changes.</p>
+          </div>
+        </li>
+      </ol>
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Main shell
-// ---------------------------------------------------------------------------
 
 export interface InstallerShellProps {
   serverUrl: string;
@@ -175,92 +159,82 @@ export interface InstallerShellProps {
 
 export function InstallerShell({ serverUrl }: InstallerShellProps) {
   const [activeTab, setActiveTab] = useState<TabId>("usb");
-
-  const backend = new HttpAospFlasherBackend(`${serverUrl}/api`);
+  const backend = useMemo(
+    () => new HttpAospFlasherBackend(`${serverUrl}/api`),
+    [serverUrl],
+  );
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100vh",
-        background: "#0a0a0a",
-        color: "#ffffff",
-        fontFamily:
-          '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-        overflow: "hidden",
-      }}
-    >
-      {/* Top bar */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "12px",
-          padding: "0 24px",
-          height: "56px",
-          borderBottom: "1px solid #1e1e1e",
-          flexShrink: 0,
-        }}
-      >
-        <span
-          style={{
-            color: "#00ff88",
-            fontWeight: 700,
-            fontSize: "15px",
-            letterSpacing: "-0.01em",
-          }}
-        >
-          elizaOS
-        </span>
-        <span style={{ color: "#333333", fontSize: "15px" }}>/</span>
-        <span style={{ color: "#888888", fontSize: "15px" }}>Installer</span>
-      </div>
+    <div className="installer-shell">
+      <header className="installer-hero">
+        <div className="installer-header-row">
+          <div className="installer-brand">
+            <img
+              className="installer-logo"
+              src="./brand/logos/elizaos_logotext.svg"
+              alt="elizaOS"
+            />
+            <span className="setup-badge">Setup</span>
+          </div>
+          <span className="guided-status">
+            <span aria-hidden />
+            Safe, guided setup
+          </span>
+        </div>
+        <div className="installer-intro">
+          <span className="hero-kicker">Let’s get you set up</span>
+          <h1>Where do you want to use elizaOS?</h1>
+          <p>
+            Pick a device. We’ll check what you need and guide you through the
+            rest in plain English.
+          </p>
+        </div>
+      </header>
 
-      {/* Tab bar */}
-      <div
-        style={{
-          display: "flex",
-          gap: "0",
-          padding: "0 24px",
-          borderBottom: "1px solid #1e1e1e",
-          flexShrink: 0,
-        }}
-      >
-        {TABS.map((tab) => {
-          const isActive = tab.id === activeTab;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              style={{
-                background: "none",
-                border: "none",
-                borderBottom: isActive
-                  ? "2px solid #00ff88"
-                  : "2px solid transparent",
-                color: isActive ? "#00ff88" : "#666666",
-                cursor: "pointer",
-                fontSize: "13px",
-                fontWeight: isActive ? 600 : 400,
-                padding: "12px 20px",
-                transition: "color 0.15s, border-color 0.15s",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
+      <main className="installer-main">
+        <nav className="install-choice-grid" aria-label="Choose a device">
+          {TABS.map((tab) => {
+            const isActive = tab.id === activeTab;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                className={`install-choice${isActive ? " active" : ""}`}
+                onClick={() => setActiveTab(tab.id)}
+                aria-pressed={isActive}
+              >
+                <span className="choice-icon" aria-hidden>
+                  {tab.shortLabel}
+                </span>
+                <span className="choice-copy">
+                  <strong>{tab.title}</strong>
+                  <span>{tab.description}</span>
+                </span>
+                <span className="choice-check" aria-hidden>
+                  {isActive ? "✓" : "→"}
+                </span>
+              </button>
+            );
+          })}
+        </nav>
 
-      {/* Tab content */}
-      <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
-        {activeTab === "usb" && <UsbInstallerPanel />}
-        {activeTab === "android" && <FlasherApp backend={backend} />}
-        {activeTab === "ios" && <IosFlasher serverUrl={serverUrl} />}
-      </div>
+        <section className={`installer-workspace workspace-${activeTab}`}>
+          {activeTab === "usb" && <UsbInstallerPanel />}
+          {activeTab === "android" && <FlasherApp backend={backend} embedded />}
+          {activeTab === "ios" && <IosFlasher serverUrl={serverUrl} />}
+        </section>
+
+        <footer className="installer-footer">
+          <span>Need help? You can stop at any time.</span>
+          <button
+            type="button"
+            className="footer-link"
+            onClick={() => openExternal("https://docs.elizaos.ai")}
+          >
+            View setup help
+          </button>
+        </footer>
+      </main>
     </div>
   );
 }

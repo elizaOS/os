@@ -14,77 +14,84 @@ import { authorizedFetch } from "../runtime/server-url";
 
 // ── Design tokens ──────────────────────────────────────────────────────────────
 const C = {
-  bg: "#0a0a0a",
-  card: "#1a1a1a",
-  accent: "#00ff88",
-  accentDim: "#00cc6a",
-  text: "#f0f0f0",
-  muted: "#888",
-  error: "#ff4444",
-  border: "#2a2a2a",
+  bg: "#f7f7f5",
+  card: "#ffffff",
+  accent: "#0b35f1",
+  accentDim: "#0828b8",
+  text: "#000000",
+  muted: "#5f6067",
+  error: "#c92121",
+  border: "#dedee3",
 };
 
 const s = {
   root: {
-    background: C.bg,
+    background: "transparent",
     color: C.text,
-    fontFamily: "'Inter', 'Helvetica Neue', Arial, sans-serif",
-    minHeight: "100vh",
+    fontFamily: "'Poppins', system-ui, -apple-system, sans-serif",
+    minHeight: "100%",
     display: "flex",
     flexDirection: "column" as const,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: "24px",
+    alignItems: "stretch",
+    padding: "clamp(24px, 5vw, 52px)",
   },
   card: {
     background: C.card,
-    borderRadius: "16px",
+    borderRadius: "24px",
     border: `1px solid ${C.border}`,
-    padding: "32px",
+    padding: "clamp(24px, 4vw, 38px)",
     width: "100%",
-    maxWidth: "480px",
+    maxWidth: "680px",
+    boxShadow: "0 18px 50px rgba(18, 21, 36, 0.08)",
+    margin: "0 auto",
   },
   heading: {
-    fontSize: "22px",
-    fontWeight: 700,
-    margin: "0 0 8px",
+    fontSize: "clamp(24px, 3vw, 34px)",
+    fontWeight: 800,
+    letterSpacing: "-0.04em",
+    lineHeight: 1.08,
+    margin: "0 0 12px",
   },
   subheading: {
-    fontSize: "14px",
+    fontSize: "15px",
     color: C.muted,
     margin: "0 0 24px",
-    lineHeight: 1.5,
+    lineHeight: 1.7,
   },
   button: {
     background: C.accent,
-    color: "#000",
+    color: "#fff",
     border: "none",
-    borderRadius: "10px",
-    padding: "12px 24px",
-    fontSize: "15px",
+    borderRadius: "999px",
+    padding: "14px 24px",
+    fontSize: "14px",
     fontWeight: 700,
     cursor: "pointer",
     width: "100%",
     marginTop: "16px",
+    textTransform: "none" as const,
+    letterSpacing: 0,
   },
   buttonSecondary: {
-    background: "transparent",
-    color: C.muted,
+    background: "#fff",
+    color: C.text,
     border: `1px solid ${C.border}`,
-    borderRadius: "10px",
-    padding: "12px 24px",
-    fontSize: "15px",
+    borderRadius: "999px",
+    padding: "14px 24px",
+    fontSize: "14px",
     cursor: "pointer",
     width: "100%",
     marginTop: "8px",
+    textTransform: "none" as const,
+    letterSpacing: 0,
   },
   input: {
-    background: "#111",
+    background: C.bg,
     border: `1px solid ${C.border}`,
-    borderRadius: "8px",
+    borderRadius: "12px",
     color: C.text,
     fontSize: "15px",
-    padding: "12px 14px",
+    padding: "14px 16px",
     width: "100%",
     boxSizing: "border-box" as const,
     marginBottom: "12px",
@@ -96,10 +103,10 @@ const s = {
     marginBottom: "6px",
   },
   notice: {
-    background: "#111",
-    border: `1px solid ${C.border}`,
-    borderRadius: "10px",
-    padding: "14px 16px",
+    background: "rgba(11, 53, 241, 0.055)",
+    border: "1px solid rgba(11, 53, 241, 0.16)",
+    borderRadius: "14px",
+    padding: "16px 18px",
     fontSize: "13px",
     lineHeight: 1.6,
     color: C.muted,
@@ -113,12 +120,17 @@ const s = {
     borderBottom: `1px solid ${C.border}`,
   },
   appCard: {
-    background: "#111",
+    background: C.card,
     border: `1px solid ${C.border}`,
-    borderRadius: "12px",
-    padding: "16px",
+    borderRadius: "16px",
+    padding: "18px",
     marginBottom: "12px",
     cursor: "pointer",
+    width: "100%",
+    color: C.text,
+    textAlign: "left" as const,
+    textTransform: "none" as const,
+    letterSpacing: 0,
   },
   spinner: {
     display: "inline-block",
@@ -130,7 +142,7 @@ const s = {
     animation: "spin 0.8s linear infinite",
   },
   progressBar: {
-    background: C.border,
+    background: "#e8e9ed",
     borderRadius: "4px",
     height: "6px",
     overflow: "hidden",
@@ -169,7 +181,6 @@ function progressFromSteps(steps: IosInstallStep[]): number {
 }
 
 type Screen =
-  | "scanning"
   | "no-device"
   | "select-device"
   | "region-notice"
@@ -187,7 +198,7 @@ interface IosFlasherProps {
 }
 
 export function IosFlasher({ serverUrl }: IosFlasherProps) {
-  const [screen, setScreen] = useState<Screen>("scanning");
+  const [screen, setScreen] = useState<Screen>("no-device");
   const [devices, setDevices] = useState<IosDevice[]>([]);
   const [apps, setApps] = useState<IosApp[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<IosDevice | null>(null);
@@ -244,13 +255,11 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
           setScreen("select-device");
         }
         stopScanning();
-      } else if (data.length === 0 && screen === "scanning") {
-        setScreen("no-device");
       }
     } catch {
       // Network not ready yet — keep polling
     }
-  }, [serverUrl, screen, stopScanning]);
+  }, [serverUrl, stopScanning]);
 
   useEffect(() => {
     scanIntervalRef.current = setInterval(scanDevices, 2000);
@@ -406,59 +415,45 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
   }
 
   // ── Render helpers ──
-  function renderScanningScreen() {
-    return (
-      <div style={s.card}>
-        <p style={{ ...s.heading, textAlign: "center" }}>
-          Scanning for iPhone/iPad…
-        </p>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "center",
-            margin: "24px 0",
-          }}
-        >
-          <div style={s.spinner} />
-        </div>
-        <p style={{ ...s.subheading, textAlign: "center" }}>
-          Connect your device with a USB cable and unlock it.
-        </p>
-      </div>
-    );
-  }
-
   function renderNoDeviceScreen() {
     return (
-      <div style={s.card}>
-        <p style={{ ...s.heading, textAlign: "center" }}>
-          Connect your iPhone or iPad
-        </p>
-        <div
-          style={{ textAlign: "center", fontSize: "48px", margin: "16px 0" }}
-        >
-          🔌
+      <div style={s.card} className="ios-connect-card">
+        <div className="device-illustration" aria-hidden>
+          <span className="device-speaker" />
+          <span className="device-screen">iOS</span>
+          <span className="device-home" />
         </div>
-        <p style={{ ...s.subheading, textAlign: "center" }}>
-          Plug your device in with a USB cable, unlock it, and tap{" "}
-          <strong>Trust This Computer</strong> if prompted.
-        </p>
-        <div style={{ ...s.notice, marginTop: "12px" }}>
-          <strong>Tip:</strong> Make sure iTunes or Finder is not blocking the
-          connection.
+        <div className="ios-connect-copy">
+          <span className="section-kicker">First, connect your device</span>
+          <p style={s.heading}>Plug in your iPhone or iPad</p>
+          <p style={s.subheading}>
+            Use a USB cable, unlock your device, then tap <strong>Trust</strong>{" "}
+            if your device asks.
+          </p>
+          <ul className="connection-checklist">
+            <li>Keep the device unlocked</li>
+            <li>Use a data-capable USB cable</li>
+            <li>Approve “Trust This Computer”</li>
+          </ul>
+          <button
+            style={s.button}
+            type="button"
+            disabled={loading}
+            onClick={() => {
+              setLoading(true);
+              regionShownRef.current = false;
+              if (scanIntervalRef.current === null) {
+                scanIntervalRef.current = setInterval(scanDevices, 2000);
+              }
+              void scanDevices().finally(() => setLoading(false));
+            }}
+          >
+            {loading ? "Looking for your device…" : "Check for my device"}
+          </button>
+          <p className="quiet-help">
+            We’ll continue automatically when your device appears.
+          </p>
         </div>
-        <button
-          style={s.button}
-          type="button"
-          onClick={() => {
-            regionShownRef.current = false;
-            setScreen("scanning");
-            scanIntervalRef.current = setInterval(scanDevices, 2000);
-            scanDevices();
-          }}
-        >
-          Retry
-        </button>
       </div>
     );
   }
@@ -820,11 +815,13 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
           style={s.button}
           type="button"
           onClick={() => {
-            setScreen("scanning");
+            setScreen("no-device");
             regionShownRef.current = false;
             setSteps([]);
             setPlan(null);
             setError(null);
+            scanIntervalRef.current = setInterval(scanDevices, 2000);
+            void scanDevices();
           }}
         >
           Install on another device
@@ -847,8 +844,6 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
   // ── Screen dispatch ──
   function renderScreen() {
     switch (screen) {
-      case "scanning":
-        return renderScanningScreen();
       case "no-device":
         return renderNoDeviceScreen();
       case "select-device":
@@ -872,10 +867,13 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
 
   return (
     <div style={s.root}>
-      <div style={{ marginBottom: "20px", textAlign: "center" }}>
-        <span style={{ fontSize: "13px", color: C.muted }}>
-          iOS Sideloader — elizaOS
-        </span>
+      <div className="ios-section-header">
+        <span className="section-kicker">iPhone &amp; iPad</span>
+        <h2>Bring Eliza with you</h2>
+        <p>
+          Connect your device and we’ll guide you through a safe, step-by-step
+          app install.
+        </p>
       </div>
       {renderScreen()}
     </div>
