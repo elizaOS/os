@@ -18,6 +18,10 @@
     "url": null
   },
   "inputs": {
+    "debian": {
+      "snapshotSerial": "@@DEBIAN_SNAPSHOT_SERIAL@@",
+      "baseImage": "@@DEBIAN_BASE_IMAGE@@"
+    },
     "eliza": {
       "repository": "https://github.com/elizaOS/eliza",
       "commit": "@@ELIZA_COMMIT@@",

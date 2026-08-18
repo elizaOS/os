@@ -14,7 +14,8 @@
 set -eu
 
 ARCH="${ELIZAOS_ARCH:-amd64}"
-DEBIAN_MIRROR="${ELIZAOS_DEBIAN_MIRROR:-https://mirrors.kernel.org/debian}"
+DEBIAN_MIRROR="${ELIZAOS_DEBIAN_MIRROR:?build.sh must supply the locked Debian snapshot}"
+DEBIAN_SECURITY_MIRROR="${ELIZAOS_DEBIAN_SECURITY_MIRROR:?build.sh must supply the locked Debian security snapshot}"
 # live-build's automatic firmware discovery currently sweeps unrelated packages
 # (including astronomy camera drivers) into the image. Keep it disabled and
 # declare the hardware firmware contract explicitly in each architecture list.
@@ -55,6 +56,8 @@ lb config noauto \
     --mirror-bootstrap "${DEBIAN_MIRROR}" \
     --mirror-chroot "${DEBIAN_MIRROR}" \
     --mirror-binary "${DEBIAN_MIRROR}" \
+    --mirror-chroot-security "${DEBIAN_SECURITY_MIRROR}" \
+    --mirror-binary-security "${DEBIAN_SECURITY_MIRROR}" \
     --architecture "${ARCH}" \
     --linux-flavours "${KERNEL_FLAVOUR}" \
     --archive-areas "main contrib non-free-firmware" \
@@ -64,6 +67,7 @@ lb config noauto \
     --apt-recommends false \
     --apt-indices false \
     --apt-source-archives false \
+    --apt-options "--yes -o Acquire::Check-Valid-Until=false" \
     --cache false \
     ${QEMU_BOOTSTRAP_OPTIONS} \
     ${FIRMWARE_OPTIONS} \

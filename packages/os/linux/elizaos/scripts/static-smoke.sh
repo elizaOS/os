@@ -75,10 +75,19 @@ lock = json.loads(Path("app-source.lock.json").read_text(encoding="utf-8"))
 assert lock.get("schema") == "eliza.os.linux.app-source-lock.v1"
 assert lock.get("repository") == "https://github.com/elizaOS/eliza"
 assert re.fullmatch(r"[0-9a-f]{40}", lock.get("commit", ""))
+snapshot = json.loads(Path("debian-snapshot.lock.json").read_text(encoding="utf-8"))
+assert snapshot.get("schema") == "eliza.os.linux.debian-snapshot-lock.v1"
+assert re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", snapshot.get("serial", ""))
+assert re.fullmatch(r"debian:trixie@sha256:[0-9a-f]{64}", snapshot.get("baseImage", ""))
+for entry in snapshot.get("archives", {}).values():
+    assert entry["url"].endswith("/" + snapshot["serial"])
+    assert re.fullmatch(r"[0-9a-f]{64}", entry["releaseSha256"])
 template = Path("manifest.amd64.gui.json.template").read_text(encoding="utf-8")
 assert '"kind": "iso-hybrid"' in template
 assert "@@ELIZA_COMMIT@@" in template
 assert "@@APP_ARTIFACT_SHA256@@" in template
+assert "@@DEBIAN_SNAPSHOT_SERIAL@@" in template
+assert "@@DEBIAN_BASE_IMAGE@@" in template
 riscv_template = Path("manifest.json.template").read_text(encoding="utf-8")
 assert '"kind": "iso-hybrid"' in riscv_template
 assert '"sizeBytes": @@SIZE_BYTES@@' in riscv_template
@@ -89,6 +98,10 @@ grep -q 'packaged app commit .* does not match lock' build.sh \
     || { echo "UNPINNED PACKAGED APP: build.sh must reject an app outside the source lock"; fail=1; }
 grep -q 'no release manifest contract for' build.sh \
     || { echo "MANIFEST FALLBACK: unsupported targets must fail before image assembly"; fail=1; }
+grep -q 'snapshot Release digest mismatch' build.sh \
+    || { echo "UNVERIFIED SNAPSHOT: build.sh must hash both Release files"; fail=1; }
+grep -q '^FROM \${DEBIAN_BASE_IMAGE}$' Dockerfile \
+    || { echo "FLOATING BUILDER BASE: Dockerfile must consume the digest-pinned lock"; fail=1; }
 if grep -R -E -n '^(indi-dsi|dahdi-firmware-nonfree|firmware-b43-installer|firmware-b43legacy-installer)$' config/package-lists config/profiles 2>/dev/null; then
     echo "UNBOUNDED FIRMWARE PACKAGE: remove unrelated or mutable installer package"
     fail=1

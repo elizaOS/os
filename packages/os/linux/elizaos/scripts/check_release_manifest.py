@@ -120,6 +120,8 @@ TEMPLATE_STRING_PLACEHOLDERS: dict[str, str] = {
     "@@BUILD_TIMESTAMP@@": "template",
     "@@ARCH@@": "riscv64",
     "@@PROFILE@@": "template",
+    "@@DEBIAN_SNAPSHOT_SERIAL@@": "20260817T000000Z",
+    "@@DEBIAN_BASE_IMAGE@@": "debian:trixie@sha256:" + "0" * 64,
 }
 # Sentinel string values used by ``_is_template_payload`` to recognise an
 # un-promoted manifest (filled or templated). Cross-check these against

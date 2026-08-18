@@ -35,6 +35,10 @@ ARTIFACT_BASENAME="elizaos-linux-${ARCH}-${PROFILE}-${BUILD_TS}"
 MIN_ISO_BYTES="${ELIZAOS_MIN_ISO_BYTES:-209715200}"
 APP_SOURCE_COMMIT=""
 APP_ARTIFACT_SHA256=""
+DEBIAN_SNAPSHOT_SERIAL=""
+DEBIAN_BASE_IMAGE=""
+DEBIAN_SNAPSHOT_MIRROR=""
+DEBIAN_SECURITY_MIRROR=""
 
 mkdir -p "${OUT}"
 
@@ -70,10 +74,69 @@ for raw in sys.argv[1:]:
 PY
 }
 
+verify_debian_snapshot_lock() {
+    SNAPSHOT_LOCK="${HERE}/debian-snapshot.lock.json"
+    [ -s "${SNAPSHOT_LOCK}" ] || {
+        echo "ERROR: Debian snapshot lock is missing: ${SNAPSHOT_LOCK}" >&2
+        exit 69
+    }
+    read -r DEBIAN_SNAPSHOT_SERIAL DEBIAN_BASE_IMAGE DEBIAN_SNAPSHOT_MIRROR DEBIAN_SECURITY_MIRROR < <(
+        python3 - "${SNAPSHOT_LOCK}" <<'PY'
+import json
+from pathlib import Path
+import re
+import sys
+
+lock = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if lock.get("schema") != "eliza.os.linux.debian-snapshot-lock.v1":
+    raise SystemExit("ERROR: Debian snapshot lock schema mismatch")
+serial = lock.get("serial")
+base = lock.get("baseImage")
+archives = lock.get("archives", {})
+if not isinstance(serial, str) or not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", serial):
+    raise SystemExit("ERROR: Debian snapshot serial is invalid")
+if not isinstance(base, str) or not re.fullmatch(r"debian:trixie@sha256:[0-9a-f]{64}", base):
+    raise SystemExit("ERROR: Debian base image is not digest-pinned")
+for name, entry in archives.items():
+    url = entry.get("url")
+    if not isinstance(url, str) or not url.endswith(f"/{serial}"):
+        raise SystemExit(f"ERROR: {name} snapshot URL does not match serial")
+    if not re.fullmatch(r"[0-9a-f]{64}", entry.get("releaseSha256", "")):
+        raise SystemExit(f"ERROR: {name} Release digest is invalid")
+for required in ("debian", "updates", "security"):
+    if required not in archives:
+        raise SystemExit(f"ERROR: Debian snapshot lock is missing {required}")
+print(serial, base, archives["debian"]["url"], archives["security"]["url"])
+PY
+    )
+
+    SNAPSHOT_TMP="$(mktemp -d)"
+    python3 - "${SNAPSHOT_LOCK}" <<'PY' | while IFS=$'\t' read -r NAME URL EXPECTED; do
+import json
+from pathlib import Path
+import sys
+
+lock = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+for name, entry in lock["archives"].items():
+    print(name, f'{entry["url"]}/{entry["releasePath"]}', entry["releaseSha256"], sep="\t")
+PY
+        FILE="${SNAPSHOT_TMP}/${NAME}.Release"
+        curl --fail --location --silent --show-error --retry 3 --max-time 60 "${URL}" -o "${FILE}"
+        ACTUAL="$(sha256sum "${FILE}" | awk '{print $1}')"
+        [ "${ACTUAL}" = "${EXPECTED}" ] || {
+            echo "ERROR: ${NAME} snapshot Release digest mismatch: ${ACTUAL} != ${EXPECTED}" >&2
+            exit 69
+        }
+    done
+    remove_paths_recursive "${SNAPSHOT_TMP}"
+}
+
 if ! command -v lb >/dev/null 2>&1; then
     echo "ERROR: live-build (lb) not found on PATH. Run inside the builder container." >&2
     exit 1
 fi
+
+verify_debian_snapshot_lock
 
 ensure_foreign_binfmt() {
     case "${ARCH}" in
@@ -585,7 +648,10 @@ patch_live_build_riscv64_grub_efi
 # ── Step 1: lb config ────────────────────────────────────────────────
 echo
 echo "--- step 1/5: lb config ---"
-ELIZAOS_ARCH="${ARCH}" "${HERE}/auto/config"
+ELIZAOS_ARCH="${ARCH}" \
+ELIZAOS_DEBIAN_MIRROR="${DEBIAN_SNAPSHOT_MIRROR}" \
+ELIZAOS_DEBIAN_SECURITY_MIRROR="${DEBIAN_SECURITY_MIRROR}" \
+    "${HERE}/auto/config"
 rm -f "${HERE}/.lock"
 
 # Compose optional overlays on top of the base headless config.
@@ -675,6 +741,8 @@ sed \
     -e "s|@@SIZE_BYTES@@|${ISO_BYTES}|g" \
     -e "s|@@ELIZA_COMMIT@@|${APP_SOURCE_COMMIT}|g" \
     -e "s|@@APP_ARTIFACT_SHA256@@|${APP_ARTIFACT_SHA256}|g" \
+    -e "s|@@DEBIAN_SNAPSHOT_SERIAL@@|${DEBIAN_SNAPSHOT_SERIAL}|g" \
+    -e "s|@@DEBIAN_BASE_IMAGE@@|${DEBIAN_BASE_IMAGE}|g" \
     "${TEMPLATE}" > "${OUT}/${ARTIFACT_BASENAME}.manifest.json"
 python3 -c "import json,sys; json.load(open('${OUT}/${ARTIFACT_BASENAME}.manifest.json'))"
 echo "    manifest: ${OUT}/${ARTIFACT_BASENAME}.manifest.json"

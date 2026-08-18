@@ -17,6 +17,12 @@
     "status": "pending",
     "url": null
   },
+  "inputs": {
+    "debian": {
+      "snapshotSerial": "@@DEBIAN_SNAPSHOT_SERIAL@@",
+      "baseImage": "@@DEBIAN_BASE_IMAGE@@"
+    }
+  },
   "validation": {
     "requiredEvidence": [
       "qemu-virt-boot",

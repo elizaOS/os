@@ -12,11 +12,31 @@
 #       -e ELIZAOS_ARCH=amd64 \
 #       -v "$(pwd):/build" -v "$(pwd)/out:/out" \
 #       elizaos-linux-builder
-FROM debian:trixie
+ARG DEBIAN_BASE_IMAGE
+FROM ${DEBIAN_BASE_IMAGE}
+
+ARG DEBIAN_SNAPSHOT_SERIAL
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN test -n "${DEBIAN_SNAPSHOT_SERIAL}" \
+    && printf '%s\n' \
+        'Types: deb' \
+        "URIs: https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT_SERIAL}" \
+        'Suites: trixie trixie-updates' \
+        'Components: main contrib non-free-firmware' \
+        'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
+        'Check-Valid-Until: no' \
+        '' \
+        'Types: deb' \
+        "URIs: https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT_SERIAL}" \
+        'Suites: trixie-security' \
+        'Components: main contrib non-free-firmware' \
+        'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
+        'Check-Valid-Until: no' \
+        > /etc/apt/sources.list.d/elizaos-snapshot.sources \
+    && rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         debootstrap \
         live-build \

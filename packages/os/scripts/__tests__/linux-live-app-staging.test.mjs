@@ -10,6 +10,8 @@ const justfile = read("packages/os/linux/Justfile");
 const rootBuild = read("packages/os/linux/build.sh");
 const makefile = read("packages/os/linux/elizaos/Makefile");
 const imageBuild = read("packages/os/linux/elizaos/build.sh");
+const autoConfig = read("packages/os/linux/elizaos/auto/config");
+const dockerfile = read("packages/os/linux/elizaos/Dockerfile");
 const installHook = read(
   "packages/os/linux/elizaos/config/hooks/normal/0010-elizaos-agent.hook.chroot",
 );
@@ -71,6 +73,18 @@ test("image builds cannot borrow another target's release manifest", () => {
     /no release manifest contract for \$\{ARCH\}:\$\{PROFILE\}/,
   );
   assert.match(imageBuild, /"\$\{ARCH\}:\$\{PROFILE\}" = "riscv64:default"/);
+});
+
+test("Debian package inputs are snapshot- and digest-pinned", () => {
+  const lock = JSON.parse(
+    read("packages/os/linux/elizaos/debian-snapshot.lock.json"),
+  );
+  assert.match(lock.serial, /^[0-9]{8}T[0-9]{6}Z$/);
+  assert.match(lock.baseImage, /^debian:trixie@sha256:[0-9a-f]{64}$/);
+  assert.match(dockerfile, /^FROM \$\{DEBIAN_BASE_IMAGE\}$/m);
+  assert.match(imageBuild, /snapshot Release digest mismatch/);
+  assert.match(autoConfig, /--mirror-chroot-security/);
+  assert.match(autoConfig, /Acquire::Check-Valid-Until=false/);
 });
 
 test("the image installs the packaged runtime without a duplicate service", () => {

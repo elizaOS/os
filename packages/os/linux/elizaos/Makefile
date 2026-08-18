@@ -19,6 +19,9 @@ PROFILE ?= default
 DEBIAN_MIRROR ?= https://mirrors.kernel.org/debian
 HERE    := $(shell pwd)
 OUT     := $(HERE)/out
+SNAPSHOT_LOCK := $(HERE)/debian-snapshot.lock.json
+DEBIAN_BASE_IMAGE := $(shell python3 -c 'import json; print(json.load(open("$(SNAPSHOT_LOCK)"))["baseImage"])')
+DEBIAN_SNAPSHOT_SERIAL := $(shell python3 -c 'import json; print(json.load(open("$(SNAPSHOT_LOCK)"))["serial"])')
 CONTAINER_BUILD_DIR := /work/elizaos-linux
 AGENT_ARTIFACTS ?= $(HERE)/artifacts/$(ARCH)
 AGENT_ARTIFACTS_MOUNT := $(if $(wildcard $(AGENT_ARTIFACTS)),-v "$(AGENT_ARTIFACTS):/opt/elizaos-artifacts:ro",)
@@ -65,7 +68,10 @@ help:
 	@echo "default=headless, gui=GNOME desktop"
 
 builder:
-	docker build -t elizaos-linux-builder "$(HERE)"
+	docker build \
+		--build-arg DEBIAN_BASE_IMAGE="$(DEBIAN_BASE_IMAGE)" \
+		--build-arg DEBIAN_SNAPSHOT_SERIAL="$(DEBIAN_SNAPSHOT_SERIAL)" \
+		-t elizaos-linux-builder "$(HERE)"
 
 build: builder check-arch
 	mkdir -p "$(OUT)"
