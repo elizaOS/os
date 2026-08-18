@@ -210,6 +210,7 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
   const [password, setPassword] = useState("");
   const [twoFaCode, setTwoFaCode] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [scanMessage, setScanMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const scanIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -223,14 +224,17 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
     }
   }, []);
 
-  const scanDevices = useCallback(async () => {
+  const scanDevices = useCallback(async (): Promise<
+    "found" | "none" | "unavailable"
+  > => {
     try {
       const res = await authorizedFetch(`${serverUrl}/ios/devices`);
-      if (!res.ok) return;
+      if (!res.ok) return "unavailable";
       const data = (await res.json()) as IosDevice[];
       setDevices(data);
 
       if (data.length > 0 && !regionShownRef.current) {
+        setScanMessage(null);
         regionShownRef.current = true;
 
         // Fetch region notice and apps in parallel
@@ -252,9 +256,13 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
           setScreen("select-device");
         }
         stopScanning();
+        return "found";
       }
+      return data.length > 0 ? "found" : "none";
     } catch {
-      // Network not ready yet — keep polling
+      // The background poll keeps trying; an explicit check surfaces a
+      // friendly recovery message through handleCheckForDevice.
+      return "unavailable";
     }
   }, [serverUrl, stopScanning]);
 
@@ -281,6 +289,26 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
 
   function handleConfirmInstall() {
     setScreen("apple-id-login");
+  }
+
+  async function handleCheckForDevice() {
+    setLoading(true);
+    setScanMessage(null);
+    regionShownRef.current = false;
+    if (scanIntervalRef.current === null) {
+      scanIntervalRef.current = setInterval(scanDevices, 2000);
+    }
+    const result = await scanDevices();
+    if (result === "none") {
+      setScanMessage(
+        "No iPhone or iPad found yet. Check the cable, unlock it, and tap Trust, then try again.",
+      );
+    } else if (result === "unavailable") {
+      setScanMessage(
+        "The installer couldn't check for devices. Wait a moment, then try again.",
+      );
+    }
+    setLoading(false);
   }
 
   async function handleAppleIdLogin(e: React.FormEvent) {
@@ -435,19 +463,14 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
             style={s.button}
             type="button"
             disabled={loading}
-            onClick={() => {
-              setLoading(true);
-              regionShownRef.current = false;
-              if (scanIntervalRef.current === null) {
-                scanIntervalRef.current = setInterval(scanDevices, 2000);
-              }
-              void scanDevices().finally(() => setLoading(false));
-            }}
+            aria-busy={loading}
+            onClick={() => void handleCheckForDevice()}
           >
             {loading ? "Looking for your device…" : "Check for my device"}
           </button>
-          <p className="quiet-help">
-            The installer will continue when your device appears.
+          <p className="quiet-help" role={scanMessage ? "status" : undefined}>
+            {scanMessage ??
+              "The installer will continue when your device appears."}
           </p>
         </div>
       </div>

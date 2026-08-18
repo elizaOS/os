@@ -7,9 +7,10 @@
 //      already taken.
 //   2. Serve the packaged renderer over loopback HTTP. WKWebView cannot load
 //      Vite's crossorigin ES modules reliably from `file://`.
-//   3. Proxy renderer `/api/*` requests to the in-process backend.
-//   4. Inject the loopback renderer URL before any bundle script runs so the
-//      renderer uses the same origin for its API requests.
+//   3. Proxy renderer `/api/*` requests to the in-process backend as a
+//      same-origin fallback.
+//   4. Inject the loopback backend URL before any bundle script runs so every
+//      renderer client uses one consistent API base.
 //
 // This is the only path that produces a working packaged app. If preload
 // injection fails, `getServerUrl()` throws in production rather than
@@ -138,8 +139,7 @@ async function startRendererServer(
 
 async function main(): Promise<void> {
   const authToken = randomBytes(32).toString("hex");
-  const { url: backendUrl, port: backendPort } =
-    await startBackend(authToken);
+  const { url: backendUrl, port: backendPort } = await startBackend(authToken);
   console.log(
     `[elizaos-setup] backend bound at ${backendUrl} (port ${backendPort})`,
   );

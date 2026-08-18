@@ -32,4 +32,14 @@ describe("Electrobun packaging contract", () => {
     expect(mainSource).toContain('hostname: "127.0.0.1"');
     expect(mainSource).not.toContain("pathToFileURL");
   });
+
+  it("injects the backend URL as the renderer's shared API base", () => {
+    const mainSource = readFileSync(
+      resolve(process.cwd(), "src/main/electrobun-main.ts"),
+      "utf8",
+    );
+
+    expect(mainSource).toContain("buildPreloadScript(backendUrl, authToken)");
+    expect(mainSource).not.toContain("buildPreloadScript(rendererUrl)");
+  });
 });

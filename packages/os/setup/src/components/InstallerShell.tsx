@@ -149,7 +149,7 @@ export interface InstallerShellProps {
 export function InstallerShell({ serverUrl }: InstallerShellProps) {
   const [activeTab, setActiveTab] = useState<TabId>("usb");
   const backend = useMemo(
-    () => new HttpAospFlasherBackend(`${serverUrl}/api`),
+    () => new HttpAospFlasherBackend(serverUrl),
     [serverUrl],
   );
 
