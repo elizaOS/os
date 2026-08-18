@@ -19,17 +19,21 @@ ARG DEBIAN_SNAPSHOT_SERIAL
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# The digest-pinned base's CA set predates the snapshot TLS certificate.
+# Bootstrap over HTTP; apt still authenticates Debian's signed Release and
+# package hashes. build.sh later re-fetches and hashes the locked Release files
+# over HTTPS with the updated ca-certificates package installed here.
 RUN test -n "${DEBIAN_SNAPSHOT_SERIAL}" \
     && printf '%s\n' \
         'Types: deb' \
-        "URIs: https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT_SERIAL}" \
+        "URIs: http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT_SERIAL}" \
         'Suites: trixie trixie-updates' \
         'Components: main contrib non-free-firmware' \
         'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
         'Check-Valid-Until: no' \
         '' \
         'Types: deb' \
-        "URIs: https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT_SERIAL}" \
+        "URIs: http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT_SERIAL}" \
         'Suites: trixie-security' \
         'Components: main contrib non-free-firmware' \
         'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
