@@ -31,7 +31,7 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: '0 3 * * *'
+    - cron: "0 3 * * *"
   release:
     types: [created]
 
@@ -238,8 +238,9 @@ jobs:
 
       - name: Extract full runtime root from ISO
         # Syft must see the complete mounted root: /var/lib/dpkg covers the OS,
-        # while /opt/elizaos carries the bundled Bun/Electrobun app and its JS
-        # dependency metadata.
+        # while /usr/share/elizaos/elizaos-app carries the packaged Electrobun
+        # payload and its JS dependency metadata. /opt/elizaos/app/elizaos is a
+        # launcher symlink, so find(1) must inspect the real payload path.
         id: sbom-extract
         run: |
           set -euo pipefail
@@ -281,7 +282,12 @@ jobs:
             echo "::error::Extracted runtime root has no bundled elizaOS app"
             exit 1
           fi
-          JS_MANIFEST_COUNT=$(find "$SQ/opt/elizaos" -type f -name package.json -print 2>/dev/null | wc -l)
+          APP_PAYLOAD="$SQ/usr/share/elizaos/elizaos-app/Resources/app/eliza-dist"
+          if [ ! -d "$APP_PAYLOAD/node_modules" ]; then
+            echo "::error::Extracted runtime root has no packaged elizaOS dependency closure"
+            exit 1
+          fi
+          JS_MANIFEST_COUNT=$(find "$APP_PAYLOAD" -type f -name package.json -print 2>/dev/null | wc -l)
           if [ "$JS_MANIFEST_COUNT" -eq 0 ]; then
             echo "::error::Extracted runtime root has no bundled elizaOS JS package manifests"
             exit 1

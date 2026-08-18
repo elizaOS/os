@@ -121,12 +121,14 @@ describe("OS release workflow authority", () => {
       "build-iso",
       "Smoke test ISO through SeaBIOS and OVMF",
     );
+    const sbomExtract = namedJobStep(
+      workflow,
+      "build-iso",
+      "Extract full runtime root from ISO",
+    );
     const appLock = JSON.parse(
       readFileSync(
-        join(
-          repositoryRoot,
-          "packages/os/linux/elizaos/app-source.lock.json",
-        ),
+        join(repositoryRoot, "packages/os/linux/elizaos/app-source.lock.json"),
         "utf8",
       ),
     ) as { commit?: string; repository?: string; schema?: string };
@@ -151,6 +153,15 @@ describe("OS release workflow authority", () => {
     expect(appLock.commit).toMatch(/^[0-9a-f]{40}$/);
     expect(smoke.env?.ELIZAOS_ISO_SMOKE_CPU_MODEL).toBe("Haswell-v4");
     expect(smoke.run).toContain("smoke-test-iso.sh");
+    expect(sbomExtract.run).toContain(
+      'APP_PAYLOAD="$SQ/usr/share/elizaos/elizaos-app/Resources/app/eliza-dist"',
+    );
+    expect(sbomExtract.run).toContain(
+      'find "$APP_PAYLOAD" -type f -name package.json',
+    );
+    expect(sbomExtract.run).not.toContain(
+      'find "$SQ/opt/elizaos" -type f -name package.json',
+    );
   });
 
   test("verification pins Bun while Linux static checks stay source-only", () => {
@@ -204,10 +215,7 @@ describe("OS release workflow authority", () => {
   test("application-source workflows share the audited release lock", () => {
     const appLock = JSON.parse(
       readFileSync(
-        join(
-          repositoryRoot,
-          "packages/os/linux/elizaos/app-source.lock.json",
-        ),
+        join(repositoryRoot, "packages/os/linux/elizaos/app-source.lock.json"),
         "utf8",
       ),
     ) as { commit?: string };
@@ -292,9 +300,10 @@ describe("OS release workflow authority", () => {
             ? [job.needs]
             : [];
         for (const dependency of dependencies) {
-          expect(jobNames.has(dependency), `${name}:${jobName} needs ${dependency}`).toBe(
-            true,
-          );
+          expect(
+            jobNames.has(dependency),
+            `${name}:${jobName} needs ${dependency}`,
+          ).toBe(true);
         }
       }
     }
