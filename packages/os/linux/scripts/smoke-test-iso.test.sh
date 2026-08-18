@@ -79,7 +79,7 @@ done
 printf 'firmware=%s\n' "${firmware}" >>"${FAKE_QEMU_ARGS_LOG}"
 
 case "${FAKE_QEMU_MODE:-ready}" in
-    ready|ignore-term)
+    ready|ignore-term|runtime-failure)
         exec 7>"${serial_prefix}.out"
         printf 'Linux version fixture\namnesia login: ' >&7
         IFS= read -r -d $'\r' username <"${serial_prefix}.in"
@@ -96,6 +96,13 @@ case "${FAKE_QEMU_MODE:-ready}" in
         [[ "${probe}" == *"systemctl --user is-active --quiet elizaos-agent.service"* ]] ||
             exit 68
         [[ "${probe}" == *"http://127.0.0.1:31337/api/health"* ]] || exit 69
+        [[ "${probe}" == *"journalctl --user --no-pager"* ]] || exit 70
+        [[ "${probe}" == *"ELIZAOS_ISO_SMOKE_DIAGNOSTICS"* ]] || exit 71
+        if [ "${FAKE_QEMU_MODE}" = "runtime-failure" ]; then
+            printf 'ELIZAOS_ISO_SMOKE_DIAGNOSTICS firmware=%s\n' "${firmware}" >&7
+            trap 'exit 0' TERM
+            while true; do sleep 1; done
+        fi
         printf 'ELIZAOS_ISO_SMOKE_READY firmware=%s service=active health=ready\n' "${firmware}" >&7
         if [ "${FAKE_QEMU_MODE}" = "ignore-term" ]; then
             trap '' TERM
@@ -179,6 +186,12 @@ FAKE_QEMU_MODE=userspace-only
 export FAKE_QEMU_MODE
 run_expect_failure \
     "bios firmware reached Linux userspace but did not prove the canonical live-user service and health endpoint" \
+    "${SCRIPT}" "${ISO}"
+
+FAKE_QEMU_MODE=runtime-failure
+export FAKE_QEMU_MODE
+run_expect_failure \
+    "bios firmware reached Tails, but the elizaOS runtime did not become healthy" \
     "${SCRIPT}" "${ISO}"
 
 FAKE_QEMU_MODE=ready

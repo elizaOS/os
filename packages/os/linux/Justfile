@@ -39,6 +39,7 @@ elizaos-app:
     set -euo pipefail
     eliza_root="${ELIZAOS_ELIZA_ROOT:-$(git rev-parse --show-toplevel)/.eliza-source}"
     test -d "${eliza_root}/packages/app-core" || { echo "Set ELIZAOS_ELIZA_ROOT to an elizaOS/eliza checkout"; exit 2; }
+    ELIZAOS_ELIZA_ROOT="${eliza_root}" node scripts/verify-eliza-source-lock.mjs
     outer_root="$(cd "${eliza_root}/.." && pwd)"
     app_out="${ELIZAOS_APP_ARTIFACT:-${eliza_root}/packages/app-core/platforms/electrobun/build/dev-linux-x64/elizaOS-dev}"
     stage="tails/config/chroot_local-includes/usr/share/elizaos/elizaos-app"

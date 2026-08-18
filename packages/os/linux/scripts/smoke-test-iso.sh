@@ -13,6 +13,7 @@ BOOT_MENU_WAIT_SECONDS="${ELIZAOS_ISO_SMOKE_BOOT_MENU_WAIT_SECONDS:-10}"
 LOGIN_SETTLE_SECONDS="${ELIZAOS_ISO_SMOKE_LOGIN_SETTLE_SECONDS:-10}"
 POLL_SECONDS="${ELIZAOS_ISO_SMOKE_POLL_SECONDS:-2}"
 STOP_TIMEOUT_SECONDS="${ELIZAOS_ISO_SMOKE_STOP_TIMEOUT_SECONDS:-10}"
+HEALTH_ATTEMPTS="${ELIZAOS_ISO_SMOKE_HEALTH_ATTEMPTS:-120}"
 LOG_DIR="${ELIZAOS_ISO_SMOKE_LOG_DIR:-${PWD}/iso-smoke-logs}"
 
 fail() {
@@ -54,6 +55,9 @@ require_nonnegative_integer \
 require_positive_integer \
     "ELIZAOS_ISO_SMOKE_STOP_TIMEOUT_SECONDS" \
     "${STOP_TIMEOUT_SECONDS}"
+require_positive_integer \
+    "ELIZAOS_ISO_SMOKE_HEALTH_ATTEMPTS" \
+    "${HEALTH_ATTEMPTS}"
 
 [ -n "${ISO}" ] || fail "usage: $0 <iso-path>"
 [ -f "${ISO}" ] || fail "ISO not found: ${ISO}"
@@ -422,6 +426,7 @@ prove_guest_readiness() {
     local firmware="$1"
     local serial_log="${LOG_DIR}/${firmware}.serial.log"
     local marker="ELIZAOS_ISO_SMOKE_READY firmware=${firmware} service=active health=ready"
+    local diagnostic_marker="ELIZAOS_ISO_SMOKE_DIAGNOSTICS firmware=${firmware}"
     local start_seconds="${SECONDS}"
     local login_prompt_seconds=-1
     local login_sent=0
@@ -433,12 +438,16 @@ prove_guest_readiness() {
     # The complete marker must not occur in serial input because the TTY echoes
     # commands before executing them. Joining two guest-side strings makes the
     # marker evidence possible only after both readiness checks pass.
-    health_probe="for i in \$(seq 1 300); do if systemctl --user is-active --quiet elizaos-agent.service && /usr/bin/curl --noproxy '*' -fsS http://127.0.0.1:31337/api/health -o /tmp/elizaos-smoke-health.json && /bin/grep -Eq '\"ready\"[[:space:]]*:[[:space:]]*true' /tmp/elizaos-smoke-health.json; then printf '\\n%s%s\\n' 'ELIZAOS_ISO_SMOKE_' 'READY firmware=${firmware} service=active health=ready'; break; fi; sleep 2; done"
+    health_probe="ready=0; for i in \$(seq 1 ${HEALTH_ATTEMPTS}); do if systemctl --user is-active --quiet elizaos-agent.service && /usr/bin/curl --noproxy '*' -fsS http://127.0.0.1:31337/api/health -o /tmp/elizaos-smoke-health.json && /bin/grep -Eq '\"ready\"[[:space:]]*:[[:space:]]*true' /tmp/elizaos-smoke-health.json; then ready=1; printf '\\n%s%s\\n' 'ELIZAOS_ISO_SMOKE_' 'READY firmware=${firmware} service=active health=ready'; break; fi; sleep 2; done; if [ \"\$ready\" = 0 ]; then printf '\\nELIZAOS_ISO_SMOKE_DIAGNOSTICS firmware=${firmware}\\n'; systemctl --user --no-pager --full status elizaos-agent.service elizaos-renderer.service elizaos.service || true; journalctl --user --no-pager -n 200 -u elizaos-agent.service -u elizaos-renderer.service -u elizaos.service || true; /usr/bin/ss -lntp || true; ls -la /opt/elizaos /opt/elizaos/Resources/app/eliza-dist 2>&1 || true; cat /tmp/elizaos-smoke-health.json 2>/dev/null || true; fi"
 
     while ((SECONDS - start_seconds < BOOT_TIMEOUT_SECONDS)); do
         if grep -Fq "${marker}" "${serial_log}" 2>/dev/null; then
             echo "ISO smoke test (${firmware}): canonical live-user service and health ready"
             return
+        fi
+
+        if grep -Fq "${diagnostic_marker}" "${serial_log}" 2>/dev/null; then
+            fail "${firmware} firmware reached Tails, but the elizaOS runtime did not become healthy; see ${serial_log}"
         fi
 
         if grep -Eq 'Linux version|systemd\[1\]|[[:space:]]login:' "${serial_log}" 2>/dev/null; then

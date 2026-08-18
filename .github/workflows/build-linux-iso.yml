@@ -10,7 +10,7 @@ on:
     inputs:
       eliza-ref:
         type: string
-        default: develop
+        default: ""
       channel:
         type: string
         default: stable
@@ -20,9 +20,9 @@ on:
   workflow_dispatch:
     inputs:
       eliza-ref:
-        description: elizaOS/eliza ref to include in the image
+        description: Optional exact elizaOS/eliza commit; must match the Tails source lock
         type: string
-        default: develop
+        default: ""
       channel:
         description: Release channel
         type: choice
@@ -33,7 +33,7 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: '0 3 * * *'
+    - cron: "0 3 * * *"
   release:
     types: [created]
 
@@ -78,11 +78,25 @@ jobs:
           echo "APT_SNAPSHOTS_SERIALS=${SNAPSHOTS}" >> "$GITHUB_ENV"
           echo "::notice::Using verified Tails APT snapshots ${SNAPSHOTS}"
 
+      - name: Resolve locked application source
+        id: eliza-lock
+        env:
+          REQUESTED_ELIZA_REF: ${{ inputs.eliza-ref }}
+        run: |
+          set -euo pipefail
+          LOCK="${LINUX_DIR}/eliza-source.lock.json"
+          LOCKED=$(node -e 'const x=require("./"+process.argv[1]); if(!/^[0-9a-f]{40}$/.test(x.commit)) process.exit(2); process.stdout.write(x.commit)' "$LOCK")
+          if [ -n "${REQUESTED_ELIZA_REF:-}" ] && [ "$REQUESTED_ELIZA_REF" != "$LOCKED" ]; then
+            echo "::error::eliza-ref must equal the Tails source lock: requested=$REQUESTED_ELIZA_REF locked=$LOCKED"
+            exit 1
+          fi
+          echo "ref=$LOCKED" >> "$GITHUB_OUTPUT"
+
       - name: Checkout application source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: elizaOS/eliza
-          ref: ${{ inputs.eliza-ref || 'develop' }}
+          ref: ${{ steps.eliza-lock.outputs.ref }}
           path: .eliza-source
           submodules: recursive
 
@@ -216,6 +230,17 @@ jobs:
           path: ${{ runner.temp }}/elizaos-iso-smoke-logs
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Upload failed-smoke ISO for bounded diagnosis
+        if: failure() && steps.iso.outputs.path != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: unverified-elizaos-live-iso-${{ env.CHANNEL }}-${{ env.ELIZAOS_ARCH }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.iso.outputs.path }}
+            ${{ steps.iso.outputs.filename }}.sha256
+          if-no-files-found: warn
+          retention-days: 1
 
       - name: Attest SLSA build provenance for ISO
         # Mints a Sigstore-signed in-toto/SLSA provenance attestation
