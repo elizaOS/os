@@ -5,12 +5,11 @@
 //   1. Boot the in-process Bun HTTP backend (`createServer()` from server.ts)
 //      on a known port, falling back to an ephemeral port if the default is
 //      already taken.
-//   2. Inject `window.__ELIZA_SERVER_URL__` into the renderer BEFORE any
-//      bundle script runs, by passing a preload script string to the
-//      Electrobun `BrowserWindow`. The renderer's `getServerUrl()` reads
-//      that global as the highest-precedence source.
-//   3. Load the renderer (`renderer/index.html`, copied from the Vite build
-//      via `electrobun.config.ts`) from inside the packaged app bundle.
+//   2. Serve the packaged renderer over loopback HTTP. WKWebView cannot load
+//      Vite's crossorigin ES modules reliably from `file://`.
+//   3. Proxy renderer `/api/*` requests to the in-process backend.
+//   4. Inject the loopback renderer URL before any bundle script runs so the
+//      renderer uses the same origin for its API requests.
 //
 // This is the only path that produces a working packaged app. If preload
 // injection fails, `getServerUrl()` throws in production rather than
@@ -20,7 +19,7 @@
 import { randomBytes } from "node:crypto";
 import { createServer as createNetServer } from "node:net";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import Electrobun, { BrowserWindow } from "electrobun/bun";
 import { createServer } from "../../server";
 
@@ -74,29 +73,88 @@ function buildPreloadScript(serverUrl: string, authToken: string): string {
 })();`;
 }
 
-function resolveRendererIndexUrl(): string {
-  // In the packaged app, electrobun.config.ts copies the Vite `dist/`
-  // output to `renderer/` next to the bun bundle. `import.meta.url` is the
-  // compiled entrypoint location.
+async function startRendererServer(
+  backendUrl: string,
+): Promise<{ url: string; port: number }> {
   const here = path.dirname(fileURLToPath(import.meta.url));
-  const indexPath = path.join(here, "..", "renderer", "index.html");
-  // Build a proper file URL: on Windows `file://${winPath}` yields a malformed
-  // URL (backslashes, drive letter parsed as host) that the webview can't load.
-  // pathToFileURL produces file:///C:/… on Windows and file:///abs on POSIX.
-  return pathToFileURL(indexPath).href;
+  const rendererRoot = path.resolve(here, "..", "renderer");
+  const indexPath = path.join(rendererRoot, "index.html");
+  if (!(await Bun.file(indexPath).exists())) {
+    throw new Error(`[elizaos-setup] renderer not found at ${indexPath}`);
+  }
+
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(request) {
+      const url = new URL(request.url);
+
+      if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
+        const backendPath = url.pathname.slice("/api".length) || "/";
+        const target = new URL(`${backendPath}${url.search}`, backendUrl);
+        return fetch(new Request(target, request));
+      }
+
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        return new Response("Method not allowed", { status: 405 });
+      }
+
+      let requestedPath: string;
+      try {
+        requestedPath = decodeURIComponent(url.pathname);
+      } catch {
+        return new Response("Invalid path", { status: 400 });
+      }
+
+      const relativePath =
+        requestedPath === "/"
+          ? "index.html"
+          : requestedPath.replace(/^\/+/, "");
+      const filePath = path.resolve(rendererRoot, relativePath);
+      if (
+        filePath !== indexPath &&
+        !filePath.startsWith(`${rendererRoot}${path.sep}`)
+      ) {
+        return new Response("Forbidden", { status: 403 });
+      }
+
+      const file = Bun.file(filePath);
+      if (!(await file.exists())) {
+        return new Response("Not found", { status: 404 });
+      }
+
+      return new Response(request.method === "HEAD" ? null : file, {
+        headers: { "Content-Type": file.type },
+      });
+    },
+  });
+
+  const port = server.port;
+  if (typeof port !== "number") {
+    throw new Error("[elizaos-setup] renderer did not bind to a TCP port");
+  }
+  return { url: `http://127.0.0.1:${port}`, port };
 }
 
 async function main(): Promise<void> {
   const authToken = randomBytes(32).toString("hex");
-  const { url: serverUrl, port } = await startBackend(authToken);
-  console.log(`[elizaos-setup] backend bound at ${serverUrl} (port ${port})`);
+  const { url: backendUrl, port: backendPort } =
+    await startBackend(authToken);
+  console.log(
+    `[elizaos-setup] backend bound at ${backendUrl} (port ${backendPort})`,
+  );
 
-  const preload = buildPreloadScript(serverUrl, authToken);
-  const rendererUrl = resolveRendererIndexUrl();
+  const { url: rendererUrl, port: rendererPort } =
+    await startRendererServer(backendUrl);
+  console.log(
+    `[elizaos-setup] renderer bound at ${rendererUrl} (port ${rendererPort})`,
+  );
+
+  const preload = buildPreloadScript(backendUrl, authToken);
 
   const win = new BrowserWindow({
     title: "elizaOS Setup",
-    url: rendererUrl,
+    url: `${rendererUrl}/`,
     preload,
     frame: { x: 0, y: 0, width: 1100, height: 760 },
   });

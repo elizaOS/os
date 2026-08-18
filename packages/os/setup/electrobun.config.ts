@@ -23,6 +23,11 @@ export default {
   build: {
     bun: {
       entrypoint: "src/main/electrobun-main.ts",
+      // Electrobun's launcher always starts `app/bun/index.js`. Bun otherwise
+      // derives the output name from this custom entrypoint and emits
+      // `electrobun-main.js`, leaving the packaged app running without its
+      // backend or window.
+      naming: "index.[ext]",
       // The bun shell only needs the HTTP server + Electrobun bindings. The
       // renderer is pre-built by Vite and copied into `renderer/` (see
       // `copy` below) — it must not be re-bundled into the bun process.

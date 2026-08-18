@@ -436,7 +436,7 @@ describe("SideloaderIosBackend auth lifecycle", () => {
       status: "idle",
     };
 
-    // We can't easily stub ideviceid; instead test the predicate directly:
+    // We can't easily stub idevice_id; instead test the predicate directly:
     // authState !== "authenticated" → IosAuthNotReadyError is thrown when
     // executeInstallPlan reaches that branch. The implementation throws
     // synchronously in that path, so simulate by invoking the auth gate.
