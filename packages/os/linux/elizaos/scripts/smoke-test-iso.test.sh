@@ -96,7 +96,7 @@ stop_monitor_reader() {
 }
 
 case "${FAKE_QEMU_MODE:-ready}" in
-    ready|ignore-term)
+    ready|ignore-term|not-ready)
         exec 7>"${serial_prefix}.out"
         printf 'Linux version fixture\nuser login: ' >&7
         IFS= read -r -d $'\r' username <"${serial_prefix}.in"
@@ -110,10 +110,18 @@ case "${FAKE_QEMU_MODE:-ready}" in
             echo "host command contained the complete readiness marker" >&2
             exit 67
         fi
+        if [[ "${probe}" == *"ELIZAOS_ISO_SMOKE_FAILED"* ]]; then
+            echo "host command contained the complete failure marker" >&2
+            exit 70
+        fi
         [[ "${probe}" == *"systemctl --user is-active --quiet elizaos-launcher.service"* ]] ||
             exit 68
         [[ "${probe}" == *"http://127.0.0.1:31337/api/health"* ]] || exit 69
-        printf 'ELIZAOS_ISO_SMOKE_READY firmware=%s launcher=active health=ready\n' "${firmware}" >&7
+        if [ "${FAKE_QEMU_MODE}" = "not-ready" ]; then
+            printf 'ELIZAOS_ISO_SMOKE_FAILED firmware=%s launcher=failed graphical=active health=connection-refused\n' "${firmware}" >&7
+        else
+            printf 'ELIZAOS_ISO_SMOKE_READY firmware=%s launcher=active health=ready\n' "${firmware}" >&7
+        fi
         if [ "${FAKE_QEMU_MODE}" = "ignore-term" ]; then
             trap '' TERM
         else
@@ -204,6 +212,12 @@ FAKE_QEMU_MODE=userspace-only
 export FAKE_QEMU_MODE
 run_expect_failure \
     "bios firmware reached Linux userspace but did not prove the canonical desktop launcher and embedded health endpoint" \
+    "${SCRIPT}" "${ISO}"
+
+FAKE_QEMU_MODE=not-ready
+export FAKE_QEMU_MODE
+run_expect_failure \
+    "bios desktop launcher or embedded health endpoint failed; guest service diagnostics follow in the serial log" \
     "${SCRIPT}" "${ISO}"
 
 FAKE_QEMU_MODE=ready

@@ -450,16 +450,21 @@ prove_guest_readiness() {
     local probe_sent=0
     local weak_seen=0
     local health_probe
+    local failure_marker="ELIZAOS_ISO_SMOKE_FAILED firmware=${firmware}"
 
     # The complete marker must not occur in serial input because the TTY echoes
     # commands before executing them. Joining two guest-side strings makes the
     # marker evidence possible only after both readiness checks pass.
-    health_probe="for i in \$(seq 1 300); do if systemctl --user is-active --quiet elizaos-launcher.service && /usr/bin/curl --noproxy '*' -fsS http://127.0.0.1:31337/api/health -o /tmp/elizaos-smoke-health.json && /bin/grep -Eq '\"ready\"[[:space:]]*:[[:space:]]*true' /tmp/elizaos-smoke-health.json; then printf '\\n%s%s\\n' 'ELIZAOS_ISO_SMOKE_' 'READY firmware=${firmware} launcher=active health=ready'; break; fi; sleep 2; done"
+    health_probe="for i in \$(seq 1 240); do if systemctl --user is-active --quiet elizaos-launcher.service && /usr/bin/curl --noproxy '*' -fsS http://127.0.0.1:31337/api/health -o /tmp/elizaos-smoke-health.json && /bin/grep -Eq '\"ready\"[[:space:]]*:[[:space:]]*true' /tmp/elizaos-smoke-health.json; then printf '\\n%s%s\\n' 'ELIZAOS_ISO_SMOKE_' 'READY firmware=${firmware} launcher=active health=ready'; exit 0; fi; sleep 2; done; launcher=\$(systemctl --user is-active elizaos-launcher.service 2>&1 || true); graphical=\$(systemctl --user is-active graphical-session.target 2>&1 || true); health=\$(/usr/bin/curl --noproxy '*' -fsS http://127.0.0.1:31337/api/health 2>&1 || true); printf '\\n%s%s launcher=%s graphical=%s health=%s\\n' 'ELIZAOS_ISO_SMOKE_' 'FAILED firmware=${firmware}' \"\${launcher}\" \"\${graphical}\" \"\${health}\"; systemctl --user status elizaos-launcher.service --no-pager || true; journalctl --user -u elizaos-launcher.service -n 120 --no-pager || true; loginctl list-sessions --no-legend || true"
 
     while ((SECONDS - start_seconds < BOOT_TIMEOUT_SECONDS)); do
         if grep -Fq "${marker}" "${serial_log}" 2>/dev/null; then
             echo "ISO smoke test (${firmware}): canonical desktop launcher and embedded health ready"
             return
+        fi
+
+        if grep -Fq "${failure_marker}" "${serial_log}" 2>/dev/null; then
+            fail "${firmware} desktop launcher or embedded health endpoint failed; guest service diagnostics follow in the serial log"
         fi
 
         if grep -Eq 'Linux version|systemd\[1\]|[[:space:]]login:' "${serial_log}" 2>/dev/null; then

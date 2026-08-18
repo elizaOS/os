@@ -213,6 +213,17 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      - name: Upload unverified ISO for failed smoke diagnosis
+        if: failure() && steps.iso.outputs.path != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: elizaos-live-iso-unverified-diagnostic-${{ env.CHANNEL }}-${{ env.ELIZAOS_ARCH }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.iso.outputs.path }}
+            ${{ steps.iso.outputs.path }}.sha256
+          if-no-files-found: error
+          retention-days: 2
+
       - name: Attest SLSA build provenance for ISO
         # Mints a Sigstore-signed in-toto/SLSA provenance attestation
         # tied to this repo + workflow + commit, via GitHub OIDC.
