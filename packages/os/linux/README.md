@@ -36,6 +36,11 @@ just config
 just build
 ```
 
+The packaged runtime's `Resources/app/eliza-dist/build-info.json` commit must
+equal [`elizaos/app-source.lock.json`](./elizaos/app-source.lock.json). The
+builder rejects any other application bytes and records both that source commit
+and a deterministic packaged-tree digest in the ISO manifest.
+
 The direct entrypoint is equivalent:
 
 ```bash

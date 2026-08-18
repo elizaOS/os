@@ -8,7 +8,7 @@ on:
     inputs:
       eliza-ref:
         type: string
-        default: 395a90a3ee14d81bf5b97fc9ffdfd4e532440d18
+        default: ""
       channel:
         type: string
         default: stable
@@ -18,9 +18,9 @@ on:
   workflow_dispatch:
     inputs:
       eliza-ref:
-        description: elizaOS/eliza ref to include in the image
+        description: Optional exact elizaOS/eliza commit; must match app-source.lock.json
         type: string
-        default: 395a90a3ee14d81bf5b97fc9ffdfd4e532440d18
+        default: ""
       channel:
         description: Release channel
         type: choice
@@ -67,21 +67,32 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Resolve locked application source
+        id: eliza-lock
+        env:
+          REQUESTED_ELIZA_REF: ${{ inputs.eliza-ref }}
+        run: |
+          set -euo pipefail
+          LOCK=packages/os/linux/elizaos/app-source.lock.json
+          LOCKED=$(node -e 'const x=require("./"+process.argv[1]); if(!/^[0-9a-f]{40}$/.test(x.commit)) process.exit(2); process.stdout.write(x.commit)' "$LOCK")
+          if [ -n "${REQUESTED_ELIZA_REF:-}" ] && [ "$REQUESTED_ELIZA_REF" != "$LOCKED" ]; then
+            echo "::error::eliza-ref must equal the release lock: requested=$REQUESTED_ELIZA_REF locked=$LOCKED"
+            exit 1
+          fi
+          echo "ref=$LOCKED" >> "$GITHUB_OUTPUT"
+
       - name: Checkout application source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: elizaOS/eliza
-          ref: ${{ inputs.eliza-ref || '395a90a3ee14d81bf5b97fc9ffdfd4e532440d18' }}
+          ref: ${{ steps.eliza-lock.outputs.ref }}
           path: .eliza-source
           submodules: recursive
 
-      - name: Restore live-build cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: |
-            ${{ env.ELIZAOS_LINUX_VARIANT }}/cache
-          key: elizaos-debian-${{ env.ELIZAOS_ARCH }}-${{ env.ELIZAOS_PROFILE }}-${{ hashFiles('packages/os/linux/elizaos/auto/config', 'packages/os/linux/elizaos/config/**', 'packages/os/linux/elizaos/Dockerfile') }}
-          restore-keys: elizaos-debian-${{ env.ELIZAOS_ARCH }}-${{ env.ELIZAOS_PROFILE }}-
+      - name: Verify application checkout matches release lock
+        run: |
+          set -euo pipefail
+          test "$(git -C "$ELIZAOS_ELIZA_ROOT" rev-parse HEAD)" = "${{ steps.eliza-lock.outputs.ref }}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c

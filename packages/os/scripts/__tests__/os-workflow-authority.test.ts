@@ -95,15 +95,20 @@ describe("OS release workflow authority", () => {
     const workflow = parseWorkflow("build-linux-iso.yml");
     const job = workflow.jobs?.["build-iso"];
     const steps = job?.steps ?? [];
-    const cacheRestore = namedJobStep(
+    const lockResolution = namedJobStep(
       workflow,
       "build-iso",
-      "Restore live-build cache",
+      "Resolve locked application source",
     );
-    const toolchainSetup = namedJobStep(
+    const appCheckout = namedJobStep(
       workflow,
       "build-iso",
-      "Set up Docker Buildx",
+      "Checkout application source",
+    );
+    const lockVerification = namedJobStep(
+      workflow,
+      "build-iso",
+      "Verify application checkout matches release lock",
     );
     const dependencyInstall = namedJobStep(
       workflow,
@@ -115,21 +120,34 @@ describe("OS release workflow authority", () => {
       "build-iso",
       "Smoke test ISO through SeaBIOS and OVMF",
     );
-    const cacheInputs = cacheRestore.with?.key ?? "";
+    const appLock = JSON.parse(
+      readFileSync(
+        join(
+          repositoryRoot,
+          "packages/os/linux/elizaos/app-source.lock.json",
+        ),
+        "utf8",
+      ),
+    ) as { commit?: string; repository?: string; schema?: string };
 
     expect(job?.env?.ELIZAOS_ARCH).toBe("amd64");
     expect(job?.env?.ELIZAOS_PROFILE).toBe("gui");
     expect(job?.env?.ELIZAOS_LINUX_VARIANT).toBe("packages/os/linux/elizaos");
-    expect(steps.indexOf(cacheRestore)).toBeLessThan(
-      steps.indexOf(toolchainSetup),
+    expect(steps.indexOf(lockResolution)).toBeLessThan(
+      steps.indexOf(appCheckout),
     );
-    expect(steps.indexOf(cacheRestore)).toBeLessThan(
+    expect(steps.indexOf(lockVerification)).toBeLessThan(
       steps.indexOf(dependencyInstall),
     );
-    expect(cacheInputs).toContain("packages/os/linux/elizaos/auto/config");
-    expect(cacheInputs).toContain("packages/os/linux/elizaos/config/**");
-    expect(cacheInputs).toContain("packages/os/linux/elizaos/Dockerfile");
-    expect(cacheInputs).not.toContain("packages/os/linux/tails");
+    expect(appCheckout.with?.ref).toBe("${{ steps.eliza-lock.outputs.ref }}");
+    expect(lockResolution.run).toContain("app-source.lock.json");
+    expect(lockVerification.run).toContain("rev-parse HEAD");
+    expect(steps.some((step) => step.name === "Restore live-build cache")).toBe(
+      false,
+    );
+    expect(appLock.schema).toBe("eliza.os.linux.app-source-lock.v1");
+    expect(appLock.repository).toBe("https://github.com/elizaOS/eliza");
+    expect(appLock.commit).toMatch(/^[0-9a-f]{40}$/);
     expect(smoke.env?.ELIZAOS_ISO_SMOKE_CPU_MODEL).toBe("Haswell-v4");
     expect(smoke.run).toContain("smoke-test-iso.sh");
   });

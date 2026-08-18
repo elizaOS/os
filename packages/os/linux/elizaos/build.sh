@@ -33,6 +33,8 @@ PROFILE="${ELIZAOS_PROFILE:-default}"
 BUILD_TS="$(date -u +%Y%m%dT%H%M%SZ)"
 ARTIFACT_BASENAME="elizaos-linux-${ARCH}-${PROFILE}-${BUILD_TS}"
 MIN_ISO_BYTES="${ELIZAOS_MIN_ISO_BYTES:-209715200}"
+APP_SOURCE_COMMIT=""
+APP_ARTIFACT_SHA256=""
 
 mkdir -p "${OUT}"
 
@@ -426,6 +428,8 @@ PY
 stage_packaged_app_for_live_build() {
     PACKAGED_APP="${ELIZAOS_PACKAGED_APP_DIR:-/opt/elizaos-packaged-app}"
     CHROOT_APP="${HERE}/config/includes.chroot/usr/share/elizaos/elizaos-app"
+    APP_LOCK="${HERE}/app-source.lock.json"
+    APP_BUILD_INFO="${PACKAGED_APP}/Resources/app/eliza-dist/build-info.json"
 
     if [ ! -d "${PACKAGED_APP}" ]; then
         echo "    no packaged elizaOS desktop app mounted at ${PACKAGED_APP}."
@@ -439,11 +443,83 @@ stage_packaged_app_for_live_build() {
         echo "ERROR: packaged app is missing its offline runtime dependency closure." >&2
         exit 69
     fi
+    if [ ! -f "${APP_LOCK}" ]; then
+        echo "ERROR: packaged app source lock is missing: ${APP_LOCK}" >&2
+        exit 69
+    fi
+    if [ ! -f "${APP_BUILD_INFO}" ]; then
+        echo "ERROR: packaged app build metadata is missing: ${APP_BUILD_INFO}" >&2
+        exit 69
+    fi
+
+    read -r APP_SOURCE_COMMIT LOCKED_APP_COMMIT < <(
+        python3 - "${APP_BUILD_INFO}" "${APP_LOCK}" <<'PY'
+import json
+from pathlib import Path
+import re
+import sys
+
+build_info = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+lock = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+actual = build_info.get("commit")
+expected = lock.get("commit")
+sha = re.compile(r"^[0-9a-f]{40}$")
+if not isinstance(actual, str) or not sha.fullmatch(actual):
+    raise SystemExit("ERROR: packaged app build-info commit is not a full Git SHA")
+if not isinstance(expected, str) or not sha.fullmatch(expected):
+    raise SystemExit("ERROR: app-source.lock.json commit is not a full Git SHA")
+print(actual, expected)
+PY
+    )
+    if [ "${APP_SOURCE_COMMIT}" != "${LOCKED_APP_COMMIT}" ]; then
+        echo "ERROR: packaged app commit ${APP_SOURCE_COMMIT} does not match lock ${LOCKED_APP_COMMIT}." >&2
+        exit 69
+    fi
+
+    APP_ARTIFACT_SHA256="$(python3 - "${PACKAGED_APP}" <<'PY'
+from hashlib import sha256
+from pathlib import Path
+import os
+import stat
+import sys
+
+root = Path(sys.argv[1])
+digest = sha256()
+for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
+    relative = path.relative_to(root).as_posix().encode()
+    metadata = path.lstat()
+    if path.is_symlink():
+        kind = b"L"
+        payload = os.readlink(path).encode()
+    elif path.is_dir():
+        kind = b"D"
+        payload = b""
+    elif path.is_file():
+        kind = b"F"
+        payload = b""
+    else:
+        raise SystemExit(f"ERROR: unsupported packaged app entry: {relative.decode()}")
+    digest.update(kind + b"\0" + relative + b"\0")
+    digest.update(f"{stat.S_IMODE(metadata.st_mode):04o}".encode() + b"\0")
+    if kind == b"F":
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    else:
+        digest.update(payload)
+    digest.update(b"\0")
+print(digest.hexdigest())
+PY
+)"
 
     echo "    staging verified packaged elizaOS desktop runtime..."
     remove_paths_recursive "${CHROOT_APP}"
     mkdir -p "${CHROOT_APP}"
     rsync -a "${PACKAGED_APP}/" "${CHROOT_APP}/"
+    install -D -m 0644 "${APP_LOCK}" \
+        "${HERE}/config/includes.chroot/usr/share/elizaos/app-source.lock.json"
+    printf '%s  elizaos-app-tree\n' "${APP_ARTIFACT_SHA256}" > \
+        "${HERE}/config/includes.chroot/usr/share/elizaos/elizaos-app.sha256"
 }
 
 # Clear every live-build working directory from any prior/interrupted run so
@@ -575,7 +651,10 @@ echo "    sha256: $(cat "${OUT}/${ARTIFACT_BASENAME}.iso.sha256")"
 # ── Step 5: manifest ─────────────────────────────────────────────────
 echo
 echo "--- step 5/5: manifest ---"
-TEMPLATE="${HERE}/manifest.json.template"
+TEMPLATE="${HERE}/manifest.${ARCH}.${PROFILE}.json.template"
+if [ ! -f "${TEMPLATE}" ]; then
+    TEMPLATE="${HERE}/manifest.json.template"
+fi
 if [ ! -f "${TEMPLATE}" ]; then
     echo "ERROR: ${TEMPLATE} missing; refusing to emit an ISO without release metadata." >&2
     exit 3
@@ -588,6 +667,8 @@ sed \
     -e "s|@@BUILD_TIMESTAMP@@|${BUILD_TS}|g" \
     -e "s|@@SHA256@@|${SHA256}|g" \
     -e "s|@@SIZE_BYTES@@|${ISO_BYTES}|g" \
+    -e "s|@@ELIZA_COMMIT@@|${APP_SOURCE_COMMIT}|g" \
+    -e "s|@@APP_ARTIFACT_SHA256@@|${APP_ARTIFACT_SHA256}|g" \
     "${TEMPLATE}" > "${OUT}/${ARTIFACT_BASENAME}.manifest.json"
 python3 -c "import json,sys; json.load(open('${OUT}/${ARTIFACT_BASENAME}.manifest.json'))"
 echo "    manifest: ${OUT}/${ARTIFACT_BASENAME}.manifest.json"

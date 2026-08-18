@@ -62,6 +62,22 @@ if grep -q 'apt-cacher-ng' Dockerfile; then
     echo "UNWIRED BUILD CACHE: apt-cacher-ng must not be installed when caching is disabled"
     fail=1
 fi
+python3 - <<'PY' || fail=1
+import json
+from pathlib import Path
+import re
+
+lock = json.loads(Path("app-source.lock.json").read_text(encoding="utf-8"))
+assert lock.get("schema") == "eliza.os.linux.app-source-lock.v1"
+assert lock.get("repository") == "https://github.com/elizaOS/eliza"
+assert re.fullmatch(r"[0-9a-f]{40}", lock.get("commit", ""))
+template = Path("manifest.amd64.gui.json.template").read_text(encoding="utf-8")
+assert '"kind": "iso-hybrid"' in template
+assert "@@ELIZA_COMMIT@@" in template
+assert "@@APP_ARTIFACT_SHA256@@" in template
+PY
+grep -q 'packaged app commit .* does not match lock' build.sh \
+    || { echo "UNPINNED PACKAGED APP: build.sh must reject an app outside the source lock"; fail=1; }
 if grep -R -E -n '^(indi-dsi|dahdi-firmware-nonfree|firmware-b43-installer|firmware-b43legacy-installer)$' config/package-lists config/profiles 2>/dev/null; then
     echo "UNBOUNDED FIRMWARE PACKAGE: remove unrelated or mutable installer package"
     fail=1
