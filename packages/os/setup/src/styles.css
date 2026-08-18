@@ -894,7 +894,7 @@ button.install-tab.active {
 }
 
 .install-tab span {
-  color: #6f6f78;
+  color: #8a8a94;
   font-size: 0.76rem;
   font-weight: 400;
 }
@@ -1039,7 +1039,7 @@ button.footer-link:hover {
 
 .installer-footer {
   padding: 18px 2px 0;
-  color: #6f6f78;
+  color: #8a8a94;
   font-size: 0.72rem;
   line-height: 1.5;
 }
@@ -1164,9 +1164,25 @@ button.footer-link:hover {
 
 .quiet-help {
   margin: 10px 0 0;
-  color: #6f6f78;
+  color: #8a8a94;
   font-size: 0.72rem;
   text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:focus-within {
+    scroll-behavior: auto;
+  }
+
+  .spinner,
+  .flasher-embedded .spinner {
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+  }
+
+  button.install-tab {
+    transition-duration: 0.01ms;
+  }
 }
 
 @media (max-width: 800px) {

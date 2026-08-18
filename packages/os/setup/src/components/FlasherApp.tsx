@@ -40,6 +40,13 @@ function stepIcon(status: FlashStepStatus): string {
   }
 }
 
+function deviceCheckErrorMessage(error: unknown): string {
+  if (error instanceof TypeError) {
+    return "The installer could not reach its device service. Try again in a moment.";
+  }
+  return "We couldn't check for Android devices. Reconnect your device, then try again.";
+}
+
 // ---------------------------------------------------------------------------
 // State machine
 // ---------------------------------------------------------------------------
@@ -944,7 +951,7 @@ export function FlasherApp({ backend, embedded = false }: FlasherAppProps) {
         }
       }
     } catch (err) {
-      setDetectError(err instanceof Error ? err.message : String(err));
+      setDetectError(deviceCheckErrorMessage(err));
     } finally {
       setDetectLoading(false);
     }
@@ -974,8 +981,10 @@ export function FlasherApp({ backend, embedded = false }: FlasherAppProps) {
     try {
       const s = await backend.getDeviceSpecs(device.serial);
       setSpecs(s);
-    } catch (err) {
-      setSpecsError(err instanceof Error ? err.message : String(err));
+    } catch {
+      setSpecsError(
+        "We couldn't read this device's details. Reconnect it, then try again.",
+      );
     } finally {
       setSpecsLoading(false);
     }
