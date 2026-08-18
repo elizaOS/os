@@ -65,6 +65,14 @@ test("image builds cannot reuse checked-in or previously staged agent bytes", ()
   assert.doesNotMatch(makefile, /ELIZAOS_REQUIRE_AGENT_ARTIFACTS/);
 });
 
+test("image builds cannot borrow another target's release manifest", () => {
+  assert.match(
+    imageBuild,
+    /no release manifest contract for \$\{ARCH\}:\$\{PROFILE\}/,
+  );
+  assert.match(imageBuild, /"\$\{ARCH\}:\$\{PROFILE\}" = "riscv64:default"/);
+});
+
 test("the image installs the packaged runtime without a duplicate service", () => {
   assert.match(installHook, /PACKAGED_APP=\/usr\/share\/elizaos\/elizaos-app/);
   assert.match(installHook, /ln -sfn "\$\{PACKAGED_APP\}\/bin\/launcher"/);

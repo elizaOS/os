@@ -556,6 +556,16 @@ case "${PROFILE}" in
         ;;
 esac
 
+TEMPLATE="${HERE}/manifest.${ARCH}.${PROFILE}.json.template"
+if [ ! -f "${TEMPLATE}" ]; then
+    if [ "${ARCH}:${PROFILE}" = "riscv64:default" ] && [ -f "${HERE}/manifest.json.template" ]; then
+        TEMPLATE="${HERE}/manifest.json.template"
+    else
+        echo "ERROR: no release manifest contract for ${ARCH}:${PROFILE}: ${TEMPLATE}" >&2
+        exit 69
+    fi
+fi
+
 if [ -d "${ELIZAOS_PACKAGED_APP_DIR:-/opt/elizaos-packaged-app}" ]; then
     if [ "${ARCH}" != "amd64" ]; then
         echo "ERROR: the currently published packaged desktop artifact is amd64-only; refusing to copy it into ${ARCH}." >&2
@@ -655,14 +665,6 @@ echo "    sha256: $(cat "${OUT}/${ARTIFACT_BASENAME}.iso.sha256")"
 # ── Step 5: manifest ─────────────────────────────────────────────────
 echo
 echo "--- step 5/5: manifest ---"
-TEMPLATE="${HERE}/manifest.${ARCH}.${PROFILE}.json.template"
-if [ ! -f "${TEMPLATE}" ]; then
-    TEMPLATE="${HERE}/manifest.json.template"
-fi
-if [ ! -f "${TEMPLATE}" ]; then
-    echo "ERROR: ${TEMPLATE} missing; refusing to emit an ISO without release metadata." >&2
-    exit 3
-fi
 SHA256="$(awk '{print $1}' "${OUT}/${ARTIFACT_BASENAME}.iso.sha256")"
 sed \
     -e "s|@@ARCH@@|${ARCH}|g" \

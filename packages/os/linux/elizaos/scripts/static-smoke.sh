@@ -40,6 +40,10 @@ done < <(find scripts config/includes.chroot/usr/local/lib/elizaos config/includ
 # without requiring a local ISO, QEMU transcript, or release artifact.
 python3 -c 'import ast,pathlib; ast.parse(pathlib.Path("scripts/check_release_manifest.py").read_text())' \
     || { echo "PY COMPILE FAIL: scripts/check_release_manifest.py"; fail=1; }
+[ -s ../../release/schema/elizaos-os-release-manifest.schema.json ] \
+    || { echo "MISSING RELEASE SCHEMA: release-check cannot validate manifests"; fail=1; }
+[ ! -e manifest.json ] \
+    || { echo "STALE RELEASE CLAIM: generated manifests belong in out/, not the source tree"; fail=1; }
 if ! make -n release-check ARCH=riscv64 2>/dev/null | grep -q 'scripts/check_release_manifest.py'; then
     echo "BAD RELEASE CHECK TARGET: release-check must invoke scripts/check_release_manifest.py"
     fail=1
@@ -75,9 +79,16 @@ template = Path("manifest.amd64.gui.json.template").read_text(encoding="utf-8")
 assert '"kind": "iso-hybrid"' in template
 assert "@@ELIZA_COMMIT@@" in template
 assert "@@APP_ARTIFACT_SHA256@@" in template
+riscv_template = Path("manifest.json.template").read_text(encoding="utf-8")
+assert '"kind": "iso-hybrid"' in riscv_template
+assert '"sizeBytes": @@SIZE_BYTES@@' in riscv_template
+assert '"id": "riscv64-agent-runtime"' in riscv_template
+assert '"status": "collected"' not in riscv_template
 PY
 grep -q 'packaged app commit .* does not match lock' build.sh \
     || { echo "UNPINNED PACKAGED APP: build.sh must reject an app outside the source lock"; fail=1; }
+grep -q 'no release manifest contract for' build.sh \
+    || { echo "MANIFEST FALLBACK: unsupported targets must fail before image assembly"; fail=1; }
 if grep -R -E -n '^(indi-dsi|dahdi-firmware-nonfree|firmware-b43-installer|firmware-b43legacy-installer)$' config/package-lists config/profiles 2>/dev/null; then
     echo "UNBOUNDED FIRMWARE PACKAGE: remove unrelated or mutable installer package"
     fail=1
