@@ -126,6 +126,11 @@ describe("OS release workflow authority", () => {
       "build-iso",
       "Extract full runtime root from ISO",
     );
+    const sbomGenerate = namedJobStep(
+      workflow,
+      "build-iso",
+      "Generate ISO SBOM (SPDX 2.3 JSON)",
+    );
     const appLock = JSON.parse(
       readFileSync(
         join(repositoryRoot, "packages/os/linux/elizaos/app-source.lock.json"),
@@ -161,6 +166,9 @@ describe("OS release workflow authority", () => {
     );
     expect(sbomExtract.run).not.toContain(
       'find "$SQ/opt/elizaos" -type f -name package.json',
+    );
+    expect(sbomGenerate.env?.SYFT_SELECT_CATALOGERS).toBe(
+      "+javascript-package-cataloger",
     );
   });
 
