@@ -349,18 +349,12 @@ hold_boot_menu() {
 }
 
 boot_selected_entry_with_serial() {
-    local firmware="$1"
     local boot_parameters=" login console=ttyS0,115200n8"
 
     hold_boot_menu
-    if [ "${firmware}" = "bios" ]; then
-        monitor_send_key tab
-        sleep 0.5
-        monitor_type_text "${boot_parameters}"
-        monitor_send_key ret
-        return
-    fi
-
+    # live-build emits GRUB for both El Torito platform entries. Entering the
+    # editor is therefore identical under SeaBIOS and OVMF; Tab is an ISOLINUX
+    # edit shortcut and silently leaves the GRUB menu unchanged.
     monitor_send_key e
     sleep 0.5
     # The checked-in GRUB entry is setparams, an echo, then the linux command.
@@ -442,7 +436,7 @@ launch_firmware_vm() {
     printf '\n' >>"${args_log}"
     "${QEMU_BIN}" "${qemu_args[@]}" >"${stdout_log}" 2>"${stderr_log}" &
     QEMU_PID=$!
-    boot_selected_entry_with_serial "${firmware}"
+    boot_selected_entry_with_serial
 }
 
 prove_guest_readiness() {

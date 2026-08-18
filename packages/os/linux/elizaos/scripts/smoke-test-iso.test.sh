@@ -69,6 +69,7 @@ set -euo pipefail
 
 firmware=bios
 serial_prefix=""
+monitor_prefix=""
 printf '%s\n' "--- invocation ---" >>"${FAKE_QEMU_ARGS_LOG}"
 for argument in "$@"; do
     printf '%s\n' "${argument}" >>"${FAKE_QEMU_ARGS_LOG}"
@@ -77,12 +78,22 @@ for argument in "$@"; do
         pipe:*)
             if [ -z "${serial_prefix}" ]; then
                 serial_prefix="${argument#pipe:}"
+            else
+                monitor_prefix="${argument#pipe:}"
             fi
             ;;
     esac
 done
 [ -n "${serial_prefix}" ] || exit 64
+[ -n "${monitor_prefix}" ] || exit 64
 printf 'firmware=%s\n' "${firmware}" >>"${FAKE_QEMU_ARGS_LOG}"
+cat "${monitor_prefix}.in" >>"${FAKE_QEMU_MONITOR_INPUT_LOG}" &
+monitor_reader=$!
+
+stop_monitor_reader() {
+    kill "${monitor_reader}" 2>/dev/null || true
+    wait "${monitor_reader}" 2>/dev/null || true
+}
 
 case "${FAKE_QEMU_MODE:-ready}" in
     ready|ignore-term)
@@ -106,7 +117,7 @@ case "${FAKE_QEMU_MODE:-ready}" in
         if [ "${FAKE_QEMU_MODE}" = "ignore-term" ]; then
             trap '' TERM
         else
-            trap 'exit 0' TERM
+            trap 'stop_monitor_reader; exit 0' TERM
         fi
         while true; do sleep 1; done
         ;;
@@ -137,6 +148,7 @@ export ELIZAOS_ISO_SMOKE_POLL_SECONDS=0.05
 export ELIZAOS_ISO_SMOKE_STOP_TIMEOUT_SECONDS=1
 export ELIZAOS_ISO_SMOKE_LOG_DIR="${TMP}/logs"
 export FAKE_QEMU_ARGS_LOG="${TMP}/qemu-args"
+export FAKE_QEMU_MONITOR_INPUT_LOG="${TMP}/qemu-monitor-input"
 
 run_expect_failure() {
     local expected="$1"
@@ -145,6 +157,7 @@ run_expect_failure() {
 
     rm -rf "${ELIZAOS_ISO_SMOKE_LOG_DIR}"
     : >"${FAKE_QEMU_ARGS_LOG}"
+    : >"${FAKE_QEMU_MONITOR_INPUT_LOG}"
     if "$@" >"${output}" 2>&1; then
         echo "command unexpectedly succeeded: $*" >&2
         exit 1
@@ -198,6 +211,7 @@ export FAKE_QEMU_MODE
 export ELIZAOS_ISO_SMOKE_TIMEOUT_SECONDS=3
 rm -rf "${ELIZAOS_ISO_SMOKE_LOG_DIR}"
 : >"${FAKE_QEMU_ARGS_LOG}"
+: >"${FAKE_QEMU_MONITOR_INPUT_LOG}"
 if ! "${SCRIPT}" "${ISO}" >"${TMP}/success-output" 2>&1; then
     cat "${TMP}/success-output" >&2
     find "${ELIZAOS_ISO_SMOKE_LOG_DIR}" -type f -maxdepth 1 -print -exec tail -50 {} \; >&2
@@ -213,6 +227,16 @@ grep -Fxq -- "-drive" "${FAKE_QEMU_ARGS_LOG}"
 grep -Fxq -- "-bios" "${FAKE_QEMU_ARGS_LOG}"
 grep -Fq "media=cdrom" "${FAKE_QEMU_ARGS_LOG}"
 grep -Fq "if=pflash" "${FAKE_QEMU_ARGS_LOG}"
+[ "$(awk '
+    previous == "sendkey home 5" && $0 == "sendkey e 5" { count++ }
+    { previous = $0 }
+    END { print count + 0 }
+' "${FAKE_QEMU_MONITOR_INPUT_LOG}")" -eq 2 ]
+[ "$(grep -Fxc 'sendkey ctrl-x 5' "${FAKE_QEMU_MONITOR_INPUT_LOG}")" -eq 2 ]
+if grep -Fq 'sendkey tab 5' "${FAKE_QEMU_MONITOR_INPUT_LOG}"; then
+    echo "GRUB boot editing must not use the ISOLINUX Tab shortcut" >&2
+    exit 1
+fi
 if grep -Eq '^-kernel$|^-initrd$' "${FAKE_QEMU_ARGS_LOG}"; then
     echo "smoke orchestration must not bypass ISO firmware bootloaders" >&2
     exit 1
@@ -224,6 +248,7 @@ FAKE_QEMU_MODE=ignore-term
 export FAKE_QEMU_MODE
 rm -rf "${ELIZAOS_ISO_SMOKE_LOG_DIR}"
 : >"${FAKE_QEMU_ARGS_LOG}"
+: >"${FAKE_QEMU_MONITOR_INPUT_LOG}"
 if ! "${SCRIPT}" "${ISO}" >"${TMP}/bounded-output" 2>&1; then
     cat "${TMP}/bounded-output" >&2
     exit 1
