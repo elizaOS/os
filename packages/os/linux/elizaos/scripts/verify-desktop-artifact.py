@@ -8,7 +8,6 @@ import base64
 import binascii
 import hashlib
 import json
-import mmap
 import re
 import shutil
 import subprocess
@@ -98,12 +97,11 @@ def _verify_archive_signature(
     if len(signature) != 64:
         raise VerificationError("desktop artifact Ed25519 signature must be 64 bytes")
     try:
-        with archive_path.open("rb") as stream:
-            if archive_path.stat().st_size == 0:
-                public_key.verify(signature, b"")
-            else:
-                with mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as content:
-                    public_key.verify(signature, content)
+        # cryptography 41 (shipped by Ubuntu 24.04) requires a concrete bytes
+        # object here; newer releases also accept some buffer-protocol objects.
+        # Ed25519 verification is one-shot in OpenSSL, so mmap cannot make this
+        # operation streaming and only makes behavior version-dependent.
+        public_key.verify(signature, archive_path.read_bytes())
     except InvalidSignature as exc:
         raise VerificationError("desktop artifact Ed25519 signature is invalid") from exc
     except OSError as exc:
