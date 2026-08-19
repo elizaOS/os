@@ -443,11 +443,20 @@ export interface DependencyManagerProbes {
   whichBinary: (name: string) => string | undefined;
   /** Run an install argv. Resolves true iff the command exited 0. */
   runInstallCommand: (argv: string[]) => Promise<boolean>;
+  /** Report whether winget can be used without touching the real host in tests. */
+  isWingetAvailable: () => Promise<boolean>;
+  /** Install Android platform tools into the managed vendor directory. */
+  downloadPlatformTools: () => Promise<boolean>;
+  /** Install Sideloader into the managed vendor directory. */
+  downloadSideloader: () => Promise<boolean>;
 }
 
 const DEFAULT_PROBES: DependencyManagerProbes = {
   whichBinary,
   runInstallCommand,
+  isWingetAvailable,
+  downloadPlatformTools,
+  downloadSideloader,
 };
 
 export class DependencyManager {
@@ -491,7 +500,7 @@ export class DependencyManager {
         } else if (platform === "linux") {
           installed = await this.runLinuxInstall(id);
         } else if (platform === "win32") {
-          if (await isWingetAvailable()) {
+          if (await this.probes.isWingetAvailable()) {
             installed = await this.probes.runInstallCommand([
               "winget",
               "install",
@@ -504,7 +513,7 @@ export class DependencyManager {
           // before PATH by whichBinary, so this puts adb/fastboot where the
           // dependency check expects them.
           if (!installed) {
-            installed = await downloadPlatformTools();
+            installed = await this.probes.downloadPlatformTools();
           }
         }
         break;
@@ -528,7 +537,7 @@ export class DependencyManager {
       }
 
       case "sideloader": {
-        if (platform === "win32" && (await isWingetAvailable())) {
+        if (platform === "win32" && (await this.probes.isWingetAvailable())) {
           installed = await this.probes.runInstallCommand([
             "winget",
             "install",
@@ -537,7 +546,7 @@ export class DependencyManager {
           ]);
         }
         if (!installed) {
-          installed = await downloadSideloader();
+          installed = await this.probes.downloadSideloader();
         }
         break;
       }

@@ -99,7 +99,9 @@ else
 fi
 
 # ---- 2. GitHub attestations ------------------------------------------------
-if command -v gh >/dev/null 2>&1; then
+if [ "${ELIZAOS_VERIFY_ATTESTATIONS:-auto}" = skip ]; then
+  warn "skipping GitHub attestation verification by explicit request"
+elif command -v gh >/dev/null 2>&1; then
   note "Checking GitHub artifact attestations (gh attestation verify)"
   attest_pass=0
   attest_fail=0

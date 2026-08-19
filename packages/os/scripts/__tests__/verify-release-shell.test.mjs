@@ -35,7 +35,10 @@ test("download verifier accepts a complete checksum roundtrip", async () => {
     `${await sha256File(payload)}  payload.iso\n`,
   );
   const result = await execFileAsync(verifier, [directory], {
-    env: { PATH: "/usr/bin:/bin" },
+    env: {
+      PATH: "/usr/bin:/bin",
+      ELIZAOS_VERIFY_ATTESTATIONS: "skip",
+    },
   });
   assert.match(result.stdout, /SHA256SUMS roundtrip verified \(1 entries\)/);
 });

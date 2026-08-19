@@ -39,6 +39,9 @@ function buildManager(host: HostState): DependencyManager {
       }
       return host.installResult;
     },
+    isWingetAvailable: async () => true,
+    downloadPlatformTools: async () => false,
+    downloadSideloader: async () => false,
   });
 }
 

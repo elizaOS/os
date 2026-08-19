@@ -1,5 +1,5 @@
 // Exercises USB installer browser flows and screenshot quality gates.
-import { expect, test } from "playwright/test";
+import { expect, test } from "@playwright/test";
 import { mockDrive, mockInstallerApi } from "./mock-installer-api";
 
 test("runs the guarded USB write wizard with a mocked backend", async ({
