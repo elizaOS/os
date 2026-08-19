@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   downloadAndVerifyArtifacts,
+  parseHardwareTargets,
   validateDiscoveredManifest,
 } from "../backend/adb-backend";
 import {
@@ -85,7 +86,7 @@ describe("dry-run gating", () => {
       device: {
         serial: "S1",
         model: "Pixel",
-        codename: "caiman",
+        codename: "tegu",
         state: "device",
         bootloaderUnlocked: false,
       },
@@ -132,21 +133,38 @@ describe("downloadAndVerifyArtifacts", () => {
       schemaVersion: 1,
       releaseId: "test-release",
       generatedAt: "2026-08-17T00:00:00Z",
-      buildFingerprint: "elizaos/caiman/caiman:16/test:user/test-keys",
+      buildFingerprint: "elizaOS/eliza_tegu_phone/tegu:15/test:user/test-keys",
       buildType: "user",
       supportedDevices: [
         {
-          codename: "caiman",
-          marketingName: "Pixel 9 Pro XL",
-          tier: "lab-validated",
+          targetId: "pixel9a-tegu",
+          codename: "tegu",
+          marketingName: "Pixel 9a",
+          tier: "candidate",
           slots: ["a", "b"],
           dynamicPartitions: true,
           rollbackSupported: true,
         },
       ],
       artifacts,
-      validation: { bootTimeoutSeconds: 300 },
-      rollback: { previousReleaseId: "stock" },
+      validation: {
+        bootTimeoutSeconds: 300,
+        expectedFingerprintPrefix: "elizaOS/eliza_tegu_phone/tegu:",
+        properties: { "ro.product.device": "tegu" },
+        requiredValidationTokens: [
+          "pm path",
+          "cmd role holders",
+          "foreground",
+          "service",
+          "/api/health",
+          "logcat",
+          "selinux",
+        ],
+      },
+      rollback: {
+        previousReleaseId: "stock",
+        notes: "Retain the stock image before flashing.",
+      },
     };
   }
 
@@ -300,6 +318,54 @@ describe("downloadAndVerifyArtifacts", () => {
     expect(() => validateDiscoveredManifest(manifest)).toThrow(
       /invalid artifact contract/,
     );
+  });
+
+  it("rejects fingerprints and lab promotion that bypass the hardware inventory", () => {
+    const manifest = manifestWithArtifacts([
+      {
+        partition: "boot",
+        filename: "boot.img",
+        sha256: "a".repeat(64),
+        sizeBytes: 1024,
+        required: true,
+        fastbootMode: "bootloader",
+      },
+    ]);
+    manifest.buildFingerprint = "elizaOS/wrong/tegu:15/test:user/test-keys";
+    expect(() => validateDiscoveredManifest(manifest)).toThrow(/fingerprint/);
+
+    manifest.buildFingerprint =
+      "elizaOS/eliza_tegu_phone/tegu:15/test:user/test-keys";
+    const device = manifest.supportedDevices[0];
+    if (!device) throw new Error("Expected a supported-device fixture");
+    device.tier = "lab-validated";
+    expect(() => validateDiscoveredManifest(manifest)).toThrow(
+      /installer-ineligible/,
+    );
+  });
+});
+
+describe("Android hardware inventory", () => {
+  it("rejects duplicate codenames and blocked installer targets", () => {
+    expect(() =>
+      parseHardwareTargets({
+        schemaVersion: 1,
+        targets: [
+          {
+            targetId: "one",
+            codenames: ["tegu"],
+            sourceStatus: "pinned",
+            installerEligible: false,
+          },
+          {
+            targetId: "two",
+            codenames: ["tegu"],
+            sourceStatus: "blocked",
+            installerEligible: true,
+          },
+        ],
+      }),
+    ).toThrow("invalid target");
   });
 });
 

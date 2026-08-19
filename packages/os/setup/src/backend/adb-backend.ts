@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
+import hardwareInventory from "../../../android/hardware-targets.json";
 import type {
   AndroidReleaseManifest,
   AospBuild,
@@ -25,12 +26,83 @@ import type {
 // Supported elizaOS device codenames
 // ---------------------------------------------------------------------------
 
-const ELIZAOS_SUPPORTED_CODENAMES = new Set([
-  "caiman", // Pixel 9 Pro XL
-  "komodo", // Pixel 9 Pro
-  "tokay", // Pixel 9
-  "bluejay", // Pixel 6a
-]);
+interface HardwareTarget {
+  targetId: string;
+  codenames: string[];
+  sourceStatus: "pinned" | "blocked";
+  installerEligible: boolean;
+  productName?: string;
+  expectedFingerprintPrefix?: string;
+}
+
+export function parseHardwareTargets(value: unknown): HardwareTarget[] {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    !Array.isArray(value.targets) ||
+    value.targets.length === 0
+  ) {
+    throw new Error("Android hardware inventory is invalid.");
+  }
+  const targetIds = new Set<string>();
+  const codenames = new Set<string>();
+  const targets: HardwareTarget[] = [];
+  for (const candidate of value.targets) {
+    if (
+      !isRecord(candidate) ||
+      typeof candidate.targetId !== "string" ||
+      !/^[A-Za-z0-9._-]+$/.test(candidate.targetId) ||
+      targetIds.has(candidate.targetId) ||
+      !Array.isArray(candidate.codenames) ||
+      candidate.codenames.length === 0 ||
+      new Set(candidate.codenames).size !== candidate.codenames.length ||
+      candidate.codenames.some(
+        (codename) =>
+          typeof codename !== "string" ||
+          !/^[A-Za-z0-9._-]+$/.test(codename) ||
+          codenames.has(codename),
+      ) ||
+      !["pinned", "blocked"].includes(String(candidate.sourceStatus)) ||
+      typeof candidate.installerEligible !== "boolean" ||
+      (candidate.installerEligible && candidate.sourceStatus !== "pinned") ||
+      (candidate.sourceStatus === "pinned" &&
+        (typeof candidate.productName !== "string" ||
+          !/^[A-Za-z0-9._-]+$/.test(candidate.productName) ||
+          typeof candidate.expectedFingerprintPrefix !== "string" ||
+          !candidate.expectedFingerprintPrefix.endsWith(":")))
+    ) {
+      throw new Error("Android hardware inventory contains an invalid target.");
+    }
+    targetIds.add(candidate.targetId);
+    for (const codename of candidate.codenames as string[]) {
+      codenames.add(codename);
+    }
+    targets.push(candidate as unknown as HardwareTarget);
+  }
+  return targets;
+}
+
+const HARDWARE_TARGETS = parseHardwareTargets(hardwareInventory);
+const HARDWARE_TARGETS_BY_ID = new Map(
+  HARDWARE_TARGETS.map((target) => [target.targetId, target]),
+);
+const REQUIRED_VALIDATION_TOKENS = [
+  "pm path",
+  "cmd role holders",
+  "foreground",
+  "service",
+  "/api/health",
+  "logcat",
+  "selinux",
+] as const;
+
+function eligibleTargetForCodename(
+  codename: string,
+): HardwareTarget | undefined {
+  return HARDWARE_TARGETS.find(
+    (target) => target.installerEligible && target.codenames.includes(codename),
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Workspace paths — never hardcode /tmp; use os.tmpdir()
@@ -101,6 +173,8 @@ export function validateDiscoveredManifest(
   for (const device of value.supportedDevices) {
     if (
       !isRecord(device) ||
+      typeof device.targetId !== "string" ||
+      !/^[A-Za-z0-9._-]+$/.test(device.targetId) ||
       typeof device.codename !== "string" ||
       !/^[A-Za-z0-9._-]+$/.test(device.codename) ||
       !["lab-validated", "candidate", "manual", "blocked"].includes(
@@ -113,6 +187,27 @@ export function validateDiscoveredManifest(
       typeof device.rollbackSupported !== "boolean"
     ) {
       throw new Error("Android manifest contains an invalid supported device.");
+    }
+    const inventoryTarget = HARDWARE_TARGETS_BY_ID.get(device.targetId);
+    if (!inventoryTarget?.codenames.includes(device.codename)) {
+      throw new Error(
+        "Android manifest device does not match the repository hardware inventory.",
+      );
+    }
+    if (device.tier === "lab-validated" && !inventoryTarget.installerEligible) {
+      throw new Error(
+        "Android manifest cannot promote an installer-ineligible hardware target.",
+      );
+    }
+    if (
+      inventoryTarget.expectedFingerprintPrefix &&
+      !value.buildFingerprint.startsWith(
+        inventoryTarget.expectedFingerprintPrefix,
+      )
+    ) {
+      throw new Error(
+        "Android manifest fingerprint does not match the repository hardware inventory.",
+      );
     }
   }
   if (!Array.isArray(value.artifacts) || !value.artifacts.length) {
@@ -152,6 +247,42 @@ export function validateDiscoveredManifest(
   if (!isRecord(value.validation) || !isRecord(value.rollback)) {
     throw new Error(
       "Android manifest validation or rollback contract is missing.",
+    );
+  }
+  const validation = value.validation;
+  const rollback = value.rollback;
+  for (const device of value.supportedDevices) {
+    if (!isRecord(device)) continue;
+    const inventoryTarget = HARDWARE_TARGETS_BY_ID.get(String(device.targetId));
+    if (
+      inventoryTarget?.expectedFingerprintPrefix &&
+      validation.expectedFingerprintPrefix !==
+        inventoryTarget.expectedFingerprintPrefix
+    ) {
+      throw new Error(
+        "Android manifest fingerprint does not match the repository hardware inventory.",
+      );
+    }
+  }
+  const validationTokens = Array.isArray(validation.requiredValidationTokens)
+    ? validation.requiredValidationTokens
+    : null;
+  if (
+    !Number.isSafeInteger(validation.bootTimeoutSeconds) ||
+    Number(validation.bootTimeoutSeconds) < 30 ||
+    !isRecord(validation.properties) ||
+    validationTokens === null ||
+    new Set(validationTokens).size !== validationTokens.length ||
+    !REQUIRED_VALIDATION_TOKENS.every((token) =>
+      validationTokens.includes(token),
+    ) ||
+    typeof rollback.previousReleaseId !== "string" ||
+    rollback.previousReleaseId.length === 0 ||
+    typeof rollback.notes !== "string" ||
+    rollback.notes.length === 0
+  ) {
+    throw new Error(
+      "Android manifest runtime validation or rollback evidence is incomplete.",
     );
   }
   return value as unknown as AndroidReleaseManifest;
@@ -396,6 +527,17 @@ export class AdbFlasherBackend implements AospFlasherBackend {
           if (parsed) codename = parsed;
         }
       } else if (state === "bootloader") {
+        const productResult = run(this.fastboot, [
+          "-s",
+          raw_.serial,
+          "getvar",
+          "product",
+        ]);
+        const productOutput = productResult.stdout + productResult.stderr;
+        const product = productOutput.match(
+          /(?:^|\n)product:\s*([^\s]+)/i,
+        )?.[1];
+        if (product) codename = product;
         const unlockResult = run(this.fastboot, [
           "-s",
           raw_.serial,
@@ -468,7 +610,7 @@ export class AdbFlasherBackend implements AospFlasherBackend {
     }
 
     const supportedByElizaOs =
-      codename !== "" && ELIZAOS_SUPPORTED_CODENAMES.has(codename);
+      codename !== "" && eligibleTargetForCodename(codename) !== undefined;
 
     return {
       storageAvailableBytes,
@@ -542,7 +684,8 @@ export class AdbFlasherBackend implements AospFlasherBackend {
         const supportedDevice = manifest.supportedDevices.find(
           (device) =>
             device.tier === "lab-validated" &&
-            ELIZAOS_SUPPORTED_CODENAMES.has(device.codename),
+            HARDWARE_TARGETS_BY_ID.get(device.targetId)?.installerEligible ===
+              true,
         );
         if (!supportedDevice) continue;
 
@@ -577,6 +720,7 @@ export class AdbFlasherBackend implements AospFlasherBackend {
                 : "beta"
               : "stable",
           targetDevice: supportedDevice.codename,
+          targetId: supportedDevice.targetId,
           architecture: "arm64-v8a",
           publishedAt: manifest.generatedAt,
           manifestUrl: asset.browser_download_url,
@@ -616,6 +760,16 @@ export class AdbFlasherBackend implements AospFlasherBackend {
 
     // Carry wipeData through on the build so the flash step preview reflects it.
     const build: AospBuild = { ...baseBuild, wipeData: request.wipeData };
+    const inventoryTarget = HARDWARE_TARGETS_BY_ID.get(build.targetId);
+    if (
+      !inventoryTarget?.installerEligible ||
+      !inventoryTarget.codenames.includes(device.codename) ||
+      build.targetDevice !== device.codename
+    ) {
+      throw new Error(
+        `Build ${build.id} is not authorized for connected device ${device.codename}.`,
+      );
+    }
 
     const artifactDir = build.artifactDir ?? null;
     const serial = request.deviceSerial;

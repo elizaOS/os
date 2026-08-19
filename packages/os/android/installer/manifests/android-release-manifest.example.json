@@ -2,12 +2,13 @@
   "schemaVersion": 1,
   "releaseId": "elizaos-android-example-2026.05.0",
   "generatedAt": "2026-05-15T00:00:00Z",
-  "buildFingerprint": "elizaos/caiman/caiman:16/example:userdebug/test-keys",
+  "buildFingerprint": "elizaOS/eliza_tegu_phone/tegu:15/example:userdebug/test-keys",
   "buildType": "userdebug",
   "supportedDevices": [
     {
-      "codename": "caiman",
-      "marketingName": "Pixel 9 Pro",
+      "targetId": "pixel9a-tegu",
+      "codename": "tegu",
+      "marketingName": "Pixel 9a",
       "tier": "candidate",
       "slots": ["a", "b"],
       "dynamicPartitions": true,
@@ -43,9 +44,9 @@
   ],
   "validation": {
     "bootTimeoutSeconds": 300,
-    "expectedFingerprintPrefix": "elizaos/caiman/caiman:",
+    "expectedFingerprintPrefix": "elizaOS/eliza_tegu_phone/tegu:",
     "properties": {
-      "ro.product.device": "caiman",
+      "ro.product.device": "tegu",
       "sys.boot_completed": "1",
       "pm_path": "package:/system/priv-app/Eliza/Eliza.apk",
       "home_role": "ai.elizaos.app",

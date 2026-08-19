@@ -32,16 +32,20 @@ requirement even when their retail model name matches a supported device.
 - **Cuttlefish:** checked-in x86_64, arm64, and riscv64 product definitions are
   emulator targets. Release support still requires a completed build and boot
   validation run for the exact source revisions.
-- **Pixel:** blocked. The locked public AOSP checkout does not contain Pixel
-  device projects, and physical builds also require separately licensed vendor
-  binaries. The product menu intentionally advertises no Pixel lunch target
-  until those inputs are pinned and a real device build boots.
+- **Pixel 9a (`tegu`):** source-pinned candidate. The Android 15 manifest,
+  Pixel device/kernel projects, and exact separately licensed Google vendor
+  archive are pinned by `pixel9a.lock.json`; the `eliza_tegu_phone` lunch target
+  is checked in. Installer eligibility remains blocked until a retained build,
+  flash, post-boot validation, and rollback evidence bundle passes on hardware.
 - **Light Phone III (`TLP301`):** Eliza's application repository has a direct
-  debug APK policy for this device, but this OS repository has no Light Phone
-  III AOSP device tree, vendor-blob manifest, kernel/boot image contract, or
-  validated unlock/flash/rollback procedure. It is therefore not an elizaOS
-  image target yet. `tegu` is the Pixel 9a target and must not be treated as a
-  Light Phone codename.
+  debug APK policy for this device. Light's official `light-sdk` now provides
+  a sandboxed LightOS tool/application surface and emulator, but it is not a
+  bootable LightOS/AOSP source, signing, or flash contract. This OS repository
+  still has no Light Phone III device tree, vendor-blob manifest, kernel/boot
+  image contract, or validated unlock/flash/rollback procedure. It is not an
+  elizaOS image target yet. `tegu` is the Pixel 9a target and must not be
+  treated as a Light Phone codename. The authoritative-source audit date and
+  links live in `hardware-targets.json`.
 
 ## Manifest Entries
 
@@ -49,8 +53,9 @@ Each release manifest should include one entry per supported codename:
 
 ```json
 {
-  "codename": "caiman",
-  "marketingName": "Pixel 9 Pro",
+  "targetId": "pixel9a-tegu",
+  "codename": "tegu",
+  "marketingName": "Pixel 9a",
   "tier": "candidate",
   "slots": ["a", "b"],
   "dynamicPartitions": true,

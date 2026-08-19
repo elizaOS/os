@@ -18,7 +18,13 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { assertPinnedAospCheckout } from "./bootstrap-aosp.mjs";
+import {
+  aospLockPath,
+  assertExtractedVendorTree,
+  assertPinnedAospCheckout,
+  loadAospLock,
+  verifyProprietaryArchive,
+} from "./bootstrap-aosp.mjs";
 import { loadBrandFromArgv } from "./brand-config.mjs";
 import { main as syncToAospMain } from "./sync-to-aosp.mjs";
 import { main as validateMain } from "./validate.mjs";
@@ -69,7 +75,11 @@ export function parseSubArgs(argv) {
       args.aospRoot = path.resolve(readFlagValue(arg, i));
       i += 1;
     } else if (arg === "--jobs" || arg === "-j") {
-      args.jobs = Number.parseInt(readFlagValue(arg, i), 10);
+      const value = readFlagValue(arg, i);
+      if (!/^\d+$/.test(value)) {
+        throw new Error("--jobs must be an integer from 1 through 256");
+      }
+      args.jobs = Number(value);
       i += 1;
     } else if (arg === "--source-vendor") {
       args.sourceVendor = path.resolve(readFlagValue(arg, i));
@@ -101,8 +111,8 @@ export function parseSubArgs(argv) {
   if (!args.aospRoot) {
     throw new Error("--aosp-root is required");
   }
-  if (!Number.isFinite(args.jobs) || args.jobs <= 0) {
-    throw new Error("--jobs must be a positive integer");
+  if (!Number.isSafeInteger(args.jobs) || args.jobs < 1 || args.jobs > 256) {
+    throw new Error("--jobs must be an integer from 1 through 256");
   }
   return args;
 }
@@ -230,7 +240,21 @@ export async function main(argv = process.argv.slice(2)) {
   const args = parseSubArgs(remaining);
   assertBuildHost({ brand, launch: args.launch });
   assertAospRoot(args.aospRoot);
-  assertPinnedAospCheckout(args.aospRoot);
+  const selectedLockPath = brand.aospLockPath
+    ? path.resolve(repoRoot, brand.aospLockPath)
+    : aospLockPath;
+  const lock = loadAospLock(selectedLockPath);
+  assertPinnedAospCheckout(args.aospRoot, lock);
+  if (lock.proprietaryArchive) {
+    const archivePath = process.env.ELIZA_PIXEL_VENDOR_ARCHIVE;
+    if (!archivePath) {
+      throw new Error(
+        "ELIZA_PIXEL_VENDOR_ARCHIVE must point to the licensed vendor archive for this hardware target.",
+      );
+    }
+    await verifyProprietaryArchive(lock, archivePath);
+    assertExtractedVendorTree(args.aospRoot, lock);
+  }
 
   const brandConfigArgs = ["--brand-config", brand.brandConfigPath];
 

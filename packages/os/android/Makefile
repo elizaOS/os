@@ -54,9 +54,9 @@ DEVICE_DIR_arm64   := vsoc_arm64
 DEVICE_DIR_riscv64 := vsoc_riscv64
 DEVICE_DIR := $(DEVICE_DIR_$(ARCH))
 
-INFERENCE_TARGETS_x86_64 := android-arm64-vulkan-fused android-x86_64-cpu-fused
-INFERENCE_TARGETS_arm64 := android-arm64-vulkan-fused
-INFERENCE_TARGETS_riscv64 := android-arm64-vulkan-fused android-riscv64-cpu-fused
+INFERENCE_TARGETS_x86_64 := android-arm64-cpu-fused android-x86_64-cpu-fused
+INFERENCE_TARGETS_arm64 := android-arm64-cpu-fused
+INFERENCE_TARGETS_riscv64 := android-arm64-cpu-fused android-riscv64-cpu-fused
 INFERENCE_TARGETS := $(INFERENCE_TARGETS_$(ARCH))
 
 .PHONY: help bootstrap provision-repo build native-inference sim splash bootanimation check-arch
@@ -82,10 +82,11 @@ bootstrap: provision-repo
 	node $(DISTRO)/bootstrap-aosp.mjs --repo-bin "$(REPO_LAUNCHER)" --aosp-root $(AOSP_ROOT) --jobs $(or $(JOBS),$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1))
 
 build: check-arch native-inference
-	ELIZAOS_ELIZA_ROOT="$(ELIZAOS_ELIZA_ROOT)" ELIZA_MTP_ANDROID_LIBDIR="$(ANDROID_AGENT_ASSETS)/arm64-v8a" ELIZA_MTP_ANDROID_LIBDIR_X86_64="$(ANDROID_AGENT_ASSETS)/x86_64" ELIZA_MTP_ANDROID_LIBDIR_RISCV64="$(ANDROID_AGENT_ASSETS)/riscv64" $(if $(filter riscv64,$(ARCH)),,ELIZA_BUN_RISCV64_OPTIONAL=1) node $(DISTRO)/build-aosp.mjs --brand-config $(BRAND_CONFIG) --aosp-root $(AOSP_ROOT) --rebuild-privileged-apk --launch --boot-validate $(ARGS)
+	ELIZAOS_ELIZA_ROOT="$(ELIZAOS_ELIZA_ROOT)" $(if $(filter riscv64,$(ARCH)),,ELIZA_BUN_RISCV64_OPTIONAL=1) node $(DISTRO)/build-aosp.mjs --brand-config $(BRAND_CONFIG) --aosp-root $(AOSP_ROOT) --rebuild-privileged-apk --launch --boot-validate $(ARGS)
 
 native-inference: check-arch
 	cd "$(ELIZAOS_ELIZA_ROOT)" && node packages/app-core/scripts/aosp/compile-libllama.mjs --assets-dir "$(ANDROID_AGENT_ASSETS)" $(foreach target,$(INFERENCE_TARGETS),--target $(target))
+	cd "$(ELIZAOS_ELIZA_ROOT)" && node packages/app-core/scripts/stage-elizavoice-lib.mjs --abi arm64-v8a --variant cpu
 
 sim: check-arch
 	node $(DISTRO)/sim.mjs --brand-config $(BRAND_CONFIG) --device-dir $(DEVICE_DIR) --aosp-root $(AOSP_ROOT) $(ARGS)

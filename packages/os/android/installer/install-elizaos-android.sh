@@ -56,10 +56,10 @@ Execution options:
 
 Examples:
   android/installer/install-elizaos-android.sh \
-    --artifact-dir out/target/product/caiman
+    --artifact-dir out/target/product/eliza_tegu_phone
 
   android/installer/install-elizaos-android.sh \
-    --device ABC123 --artifact-dir out/target/product/caiman \
+    --device ABC123 --artifact-dir out/target/product/eliza_tegu_phone \
     --execute --confirm-flash --reboot-after-flash
 EOF
 }

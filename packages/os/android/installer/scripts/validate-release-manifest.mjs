@@ -1,11 +1,32 @@
 #!/usr/bin/env node
 // Validates Android release manifests before installer artifacts are shipped.
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 
 const args = process.argv.slice(2);
 const DEFAULT_ARTIFACT_DIR = "release/android/partitions";
+const hardwareInventory = readJson(
+  new URL("../../hardware-targets.json", import.meta.url),
+);
+const hardwareTargetsById = new Map(
+  (hardwareInventory.targets ?? []).map((target) => [target.targetId, target]),
+);
+const REQUIRED_VALIDATION_TOKENS = [
+  "pm path",
+  "cmd role holders",
+  "foreground",
+  "service",
+  "/api/health",
+  "logcat",
+  "selinux",
+];
 
 function usage() {
   console.log(`Usage:
@@ -97,7 +118,11 @@ function releaseArtifactInstructions(
       /^[a-z0-9_]+$/.test(String(candidate.codename ?? "")),
   );
   const codename = String(device?.codename ?? "DEVICE_CODENAME");
-  const productName = `eliza_${codename}_phone`;
+  const inventoryTarget = hardwareTargetsById.get(device?.targetId);
+  const productName =
+    typeof inventoryTarget?.productName === "string"
+      ? inventoryTarget.productName
+      : `eliza_${codename}_phone`;
   const productOut = `$AOSP_WORKSPACE/out/target/product/${productName}`;
   const copyCommands = requiredFiles.map(
     (filename) => `cp "${productOut}/${filename}" "${stageDir}/${filename}"`,
@@ -105,8 +130,11 @@ function releaseArtifactInstructions(
   return {
     applies_to: productName,
     build_commands: [],
-    blocked_reason:
-      "No physical-device product is checked in. Pin a compatible device tree, kernel/vendor inputs, and licensed binaries before producing release artifacts.",
+    blocked_reason: inventoryTarget?.installerEligible
+      ? null
+      : Array.isArray(inventoryTarget?.blockedReasons)
+        ? inventoryTarget.blockedReasons.join(" ")
+        : "The hardware target is not installer-eligible in packages/os/android/hardware-targets.json.",
     stage_commands: [`mkdir -p "${stageDir}"`, ...copyCommands],
     manifest_update_commands: [
       `stat -c '%n %s' "${stageDir}"/*.img`,
@@ -117,7 +145,7 @@ function releaseArtifactInstructions(
       `node packages/os/android/installer/scripts/validate-release-manifest.mjs "${manifestPath}" --artifact-dir "${stageDir}" --write-evidence evidence/android-partition-artifacts-integrity.json`,
     ],
     provenance_requirements: [
-      "AOSP workspace path and packages/os/android/aosp.lock.json digest",
+      `AOSP workspace path and ${inventoryTarget?.aospLockPath ?? "the selected AOSP lock"} digest`,
       `lunch target ${productName}-trunk_staging-userdebug`,
       "elizaOS/eliza source commit used for the retained application",
       "product_out_dir used as source for staged images",
@@ -190,6 +218,39 @@ function validateManifest(manifest, { allowPlaceholders = false } = {}) {
       expect(isObject(device), errors, path, "must be an object");
       if (!isObject(device)) return;
       expect(
+        typeof device.targetId === "string" &&
+          /^[a-zA-Z0-9._-]+$/.test(device.targetId),
+        errors,
+        `${path}.targetId`,
+        "must be a stable hardware target id",
+      );
+      const inventoryTarget = hardwareTargetsById.get(device.targetId);
+      expect(
+        isObject(inventoryTarget) &&
+          Array.isArray(inventoryTarget.codenames) &&
+          inventoryTarget.codenames.includes(device.codename),
+        errors,
+        `${path}.targetId`,
+        "must map this codename in packages/os/android/hardware-targets.json",
+      );
+      if (typeof inventoryTarget?.expectedFingerprintPrefix === "string") {
+        expect(
+          manifest.buildFingerprint.startsWith(
+            inventoryTarget.expectedFingerprintPrefix,
+          ),
+          errors,
+          "$.buildFingerprint",
+          `must start with ${inventoryTarget.expectedFingerprintPrefix}`,
+        );
+        expect(
+          manifest.validation?.expectedFingerprintPrefix ===
+            inventoryTarget.expectedFingerprintPrefix,
+          errors,
+          "$.validation.expectedFingerprintPrefix",
+          `must equal ${inventoryTarget.expectedFingerprintPrefix}`,
+        );
+      }
+      expect(
         typeof device.codename === "string" &&
           /^[a-zA-Z0-9._-]+$/.test(device.codename),
         errors,
@@ -205,6 +266,14 @@ function validateManifest(manifest, { allowPlaceholders = false } = {}) {
         `${path}.tier`,
         "must be lab-validated, candidate, manual, or blocked",
       );
+      if (device.tier === "lab-validated") {
+        expect(
+          inventoryTarget?.installerEligible === true,
+          errors,
+          `${path}.tier`,
+          "cannot be lab-validated while this target is installer-ineligible in packages/os/android/hardware-targets.json",
+        );
+      }
       expect(
         Array.isArray(device.slots) && device.slots.length > 0,
         errors,
@@ -267,6 +336,13 @@ function validateManifest(manifest, { allowPlaceholders = false } = {}) {
         errors,
         `${path}.filename`,
         "must be a local .img filename",
+      );
+      expect(
+        typeof artifact.partition !== "string" ||
+          artifact.filename === `${artifact.partition}.img`,
+        errors,
+        `${path}.filename`,
+        "must use the canonical <partition>.img filename so the installer flashes the validated bytes",
       );
       expect(
         typeof artifact.sha256 === "string" &&
@@ -343,6 +419,51 @@ function validateManifest(manifest, { allowPlaceholders = false } = {}) {
         );
       });
     }
+    expect(
+      Array.isArray(manifest.validation.requiredValidationTokens) &&
+        manifest.validation.requiredValidationTokens.length > 0 &&
+        new Set(manifest.validation.requiredValidationTokens).size ===
+          manifest.validation.requiredValidationTokens.length &&
+        manifest.validation.requiredValidationTokens.every(
+          (token) => typeof token === "string" && token.length > 0,
+        ),
+      errors,
+      "$.validation.requiredValidationTokens",
+      "must be a non-empty unique string array",
+    );
+    if (Array.isArray(manifest.validation.requiredValidationTokens)) {
+      for (const token of REQUIRED_VALIDATION_TOKENS) {
+        expect(
+          manifest.validation.requiredValidationTokens.includes(token),
+          errors,
+          "$.validation.requiredValidationTokens",
+          `must include ${JSON.stringify(token)}`,
+        );
+      }
+    }
+  }
+
+  expect(
+    isObject(manifest.rollback),
+    errors,
+    "$.rollback",
+    "must be an object",
+  );
+  if (isObject(manifest.rollback)) {
+    expect(
+      typeof manifest.rollback.previousReleaseId === "string" &&
+        manifest.rollback.previousReleaseId.length > 0,
+      errors,
+      "$.rollback.previousReleaseId",
+      "must identify a retained known-good release",
+    );
+    expect(
+      typeof manifest.rollback.notes === "string" &&
+        manifest.rollback.notes.length > 0,
+      errors,
+      "$.rollback.notes",
+      "must describe the rollback procedure or retained artifacts",
+    );
   }
 
   return errors;
@@ -398,6 +519,30 @@ function validateArtifacts(
   manifestPath = "MANIFEST.json",
 ) {
   const errors = [];
+  if (artifactDir) {
+    const declaredImages = new Set(
+      (manifest.artifacts ?? [])
+        .map((artifact) => artifact?.filename)
+        .filter((filename) => typeof filename === "string"),
+    );
+    let directoryEntries = [];
+    try {
+      directoryEntries = readdirSync(artifactDir);
+    } catch (error) {
+      errors.push(
+        `${artifactDir}: cannot read artifact directory: ${error.message}`,
+      );
+    }
+    for (const filename of directoryEntries.filter((entry) =>
+      entry.endsWith(".img"),
+    )) {
+      if (!declaredImages.has(filename)) {
+        errors.push(
+          `${join(artifactDir, filename)}: image is not declared by the release manifest`,
+        );
+      }
+    }
+  }
   for (const artifact of inspectArtifacts(manifest, artifactDir)) {
     if (artifact.status === "missing") {
       errors.push(`${artifact.path}: artifact file not found`);

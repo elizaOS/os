@@ -1,17 +1,23 @@
 /** Verifies Android build-host and clean-checkout front-door contracts. */
 
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  loadPhysicalTargetContract,
   parseArgs as parseDeployArgs,
   resolveBuiltPrivilegedApk,
 } from "../../../../scripts/aosp/deploy-pixel.mjs";
 import { parseSmokeArgs } from "../../../../scripts/aosp/smoke-cuttlefish.mjs";
 import {
+  assertExtractedVendorTree,
   loadAospLock,
   parseBootstrapArgs,
+  verifyProprietaryArchive,
 } from "../../../../scripts/distro-android/bootstrap-aosp.mjs";
 import { assertBuildHost } from "../../../../scripts/distro-android/build-aosp.mjs";
 
@@ -30,16 +36,16 @@ describe("AOSP build contracts", () => {
     expect(makefile).toContain("native-inference");
     expect(makefile).toContain("$(HERE)/../../..");
     expect(makefile).not.toContain("$(HERE)/../../../..");
-    expect(makefile).toContain("android-arm64-vulkan-fused");
+    expect(makefile).toContain("android-arm64-cpu-fused");
+    expect(makefile).not.toContain("android-arm64-vulkan-fused");
     expect(makefile).toContain("android-x86_64-cpu-fused");
     expect(makefile).toContain("android-riscv64-cpu-fused");
     expect(makefile).toContain("--assets-dir");
     expect(makefile).toContain("bootstrap-aosp.mjs");
     expect(makefile).toContain("provision-repo.sh");
     expect(makefile).toContain('--repo-bin "$(REPO_LAUNCHER)"');
-    expect(makefile).toContain("ELIZA_MTP_ANDROID_LIBDIR");
-    expect(makefile).toContain("ELIZA_MTP_ANDROID_LIBDIR_X86_64");
-    expect(makefile).toContain("ELIZA_MTP_ANDROID_LIBDIR_RISCV64");
+    expect(makefile).toContain("stage-elizavoice-lib.mjs");
+    expect(makefile).not.toContain("ELIZA_MTP_ANDROID_LIBDIR");
   });
 
   test("the full AOSP checkout has an immutable bootstrap lock", () => {
@@ -68,6 +74,9 @@ describe("AOSP build contracts", () => {
     });
     expect(() =>
       parseBootstrapArgs(["--aosp-root", "/tmp/aosp", "--jobs", "0"]),
+    ).toThrow("--jobs must be an integer from 1 through 256");
+    expect(() =>
+      parseBootstrapArgs(["--aosp-root", "/tmp/aosp", "--jobs", "2x"]),
     ).toThrow("--jobs must be a positive integer");
 
     const repoProvisioner = readFileSync(
@@ -80,6 +89,42 @@ describe("AOSP build contracts", () => {
     expect(repoProvisioner).toContain(
       'repo_sha256="1211b57b57e4122a9c546295a59b37d24068f1164d0e87bef096d5323c413e4f"',
     );
+  });
+
+  test("licensed Pixel vendor inputs are verified by bytes, digest, and extraction", async () => {
+    const root = await mkdtemp(join(tmpdir(), "elizaos-pixel-contract-"));
+    try {
+      const bytes = Buffer.from("licensed vendor fixture");
+      const filename = "vendor-fixture.tgz";
+      const archivePath = join(root, filename);
+      await writeFile(archivePath, bytes);
+      const requiredPath = "vendor/google_devices/tegu/Android.bp";
+      const lock = {
+        proprietaryArchive: {
+          filename,
+          sizeBytes: bytes.byteLength,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+          requiredExtractedFiles: [requiredPath],
+        },
+      };
+
+      await expect(
+        verifyProprietaryArchive(lock, archivePath),
+      ).resolves.toMatchObject({
+        sizeBytes: bytes.byteLength,
+        sha256: lock.proprietaryArchive.sha256,
+      });
+      expect(() => assertExtractedVendorTree(root, lock)).toThrow(
+        "licensed vendor extraction is incomplete",
+      );
+      await mkdir(join(root, "vendor/google_devices/tegu"), {
+        recursive: true,
+      });
+      await writeFile(join(root, requiredPath), "// fixture");
+      expect(assertExtractedVendorTree(root, lock)).toEqual([requiredPath]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test("the AOSP product does not ship the unwired SystemUI bridge scaffold", () => {
@@ -116,7 +161,7 @@ describe("AOSP build contracts", () => {
     );
   });
 
-  test("the product menu excludes external device trees that are not owned here", () => {
+  test("the product menu exposes only source-pinned physical targets", () => {
     const products = readFileSync(
       join(
         repositoryRoot,
@@ -130,10 +175,71 @@ describe("AOSP build contracts", () => {
       "panther",
       "shiba",
       "caiman",
-      "tegu",
     ]) {
       expect(products).not.toContain(absentTarget);
     }
+    expect(products).toContain("eliza_tegu_phone");
+    expect(
+      existsSync(join(repositoryRoot, "packages/os/android/pixel9a.lock.json")),
+    ).toBe(true);
+    const inventory = JSON.parse(
+      readFileSync(
+        join(repositoryRoot, "packages/os/android/hardware-targets.json"),
+        "utf8",
+      ),
+    ) as {
+      targets: Array<{
+        targetId: string;
+        sourceStatus: string;
+        installerEligible: boolean;
+      }>;
+    };
+    expect(inventory.targets).toContainEqual(
+      expect.objectContaining({
+        targetId: "pixel9a-tegu",
+        sourceStatus: "pinned",
+        installerEligible: false,
+      }),
+    );
+    const pixelLock = JSON.parse(
+      readFileSync(
+        join(repositoryRoot, "packages/os/android/pixel9a.lock.json"),
+        "utf8",
+      ),
+    ) as {
+      device: {
+        productBrand: string;
+        productName: string;
+        codename: string;
+        expectedFingerprintPrefix: string;
+      };
+    };
+    const pixelProduct = readFileSync(
+      join(
+        repositoryRoot,
+        "packages/os/android/vendor/eliza/products/eliza_tegu_phone.mk",
+      ),
+      "utf8",
+    );
+    const commonProduct = readFileSync(
+      join(repositoryRoot, "packages/os/android/vendor/eliza/eliza_common.mk"),
+      "utf8",
+    );
+    expect(pixelProduct).toContain(
+      `PRODUCT_NAME := ${pixelLock.device.productName}`,
+    );
+    expect(pixelProduct).toContain(
+      `PRODUCT_DEVICE := ${pixelLock.device.codename}`,
+    );
+    expect(commonProduct).toContain(
+      `PRODUCT_BRAND := ${pixelLock.device.productBrand}`,
+    );
+    expect(commonProduct).toContain("PRODUCT_MANUFACTURER := elizaOS");
+    expect(pixelProduct).not.toContain("PRODUCT_BRAND :=");
+    expect(pixelProduct).not.toContain("PRODUCT_MANUFACTURER :=");
+    expect(pixelLock.device.expectedFingerprintPrefix).toBe(
+      `${pixelLock.device.productBrand}/${pixelLock.device.productName}/${pixelLock.device.codename}:`,
+    );
     expect(
       existsSync(
         join(repositoryRoot, "scripts/distro-android/brand.openagent.json"),
@@ -164,11 +270,33 @@ describe("AOSP build contracts", () => {
     expect(deploySource).not.toContain('"--skip-libllama", // step 1');
     expect(deploySource).not.toContain('aospArgs.push("--app-config"');
     expect(deploySource).toContain('"--brand-config"');
-    expect(deploySource).toContain('"android-arm64-vulkan-fused"');
+    expect(deploySource).toContain('"android-arm64-cpu-fused"');
+    expect(deploySource).not.toContain('"android-arm64-vulkan-fused"');
     expect(deploySource).toContain("ELIZA_BUN_RISCV64_OPTIONAL");
-    expect(deploySource).toContain("ELIZA_MTP_ANDROID_LIBDIR");
-    expect(deploySource).toContain("ELIZA_MTP_ANDROID_LIBDIR_X86_64");
-    expect(deploySource).toContain("ELIZA_MTP_ANDROID_LIBDIR_RISCV64");
+    expect(deploySource).toContain("stage-elizavoice-lib.mjs");
+    expect(deploySource).not.toContain("ELIZA_MTP_ANDROID_LIBDIR");
+    expect(deploySource).toContain("/api/asr/local-inference");
+    expect(deploySource).toContain("/api/tts/local-inference");
+    expect(deploySource).toContain('a === "--voice-only"');
+    expect(deploySource).toContain('["forward", "tcp:0", "tcp:31337"]');
+    expect(deploySource).not.toContain("/api/local-inference/voice-smoke");
+
+    expect(
+      loadPhysicalTargetContract(
+        { aospLockPath: "packages/os/android/pixel9a.lock.json" },
+        repositoryRoot,
+      ),
+    ).toMatchObject({
+      targetId: "pixel9a-tegu",
+      codename: "tegu",
+      expectedFingerprintPrefix: "elizaOS/eliza_tegu_phone/tegu:",
+    });
+    expect(() =>
+      loadPhysicalTargetContract(
+        { aospLockPath: "../outside.json" },
+        repositoryRoot,
+      ),
+    ).toThrow("physical target lock escapes");
   });
 
   test("device smoke accepts an OS-owned package identity", () => {
@@ -225,29 +353,33 @@ describe("AOSP build contracts", () => {
     );
     const appLock = JSON.parse(
       readFileSync(
-        join(
-          repositoryRoot,
-          "packages/os/linux/elizaos/app-source.lock.json",
-        ),
+        join(repositoryRoot, "packages/os/linux/elizaos/app-source.lock.json"),
         "utf8",
       ),
     ) as { commit: string };
 
     expect(workflow).toContain(`default: "${appLock.commit}"`);
     expect(workflow).toContain("Provision pinned Zig 0.13");
-    expect(workflow).toContain("ndk;29.0.13113456");
+    expect(workflow).toContain("ndk;28.2.13676358");
+    expect(workflow).toContain("cmake;3.22.1");
     expect(workflow).toContain(
       "d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea",
     );
+    expect(workflow).toContain("android-assistant-verify.mjs");
+    expect(workflow).toContain("Full-engine local ASR and TTS smoke");
+    expect(workflow).toContain("--voice-only");
+    expect(workflow).toContain("--require-device --json");
+    expect(workflow).toContain("android-assistant-ime-evidence");
     expect(workflow).toContain("Build fused Android inference libraries");
+    expect(workflow).toContain("Stage Android/bionic fused voice library");
+    expect(workflow).toContain("stage-elizavoice-lib.mjs");
     expect(workflow).toContain("Bootstrap pinned AOSP platform");
     expect(workflow).toContain("bootstrap-aosp.mjs");
     expect(workflow).toContain("Provision pinned AOSP repo launcher");
     expect(workflow).toContain("provision-repo.sh");
     expect(workflow).toContain("bun-riscv64-sha256");
     expect(workflow).toContain("ELIZA_BUN_RISCV64_OPTIONAL=1");
-    expect(workflow).toContain("ELIZA_MTP_ANDROID_LIBDIR_X86_64");
-    expect(workflow).toContain("ELIZA_MTP_ANDROID_LIBDIR_RISCV64");
+    expect(workflow).not.toContain("ELIZA_MTP_ANDROID_LIBDIR");
   });
 
   test("source-only AOSP builds do not require KVM", () => {

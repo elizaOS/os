@@ -23,10 +23,11 @@ android/
 ```
 
 The default brand shipped here is **eliza** (`vendor/eliza/`). The brand
-configs live at `scripts/distro-android/brand.eliza*.json` — one per
-arch (`brand.eliza.json` = x86_64, `brand.eliza-arm64.json`,
-`brand.eliza-riscv64.json`), all pointing at this package's
-`vendor/eliza/` overlay and the matching `eliza_cf_<arch>_phone` product.
+configs live at `scripts/distro-android/brand.eliza*.json`: the three
+Cuttlefish architectures (`brand.eliza.json` = x86_64,
+`brand.eliza-arm64.json`, `brand.eliza-riscv64.json`) plus the pinned Pixel 9a
+hardware target (`brand.eliza-tegu.json`). All point at this package's
+`vendor/eliza/` overlay and a matching product makefile.
 
 ## Emulator + build entry point
 
@@ -85,14 +86,49 @@ provisions and checksum-verifies it, while local builders must put Zig 0.13 on
 signs that input with the product platform certificate and writes the
 installable result to
 `$OUT_DIR/target/product/<product>/system/priv-app/Eliza/Eliza.apk` (with
-`$OUT_DIR` defaulting to `<aosp-root>/out`). The Pixel deployment helper only
-sideloads that exact product output; the raw `vendor/eliza/.../Eliza.apk`
-cannot be installed directly. A stock Pixel also will not accept an elizaOS
-platform-signed privileged package as a substitute for flashing the matching
-OS image. No Pixel product is advertised by this fork today: the locked public
-AOSP manifest omits the Pixel device projects, and Google requires separately
-licensed device binaries for hardware builds. Those inputs must be pinned and
-verified before a physical-device lunch target returns to `AndroidProducts.mk`.
+`$OUT_DIR` defaulting to `<aosp-root>/out`). The raw
+`vendor/eliza/.../Eliza.apk` cannot be installed directly. A stock Pixel also
+will not accept an elizaOS platform-signed privileged package as a substitute
+for flashing the matching OS image.
+
+### Pixel 9a (`tegu`) source and license boundary
+
+The physical-device product is `eliza_tegu_phone`, configured by
+`scripts/distro-android/brand.eliza-tegu.json`. Its source contract is
+`pixel9a.lock.json`: Android `android-15.0.0_r31`, build
+`BD4A.250505.003`, the exact public Pixel device/kernel project commits, and
+Google's matching separately licensed vendor archive. Bootstrap this target
+with its own lock rather than the default Cuttlefish lock:
+
+```bash
+node scripts/distro-android/bootstrap-aosp.mjs \
+  --lock packages/os/android/pixel9a.lock.json \
+  --aosp-root /path/to/aosp-tegu \
+  --repo-bin packages/os/android/cache/repo
+```
+
+Download the archive from the URL recorded in `pixel9a.lock.json`. It is a
+self-extracting agreement: a human authorized to accept Google's terms must run
+the enclosed `extract-google_devices-tegu.sh` interactively from the AOSP root.
+The repository never types `I ACCEPT`, bypasses, or persists acceptance on the
+operator's behalf. Preserve the downloaded `.tgz`; the build verifies its exact
+filename, byte length, and SHA-256 through `ELIZA_PIXEL_VENDOR_ARCHIVE`, then
+fails closed unless the locked vendor files are present:
+
+```bash
+ELIZAOS_ELIZA_ROOT=/path/to/eliza \
+ELIZA_PIXEL_VENDOR_ARCHIVE=/path/to/google_devices-tegu-bd4a.250505.003-9ab41e05.tgz \
+node scripts/distro-android/build-aosp.mjs \
+  --brand-config scripts/distro-android/brand.eliza-tegu.json \
+  --aosp-root /path/to/aosp-tegu \
+  --rebuild-privileged-apk
+```
+
+That command builds only on Linux x86_64. It does not make the target eligible
+for end-user installation: `hardware-targets.json` keeps Pixel 9a fail-closed
+until a retained build, explicit-confirmation flash, post-boot validation, and
+rollback evidence bundle passes on real hardware. Use the release-manifest
+installer for flashing; do not sideload the product APK onto stock Android.
 See the AOSP [source download requirements](https://source.android.com/docs/setup/download#obtaining-proprietary-binaries)
 and Google's [Pixel driver binaries](https://developers.google.com/android/drivers).
 

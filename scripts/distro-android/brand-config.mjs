@@ -112,6 +112,17 @@ export function loadBrandConfig(configPath) {
   parsed.initRcName = parsed.initRcName ?? `init.${parsed.brand}.rc`;
   parsed.vendorDir =
     parsed.vendorDir ?? `packages/os/android/vendor/${parsed.brand}`;
+  if (
+    parsed.aospLockPath !== undefined &&
+    (typeof parsed.aospLockPath !== "string" ||
+      parsed.aospLockPath.length === 0 ||
+      path.isAbsolute(parsed.aospLockPath) ||
+      parsed.aospLockPath.split(/[\\/]/).includes(".."))
+  ) {
+    throw new Error(
+      `Brand config ${resolved} has invalid repository-relative aospLockPath`,
+    );
+  }
   parsed.buildAndroidSystemCmd = parsed.buildAndroidSystemCmd ?? [
     "bun",
     "run",

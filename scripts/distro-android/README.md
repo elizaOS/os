@@ -26,6 +26,7 @@ and a corresponding **vendor tree** under `packages/os/android/vendor/<brand>/`.
   "classPrefix":   "Eliza",                  // Java class prefix (ElizaDialActivity, ElizaSmsReceiver, …)
   "productName":   "eliza_cf_x86_64_phone",  // Cuttlefish product name + makefile filename stem
   "lunchTarget":   "eliza_cf_x86_64_phone-trunk_staging-userdebug",
+  "aospLockPath":  "packages/os/android/pixel9a.lock.json", // optional per-target source lock
   "envPrefix":     "ELIZA",                  // env var prefix (ELIZA_PIXEL_CODENAME, ELIZA_AOSP_BUILD)
 
   // Optional — sensible defaults derived from `brand` if omitted
@@ -70,8 +71,7 @@ For `brand = "<brand>"`:
 │   └── privapp-permissions-<packageName>.xml             # privapp whitelist
 ├── products/
 │   ├── <brand>_cf_x86_64_phone.mk                        # Cuttlefish product
-│   ├── <brand>_pixel_phone.mk                            # Pixel template
-│   └── <brand>_<codename>_phone.mk                       # Per-device wrappers (oriole, panther, shiba, caiman, …)
+│   └── <brand>_<codename>_phone.mk                       # Source-pinned physical target
 └── sepolicy/
     ├── README.md
     ├── file_contexts                                     # Vendor file contexts (may be empty)
@@ -93,6 +93,12 @@ to the corresponding role intents.
 | `validate.mjs`            | Static validation of vendor tree + APK (xmllint, aapt) |
 | `boot-validate.mjs`       | adb checks against a booted device (roles, intents, package flags, logcat) |
 | `lint-init-rc.mjs`        | Brand-agnostic Android init.rc syntax checker |
+
+A physical-device brand config must set `aospLockPath` to its own source lock.
+The build verifies the manifest and every device/kernel project named by that
+lock. If it also contains a `proprietaryArchive` contract, the operator must
+accept and run the vendor's license-gated extractor themselves; the build only
+verifies the retained archive and extracted files. It never accepts a license.
 
 ### Pending ports (developer tooling, eliza-only for now)
 
