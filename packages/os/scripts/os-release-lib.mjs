@@ -10,7 +10,7 @@ export const repoRoot = path.resolve(
 );
 export const defaultManifestPath = path.join(
   repoRoot,
-  "release/beta-2026-05-16/manifest.json",
+  "release/v0.1.0-beta.1/manifest.json",
 );
 
 const sha256Pattern = /^[a-f0-9]{64}$/;
@@ -25,8 +25,13 @@ const artifactKinds = new Set([
   "raw-image",
   "vm-image",
   "android-image",
+  "package",
+  "sbom",
+  "setup-installer",
   "checksum-manifest",
   "usb-installer",
+  "signature",
+  "release-metadata",
 ]);
 const releaseStatuses = new Set([
   "planned",
@@ -194,9 +199,12 @@ export function validateManifest(manifest, options = {}) {
   const requirePublishableChecksums = Boolean(
     options.requirePublishableChecksums,
   );
+  const requireDistributionSignatures = Boolean(
+    options.requireDistributionSignatures,
+  );
 
-  if (manifest?.schemaVersion !== 1) {
-    errors.push("schemaVersion must be 1");
+  if (![1, 2].includes(manifest?.schemaVersion)) {
+    errors.push("schemaVersion must be 1 or 2");
   }
 
   requireString(errors, manifest?.release?.id, "release.id");
@@ -222,31 +230,52 @@ export function validateManifest(manifest, options = {}) {
   }
 
   const presale = manifest?.commerce?.usbKeyPresale;
-  if (!presale?.enabled) {
-    errors.push("commerce.usbKeyPresale.enabled must be true");
-  }
-  if (typeof presale?.priceUsd !== "number" || presale.priceUsd <= 0) {
-    errors.push("commerce.usbKeyPresale.priceUsd must be a positive number");
-  }
-  if (!isValidIsoDate(presale?.saleStarts)) {
-    errors.push("commerce.usbKeyPresale.saleStarts must be a valid ISO date");
-  }
-  if (!isValidIsoDate(presale?.estimatedShipWindow?.starts)) {
-    errors.push(
-      "commerce.usbKeyPresale.estimatedShipWindow.starts must be a valid ISO date",
-    );
-  }
-  if (!isValidIsoDate(presale?.estimatedShipWindow?.ends)) {
-    errors.push(
-      "commerce.usbKeyPresale.estimatedShipWindow.ends must be a valid ISO date",
-    );
+  if (presale !== undefined) {
+    if (presale.enabled !== true) {
+      errors.push("commerce.usbKeyPresale.enabled must be true when present");
+    }
+    if (typeof presale.priceUsd !== "number" || presale.priceUsd <= 0) {
+      errors.push("commerce.usbKeyPresale.priceUsd must be a positive number");
+    }
+    if (!isValidIsoDate(presale.saleStarts)) {
+      errors.push("commerce.usbKeyPresale.saleStarts must be a valid ISO date");
+    }
+    if (!isValidIsoDate(presale.estimatedShipWindow?.starts)) {
+      errors.push(
+        "commerce.usbKeyPresale.estimatedShipWindow.starts must be a valid ISO date",
+      );
+    }
+    if (!isValidIsoDate(presale.estimatedShipWindow?.ends)) {
+      errors.push(
+        "commerce.usbKeyPresale.estimatedShipWindow.ends must be a valid ISO date",
+      );
+    }
   }
 
   if (!Array.isArray(manifest?.artifacts) || manifest.artifacts.length === 0) {
     errors.push("artifacts must be a non-empty array");
   }
 
-  const requiredKinds = new Set(["raw-image", "vm-image", "android-image"]);
+  const declaredRequiredKinds = manifest?.release?.requiredArtifactKinds;
+  if (
+    manifest?.schemaVersion === 2 &&
+    (!Array.isArray(declaredRequiredKinds) ||
+      declaredRequiredKinds.length === 0)
+  ) {
+    errors.push("release.requiredArtifactKinds must be a non-empty array");
+  }
+  const requiredKinds = new Set(
+    manifest?.schemaVersion === 2
+      ? (declaredRequiredKinds ?? [])
+      : ["raw-image", "vm-image", "android-image"],
+  );
+  for (const kind of requiredKinds) {
+    if (!artifactKinds.has(kind) || kind === "checksum-manifest") {
+      errors.push(
+        `release.requiredArtifactKinds contains invalid kind ${kind}`,
+      );
+    }
+  }
   const seenKinds = new Set();
   const seenIds = new Set();
   const seenFilenames = new Set();
@@ -278,10 +307,46 @@ export function validateManifest(manifest, options = {}) {
       `${prefix}.target.architecture`,
     );
     requireString(errors, artifact?.filename, `${prefix}.filename`);
+    if (
+      typeof artifact?.filename === "string" &&
+      (path.basename(artifact.filename) !== artifact.filename ||
+        artifact.filename.includes("\\"))
+    ) {
+      errors.push(`${prefix}.filename must be a plain filename`);
+    }
     if (seenFilenames.has(artifact?.filename)) {
       errors.push(`${prefix}.filename duplicates ${artifact.filename}`);
     }
     seenFilenames.add(artifact?.filename);
+    if (
+      manifest?.schemaVersion === 2 &&
+      artifact?.kind !== "checksum-manifest"
+    ) {
+      requireString(
+        errors,
+        artifact?.source?.artifact,
+        `${prefix}.source.artifact`,
+      );
+      requireString(
+        errors,
+        artifact?.source?.pattern,
+        `${prefix}.source.pattern`,
+      );
+      if (
+        typeof artifact?.source?.artifact === "string" &&
+        !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(artifact.source.artifact)
+      ) {
+        errors.push(`${prefix}.source.artifact is unsafe`);
+      }
+      if (
+        typeof artifact?.source?.pattern === "string" &&
+        (artifact.source.pattern.includes("/") ||
+          artifact.source.pattern.includes("\\") ||
+          artifact.source.pattern.includes(".."))
+      ) {
+        errors.push(`${prefix}.source.pattern must be a basename pattern`);
+      }
+    }
     const hasDownloadUrl =
       typeof artifact?.downloadUrl === "string" &&
       artifact.downloadUrl.length > 0;
@@ -337,6 +402,32 @@ export function validateManifest(manifest, options = {}) {
     if (!Array.isArray(artifact?.validation?.evidence)) {
       errors.push(`${prefix}.validation.evidence must be an array`);
     }
+    if (requirePublishableChecksums) {
+      for (const evidence of artifact?.validation?.requiredEvidence ?? []) {
+        if (!(artifact?.validation?.evidence ?? []).includes(evidence)) {
+          errors.push(`${prefix}.validation.evidence is missing ${evidence}`);
+        }
+      }
+    }
+    if (
+      requireDistributionSignatures &&
+      ["setup-installer", "usb-installer"].includes(artifact?.kind)
+    ) {
+      const signatureEvidence =
+        artifact?.target?.platform === "macos"
+          ? "apple-notarization"
+          : artifact?.target?.platform === "windows"
+            ? "authenticode"
+            : null;
+      if (
+        signatureEvidence &&
+        !(artifact?.validation?.evidence ?? []).includes(signatureEvidence)
+      ) {
+        errors.push(
+          `${prefix}.validation.evidence is missing ${signatureEvidence}`,
+        );
+      }
+    }
     if (
       (artifact?.validation?.requiredEvidence ?? []).includes(
         "sha256-generated",
@@ -371,6 +462,14 @@ export function validateManifest(manifest, options = {}) {
     manifest?.validation?.evidenceDirectory,
     "validation.evidenceDirectory",
   );
+  if (
+    typeof manifest?.validation?.evidenceDirectory === "string" &&
+    (path.isAbsolute(manifest.validation.evidenceDirectory) ||
+      manifest.validation.evidenceDirectory.includes("\\") ||
+      manifest.validation.evidenceDirectory.split("/").includes(".."))
+  ) {
+    errors.push("validation.evidenceDirectory must be a safe relative path");
+  }
   if (!Array.isArray(manifest?.validation?.promotionGates)) {
     errors.push("validation.promotionGates must be an array");
   }

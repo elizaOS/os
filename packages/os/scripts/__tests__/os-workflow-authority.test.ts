@@ -16,8 +16,8 @@ interface WorkflowStep {
 
 interface WorkflowJob {
   env?: Record<string, string>;
-  needs?: string | string[];
   steps?: WorkflowStep[];
+  "timeout-minutes"?: number;
   uses?: string;
 }
 
@@ -32,6 +32,8 @@ const workflowsDirectory = join(repositoryRoot, ".github", "workflows");
 const automaticManifestWorkflow = "elizaos-os-full-release.yml";
 const recoveryWorkflow = "update-os-release-manifest.yml";
 const ripgrepProvisioner = "packages/os/scripts/provision-ripgrep.sh";
+const actionlintProvisioner = "packages/os/scripts/provision-actionlint.sh";
+const zigProvisioner = "packages/os/scripts/provision-zig-linux-x64.sh";
 
 function workflowPath(name: string): string {
   return join(workflowsDirectory, name);
@@ -92,68 +94,7 @@ describe("OS release workflow authority", () => {
     }
   });
 
-  test("Linux ISO release owns the canonical Debian amd64 GUI inputs", () => {
-    const workflow = parseWorkflow("build-linux-iso.yml");
-    const job = workflow.jobs?.["build-iso"];
-    const steps = job?.steps ?? [];
-    const lockResolution = namedJobStep(
-      workflow,
-      "build-iso",
-      "Resolve locked application source",
-    );
-    const appCheckout = namedJobStep(
-      workflow,
-      "build-iso",
-      "Checkout application source",
-    );
-    const lockVerification = namedJobStep(
-      workflow,
-      "build-iso",
-      "Verify application checkout matches release lock",
-    );
-    const dependencyInstall = namedJobStep(
-      workflow,
-      "build-iso",
-      "Install workspace dependencies from frozen lockfile",
-    );
-    const smoke = namedJobStep(
-      workflow,
-      "build-iso",
-      "Smoke test ISO through SeaBIOS and OVMF",
-    );
-    const appLock = JSON.parse(
-      readFileSync(
-        join(
-          repositoryRoot,
-          "packages/os/linux/elizaos/app-source.lock.json",
-        ),
-        "utf8",
-      ),
-    ) as { commit?: string; repository?: string; schema?: string };
-
-    expect(job?.env?.ELIZAOS_ARCH).toBe("amd64");
-    expect(job?.env?.ELIZAOS_PROFILE).toBe("gui");
-    expect(job?.env?.ELIZAOS_LINUX_VARIANT).toBe("packages/os/linux/elizaos");
-    expect(steps.indexOf(lockResolution)).toBeLessThan(
-      steps.indexOf(appCheckout),
-    );
-    expect(steps.indexOf(lockVerification)).toBeLessThan(
-      steps.indexOf(dependencyInstall),
-    );
-    expect(appCheckout.with?.ref).toBe("${{ steps.eliza-lock.outputs.ref }}");
-    expect(lockResolution.run).toContain("app-source.lock.json");
-    expect(lockVerification.run).toContain("rev-parse HEAD");
-    expect(steps.some((step) => step.name === "Restore live-build cache")).toBe(
-      false,
-    );
-    expect(appLock.schema).toBe("eliza.os.linux.app-source-lock.v1");
-    expect(appLock.repository).toBe("https://github.com/elizaOS/eliza");
-    expect(appLock.commit).toMatch(/^[0-9a-f]{40}$/);
-    expect(smoke.env?.ELIZAOS_ISO_SMOKE_CPU_MODEL).toBe("Haswell-v4");
-    expect(smoke.run).toContain("smoke-test-iso.sh");
-  });
-
-  test("verification pins Bun while Linux static checks stay source-only", () => {
+  test("standalone verification owns its Bun and Eliza source inputs", () => {
     const workflow = parseWorkflow("ci.yml");
     const packageMetadata = JSON.parse(
       readFileSync(join(repositoryRoot, "package.json"), "utf8"),
@@ -164,6 +105,41 @@ describe("OS release workflow authority", () => {
       "verify",
       "Setup Bun from packageManager",
     );
+    const actionlintSetup = namedJobStep(
+      workflow,
+      "verify",
+      "Provision pinned actionlint",
+    );
+    const actionlintCache = namedJobStep(
+      workflow,
+      "verify",
+      "Restore actionlint archive cache",
+    );
+    const actionlintRun = namedJobStep(
+      workflow,
+      "verify",
+      "Lint GitHub Actions workflows",
+    );
+    const sourceCheckout = namedJobStep(
+      workflow,
+      "linux-static-smoke",
+      "Checkout application source",
+    );
+    const linuxBunSetup = namedJobStep(
+      workflow,
+      "linux-static-smoke",
+      "Setup Bun from packageManager",
+    );
+    const linuxNodeSetup = namedJobStep(
+      workflow,
+      "linux-static-smoke",
+      "Setup Node 24",
+    );
+    const ripgrepSetup = namedJobStep(
+      workflow,
+      "linux-static-smoke",
+      "Provision ripgrep for Linux static smoke",
+    );
     const linuxJob = workflow.jobs?.["linux-static-smoke"];
     const linuxSteps = linuxJob?.steps ?? [];
 
@@ -171,12 +147,34 @@ describe("OS release workflow authority", () => {
     expect(packageMetadata.packageManager).toMatch(/^bun@\d+\.\d+\.\d+$/);
     expect(packageMetadata.engines?.node).toBe(">=24.0.0");
     expect(verifyNodeSetup.uses).toMatch(/^actions\/setup-node@[0-9a-f]{40}$/);
+    expect(linuxNodeSetup.uses).toBe(verifyNodeSetup.uses);
     expect(verifyNodeSetup.with?.["node-version"]).toBe("24");
+    expect(linuxNodeSetup.with?.["node-version"]).toBe("24");
     expect(verifyBunSetup.uses).toMatch(/^oven-sh\/setup-bun@[0-9a-f]{40}$/);
+    expect(linuxBunSetup.uses).toBe(verifyBunSetup.uses);
     expect(verifyBunSetup.with?.["bun-version-file"]).toBe("package.json");
-    expect(linuxJob?.env).toBeUndefined();
-    expect(linuxSteps).toHaveLength(2);
-    expect(linuxSteps[1]?.run).toBe("make -C packages/os/linux/elizaos lint");
+    expect(actionlintCache.with?.path).toBe("~/.cache/elizaos/actionlint");
+    expect(actionlintCache.with?.key).toContain("actionlint-v1.7.12-");
+    expect(actionlintSetup.run).toBe(actionlintProvisioner);
+    expect(actionlintRun.run).toBe("actionlint");
+    expect(linuxBunSetup.with?.["bun-version-file"]).toBe("package.json");
+    expect(sourceCheckout.with).toMatchObject({
+      repository: "${{ steps.eliza-source.outputs.repository }}",
+      ref: "${{ steps.eliza-source.outputs.commit }}",
+      path: ".eliza-source",
+      submodules: "recursive",
+    });
+    expect(linuxJob?.env?.ELIZAOS_ELIZA_ROOT).toMatch(
+      /github\.workspace.*\.eliza-source/,
+    );
+    expect(ripgrepSetup.shell).toBe("bash");
+    expect(ripgrepSetup.run).toBe(ripgrepProvisioner);
+    const ripgrepIndex = linuxSteps.indexOf(ripgrepSetup);
+    const verifyLinuxIndex = linuxSteps.findIndex(
+      (step) => step.run === "bun run verify:linux",
+    );
+    expect(ripgrepIndex).toBeGreaterThan(-1);
+    expect(verifyLinuxIndex).toBeGreaterThan(ripgrepIndex);
 
     const cuttlefish = parseWorkflow("elizaos-cuttlefish.yml");
     const cuttlefishBunSetup = Object.values(cuttlefish.jobs ?? {})
@@ -187,46 +185,92 @@ describe("OS release workflow authority", () => {
     );
   });
 
-  test("workflows use pinned Bun and fail closed on frozen lockfiles", () => {
-    for (const name of workflowNames()) {
-      const source = readFileSync(workflowPath(name), "utf8");
-      expect(source).not.toContain('bun-version: "canary"');
-      expect(source).not.toContain("--no-frozen-lockfile");
+  test("Bun download caches reuse immutable package archives without weakening compiled-output keys", () => {
+    const bunCacheSteps: Array<{ name: string; step: WorkflowStep }> = [];
 
-      for (const line of source.split("\n")) {
-        if (/\brun:\s*bun install\s*$/.test(line)) {
-          throw new Error(`${name} contains an unfrozen Bun install: ${line}`);
+    for (const name of workflowNames()) {
+      const workflow = parseWorkflow(name);
+      for (const step of Object.values(workflow.jobs ?? {}).flatMap(
+        (job) => job.steps ?? [],
+      )) {
+        if (step.with?.path === "~/.bun/install/cache") {
+          bunCacheSteps.push({ name, step });
         }
       }
     }
+
+    expect(bunCacheSteps.length).toBeGreaterThan(0);
+    for (const { name, step } of bunCacheSteps) {
+      const key = step.with?.key ?? "";
+      const restoreKeys = step.with?.["restore-keys"] ?? "";
+      expect(key, name).toContain("${{ runner.os }}-${{ runner.arch }}-");
+      expect(key, name).not.toContain("steps.eliza-source.outputs.commit");
+      expect(restoreKeys, name).toBe(
+        key.slice(0, key.indexOf("${{ hashFiles(")),
+      );
+    }
+
+    const riscv = namedJobStep(
+      parseWorkflow("riscv64-smoke.yml"),
+      "smoke",
+      "Restore Bun download cache",
+    );
+    expect(riscv.with?.key).toContain(
+      "hashFiles('bun.lock', '.eliza-source/bun.lock')",
+    );
+
+    const riscvSource = readFileSync(workflowPath("riscv64-smoke.yml"), "utf8");
+    expect(riscvSource).toContain("key: riscv64-out-");
+    expect(riscvSource).not.toContain("restore-keys: riscv64-out-");
   });
 
-  test("application-source workflows share the audited release lock", () => {
-    const appLock = JSON.parse(
-      readFileSync(
-        join(
-          repositoryRoot,
-          "packages/os/linux/elizaos/app-source.lock.json",
-        ),
-        "utf8",
+  test("desktop distributors share the exact Electrobun CLI and runtime cache", () => {
+    const caches = [
+      "release-elizaos-setup.yml",
+      "release-usb-installer.yml",
+    ].map((name) =>
+      namedJobStep(
+        parseWorkflow(name),
+        "build",
+        "Restore Electrobun CLI and core cache",
       ),
-    ) as { commit?: string };
-    expect(appLock.commit).toMatch(/^[0-9a-f]{40}$/);
+    );
 
+    for (const cache of caches) {
+      expect(cache.with?.path).toContain(
+        "node_modules/.bun/electrobun@*/node_modules/electrobun/.cache/electrobun*",
+      );
+      expect(cache.with?.path).toContain(
+        "node_modules/.bun/electrobun@*/node_modules/electrobun/dist-*",
+      );
+      expect(cache.with?.["restore-keys"]).toBeUndefined();
+    }
+    expect(caches[0]?.with?.key).toBe(caches[1]?.with?.key);
+    expect(caches[0]?.with?.key).toBe(
+      "electrobun-runtime-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}",
+    );
+  });
+
+  test("browser release lanes share an exact Playwright Chromium cache", () => {
     for (const name of [
-      "build-debian-package.yml",
-      "elizaos-cuttlefish.yml",
       "elizaos-os-release.yml",
-      "riscv64-smoke.yml",
+      "publish-os-homepage.yml",
+      "release-usb-installer.yml",
     ]) {
-      const source = readFileSync(workflowPath(name), "utf8");
-      const pinnedDefaults = [
-        ...source.matchAll(/default:\s*["']?([0-9a-f]{40})["']?/g),
-        ...source.matchAll(/eliza-ref \|\| '([0-9a-f]{40})'/g),
-      ].map((match) => match[1]);
-
-      expect(pinnedDefaults.length).toBeGreaterThan(0);
-      expect(new Set(pinnedDefaults)).toEqual(new Set([appLock.commit]));
+      const cache = namedJobStep(
+        parseWorkflow(name),
+        name === "release-usb-installer.yml"
+          ? "build"
+          : name === "publish-os-homepage.yml"
+            ? "publish"
+            : "validate-os-release",
+        "Restore Playwright Chromium cache",
+      );
+      expect(cache.with?.path, name).toBe("~/.cache/ms-playwright");
+      expect(cache.with?.key, name).toBe(
+        "playwright-chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}",
+      );
+      expect(cache.with?.["restore-keys"], name).toBeUndefined();
     }
   });
 
@@ -257,15 +301,52 @@ describe("OS release workflow authority", () => {
     }
   });
 
-  test("release validation invokes the canonical Debian source gate", () => {
+  test("release validation provisions ripgrep before Linux metadata checks", () => {
     const workflow = parseWorkflow("elizaos-os-release.yml");
+    const source = readFileSync(workflowPath("elizaos-os-release.yml"), "utf8");
+    const steps = workflow.jobs?.["validate-os-release"]?.steps ?? [];
+    const provision = namedJobStep(
+      workflow,
+      "validate-os-release",
+      "Provision ripgrep for Linux metadata validation",
+    );
     const validation = namedJobStep(
       workflow,
       "validate-os-release",
-      "Validate canonical Debian image source",
+      "Validate Linux live USB metadata",
     );
 
-    expect(validation.run).toBe("make -C packages/os/linux/elizaos lint");
+    expect(provision.run).toBe(ripgrepProvisioner);
+    expect(steps.indexOf(provision)).toBeGreaterThan(-1);
+    expect(steps.indexOf(validation)).toBeGreaterThan(steps.indexOf(provision));
+    expect(source).toContain("assert-canonical-linux-release.mjs");
+    expect(source).toContain(
+      "for script in scripts/*.mjs packages/os/scripts/*.mjs; do",
+    );
+    expect(source).toContain(
+      "bun run --cwd packages/os/usb-installer lint:check",
+    );
+    expect(source).not.toContain(
+      "bun run --cwd packages/os/usb-installer lint\n",
+    );
+    expect(source).toContain("bun run --cwd packages/os/setup test");
+  });
+
+  test("Linux CI validates both legacy smoke and canonical mkosi contracts", () => {
+    const source = readFileSync(workflowPath("ci.yml"), "utf8");
+    expect(source).toContain("bun run verify:linux");
+    expect(source).toContain(
+      "bash packages/os/linux/elizaos/scripts/mkosi-lint.sh",
+    );
+    expect(source).toContain("test_mkosi_qualification.py");
+    expect(source).toContain("test_verify_desktop_artifact.py");
+    expect(source).toContain("linux-usb-virtual-block:");
+    expect(source).toContain(
+      "bun run --cwd packages/os/usb-installer test:linux-virtual-usb",
+    );
+    expect(source).toContain(
+      "Exercise signed raw.zst write and expanded-byte readback",
+    );
   });
 
   test("one checked provisioner owns the ripgrep release", () => {
@@ -280,6 +361,55 @@ describe("OS release workflow authority", () => {
     expect(source).toContain(`echo "\${bin_dir}" >> "\${GITHUB_PATH}"`);
   });
 
+  test("one checked provisioner owns the actionlint release", () => {
+    const provisionerPath = join(repositoryRoot, actionlintProvisioner);
+    const source = readFileSync(provisionerPath, "utf8");
+
+    expect(statSync(provisionerPath).mode & 0o111).not.toBe(0);
+    expect(source).toContain("version=1.7.12");
+    expect(source).toContain("target=linux_amd64");
+    expect(source).toContain("target=linux_arm64");
+    expect(source).toContain("target=darwin_arm64");
+    expect(source).toContain(`sha256sum "$path"`);
+    expect(source).toContain('shasum -a 256 "$path"');
+    expect(source).toContain(`echo "$bin_dir" >> "$GITHUB_PATH"`);
+  });
+
+  test("native CI reuses only checksum-verified, exact-input toolchains and outputs", () => {
+    const provisionerPath = join(repositoryRoot, zigProvisioner);
+    const provisioner = readFileSync(provisionerPath, "utf8");
+    const riscv = readFileSync(workflowPath("riscv64-smoke.yml"), "utf8");
+    const cuttlefish = readFileSync(
+      workflowPath("elizaos-cuttlefish.yml"),
+      "utf8",
+    );
+
+    expect(statSync(provisionerPath).mode & 0o111).not.toBe(0);
+    expect(provisioner).toContain("0.13.0)");
+    expect(provisioner).toContain("0.14.0)");
+    expect(provisioner).toContain(
+      "d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea",
+    );
+    expect(provisioner).toContain(
+      "473ec26806133cf4d1918caf1a410f8403a13d979726a9045b421b685031a982",
+    );
+    expect(provisioner).toContain("sha256sum --check --status");
+    expect(provisioner).toContain(
+      "refusing a symlinked Zig archive cache entry",
+    );
+    expect(riscv).toContain(`${zigProvisioner} "$ZIG_VERSION"`);
+    expect(riscv).toContain("zig-archive-${{ runner.os }}-${{ runner.arch }}-");
+    expect(cuttlefish).toContain(`${zigProvisioner} "$ZIG_VERSION"`);
+    expect(cuttlefish).toContain("Compute native inference source fingerprint");
+    expect(cuttlefish).toContain(
+      "git -C .eliza-source submodule status --recursive",
+    );
+    expect(cuttlefish).toContain('ANDROID_NDK_VERSION: "29.0.13113456"');
+    expect(cuttlefish).toContain('"$GITHUB_WORKFLOW_SHA"');
+    expect(cuttlefish).toContain("key: cuttlefish-native-");
+    expect(cuttlefish).not.toContain("restore-keys: cuttlefish-native-");
+  });
+
   test("all local reusable workflow calls resolve", () => {
     for (const callerName of workflowNames()) {
       for (const calleeName of localReusableCalls(parseWorkflow(callerName))) {
@@ -289,45 +419,442 @@ describe("OS release workflow authority", () => {
     }
   });
 
-  test("every workflow job dependency resolves", () => {
-    for (const name of workflowNames()) {
-      const workflow = parseWorkflow(name);
-      const jobNames = new Set(Object.keys(workflow.jobs ?? {}));
-
-      for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
-        const dependencies = Array.isArray(job.needs)
-          ? job.needs
-          : job.needs
-            ? [job.needs]
-            : [];
-        for (const dependency of dependencies) {
-          expect(jobNames.has(dependency), `${name}:${jobName} needs ${dependency}`).toBe(
-            true,
-          );
-        }
-      }
-    }
-  });
-
-  test("one automatic manifest writer is distinct from manual recovery", () => {
+  test("release manifest writers are explicit manual operations", () => {
     const writers = workflowNames().filter((name) => {
       const source = readFileSync(workflowPath(name), "utf8");
       return /packages\/os\/scripts\/(?:update-release-manifest|generate-release-checksums)\.mjs/.test(
         source,
       );
     });
-    const automaticWriters = writers.filter((name) =>
-      Object.keys(parseWorkflow(name).on ?? {}).some(
-        (trigger) => trigger !== "workflow_dispatch",
-      ),
-    );
-
     expect(writers).toContain(automaticManifestWorkflow);
     expect(writers).toContain(recoveryWorkflow);
-    expect(automaticWriters).toEqual([automaticManifestWorkflow]);
+    expect(
+      Object.keys(parseWorkflow(automaticManifestWorkflow).on ?? {}),
+    ).toEqual(["workflow_dispatch"]);
     expect(Object.keys(parseWorkflow(recoveryWorkflow).on ?? {})).toEqual([
       "workflow_dispatch",
     ]);
+  });
+
+  test("full release is a manual single-writer fail-closed coordinator", () => {
+    const workflow = parseWorkflow(automaticManifestWorkflow);
+    const source = readFileSync(
+      workflowPath(automaticManifestWorkflow),
+      "utf8",
+    );
+
+    expect(Object.keys(workflow.on ?? {})).toEqual(["workflow_dispatch"]);
+    expect(workflow.permissions).toEqual({
+      contents: "write",
+      pages: "write",
+      "id-token": "write",
+      attestations: "write",
+    });
+    expect(source).toContain("environment: release");
+    expect(source).toContain(
+      "release coordinator source $" +
+        "{source_sha} is not contained in origin/develop",
+    );
+    expect(source).toContain("git merge-base --is-ancestor");
+    expect(source).toContain("release coordinator checkout is not clean");
+    expect(source).toContain("assemble-release-bundle.mjs");
+    expect(source).toContain("assert-canonical-linux-release.mjs");
+    expect(source).toContain("uses: ./.github/workflows/build-linux-mkosi.yml");
+    expect(source).not.toContain(
+      "uses: ./.github/workflows/build-vm-image.yml",
+    );
+    expect(source).not.toContain(
+      "uses: ./.github/workflows/build-linux-iso.yml",
+    );
+    expect(source).toContain(
+      '--source-sha "${{ needs.prepare.outputs.source-sha }}"',
+    );
+    expect(source).toContain(
+      '--available-date "${{ needs.prepare.outputs.release-date }}"',
+    );
+    expect(source).not.toContain('--evidence "$evidence"');
+    expect(source).not.toContain("evidence=seabios-boot");
+    expect(source).toContain("name: elizaos-release-bundle");
+    expect(source).toContain("name: Rehearse signed APT publication");
+    expect(source).toContain("dry_run: true");
+    expect(source).toContain("name: Stage the verified GitHub Release draft");
+    expect(source).toContain("draft: true");
+    expect(source).toContain(
+      "if: inputs.publish == true && needs.publish-apt.result == 'success'",
+    );
+    expect(source).toContain('gh release edit "$RELEASE_TAG" --draft=false');
+    expect(source).toContain("--require-publishable-checksums");
+    expect(source).not.toContain("beta-2026-05-16");
+    expect(source).not.toContain("types: [created]");
+  });
+
+  test("canonical mkosi producer signs complete assets but cannot invent downstream qualification", () => {
+    const workflowName = "build-linux-mkosi.yml";
+    const source = readFileSync(workflowPath(workflowName), "utf8");
+    const manifest = JSON.parse(
+      readFileSync(
+        join(repositoryRoot, "packages/os/release/v0.1.0-beta.1/manifest.json"),
+        "utf8",
+      ),
+    ) as {
+      artifacts: Array<{
+        kind: string;
+        source: { artifact: string; pattern: string };
+      }>;
+    };
+
+    expect(existsSync(workflowPath("build-vm-image.yml"))).toBe(false);
+    expect(source).toContain("architecture: x86_64");
+    expect(source).toContain("architecture: arm64");
+    expect(source).toContain("architecture: riscv64");
+    expect(source).toContain("repository: elizaOS/eliza");
+    expect(source).toContain("verify-desktop-artifact.py");
+    expect(source).toContain("[A-Za-z0-9._-]*\\.(?:pem|key|der)");
+    expect(source).toContain('snapshot_id="${SNAPSHOT_URL%/}"');
+    expect(source).toContain(
+      "mkosi-packages/${snapshot_id}/${{ matrix.architecture }}",
+    );
+    expect(source).not.toContain(
+      "mkosi-packages/${{ inputs.source_date_epoch }}",
+    );
+    expect(source).toContain('flock --exclusive "$cache/.build.lock"');
+    expect(source).toContain('--package-cache-dir "$cache"');
+    expect(source).toContain("name: Remove privileged build workspace");
+    expect(source).toContain("name: Remove signing workspace");
+    expect(source).toContain("mkosi-persistence-qualify.py");
+    expect(source).toContain("Stage one flat bounded pre-signing artifact");
+    expect(source).toContain("path: ${{ env.WORK_ROOT }}/upload/*");
+    expect(source).toContain("verify-mkosi-promotion-evidence.mjs");
+    expect(source).toContain("sign-image-release.mjs");
+    expect(source).toContain("verify-image-release.mjs");
+    expect(source).toContain(
+      "--evidence mkosi-release-build,qemu-uefi-usb,persistent-reboot,usb-expanded-readback,slsa-provenance",
+    );
+    expect(source).not.toMatch(
+      /--evidence[^\n]*(?:whole-disk-install|alongside-install|desktop-acceptance|hardware-qualification)/,
+    );
+    for (const artifact of manifest.artifacts.filter((candidate) =>
+      ["raw-image", "signature", "sbom", "release-metadata"].includes(
+        candidate.kind,
+      ),
+    )) {
+      expect(source).toContain(artifact.source.artifact);
+    }
+  });
+
+  test("desktop distributors upload stable payloads rather than build trees", () => {
+    for (const name of [
+      "release-elizaos-setup.yml",
+      "release-usb-installer.yml",
+    ]) {
+      const source = readFileSync(workflowPath(name), "utf8");
+      expect(source).toContain("ubuntu-24.04");
+      expect(source).toContain("macos-15");
+      expect(source).toContain("windows-2025");
+      expect(source).not.toMatch(/(?:ubuntu|macos|windows)-latest/);
+      expect(source).toContain("Require one release payload");
+      expect(source).toContain("/artifacts/${{ matrix.payload-pattern }}");
+      expect(source).not.toContain("path: packages/os/setup/build/");
+      expect(source).not.toContain("path: packages/os/usb-installer/build/");
+    }
+  });
+
+  test("desktop producer release matrices exactly match candidate artifact identities", () => {
+    const manifest = JSON.parse(
+      readFileSync(
+        join(repositoryRoot, "packages/os/release/v0.1.0-beta.1/manifest.json"),
+        "utf8",
+      ),
+    ) as {
+      artifacts: Array<{
+        id: string;
+        kind: string;
+        source: { artifact: string; pattern: string };
+      }>;
+    };
+    for (const [workflowName, kind] of [
+      ["release-elizaos-setup.yml", "setup-installer"],
+    ]) {
+      const workflow = parseWorkflow(workflowName);
+      const job = workflow.jobs?.build as WorkflowJob & {
+        strategy?: {
+          matrix?: {
+            include?: Array<{
+              artifact: string;
+              "payload-pattern": string;
+              "release-id": string;
+            }>;
+          };
+        };
+      };
+      const produced = (job.strategy?.matrix?.include ?? [])
+        .map((entry) => ({
+          artifact: entry.artifact,
+          id: entry["release-id"],
+          pattern: entry["payload-pattern"],
+        }))
+        .sort((left, right) => left.id.localeCompare(right.id));
+      const declared = manifest.artifacts
+        .filter((artifact) => artifact.kind === kind)
+        .map((artifact) => ({
+          artifact: artifact.source.artifact,
+          id: artifact.id,
+          pattern: artifact.source.pattern,
+        }))
+        .sort((left, right) => left.id.localeCompare(right.id));
+
+      expect(produced).toEqual(declared);
+      expect(readFileSync(workflowPath(workflowName), "utf8")).toContain(
+        "create-release-evidence.mjs",
+      );
+    }
+
+    const usbSource = readFileSync(
+      workflowPath("release-usb-installer.yml"),
+      "utf8",
+    );
+    const usbDeclared = manifest.artifacts.filter(
+      (artifact) => artifact.kind === "usb-installer",
+    );
+    expect(usbDeclared).toEqual([
+      expect.objectContaining({
+        id: "usb-installer-linux-x64",
+        source: {
+          artifact: "elizaos-usb-installer-linux",
+          pattern: "*.tar.gz",
+        },
+      }),
+    ]);
+    expect(usbSource).toContain("linux_release_only:");
+    expect(usbSource).toContain(
+      'inputs.linux_release_only && \'[{"os":"ubuntu-24.04"',
+    );
+    expect(usbSource).toContain('"release-id":"usb-installer-linux-x64"');
+    expect(usbSource).toContain("create-release-evidence.mjs");
+
+    const coordinator = readFileSync(
+      workflowPath("elizaos-os-full-release.yml"),
+      "utf8",
+    );
+    expect(coordinator).toContain("linux_release_only: true");
+    expect(coordinator).toContain(
+      'require_file _verify/elizaos-usb-installer-linux "*.tar.gz"',
+    );
+    expect(coordinator).not.toContain(
+      'require_file "_verify/elizaos-usb-installer-${platform}"',
+    );
+  });
+
+  test("release producers reject ambiguous outputs instead of selecting first or last", () => {
+    for (const workflowName of [
+      "build-debian-package.yml",
+      "build-linux-mkosi.yml",
+    ]) {
+      const source = readFileSync(workflowPath(workflowName), "utf8");
+      expect(source).not.toMatch(/find[^\n]*(?:head|tail)\s+-?n?\s*1/);
+      expect(source).toContain("expected exactly one");
+    }
+    expect(
+      readFileSync(workflowPath("build-debian-package.yml"), "utf8"),
+    ).toContain("if-no-files-found: error");
+  });
+
+  test("Debian packages consume authenticated native artifacts and declare exact architectures", () => {
+    const source = readFileSync(
+      workflowPath("build-debian-package.yml"),
+      "utf8",
+    );
+    const manifest = JSON.parse(
+      readFileSync(
+        join(repositoryRoot, "packages/os/release/v0.1.0-beta.1/manifest.json"),
+        "utf8",
+      ),
+    ) as {
+      artifacts: Array<{
+        id: string;
+        kind: string;
+        target: { architecture: string };
+      }>;
+    };
+    const packages = manifest.artifacts.filter(
+      (artifact) => artifact.kind === "package",
+    );
+    const control = readFileSync(
+      join(repositoryRoot, "packages/os/linux/packaging/debian/control"),
+      "utf8",
+    );
+    const rules = readFileSync(
+      join(repositoryRoot, "packages/os/linux/packaging/debian/rules"),
+      "utf8",
+    );
+
+    expect(source).toContain("repository: elizaOS/eliza");
+    expect(source).toContain("verify-desktop-artifact.py");
+    expect(source).toContain("[A-Za-z0-9._-]*\\.(?:pem|key|der)");
+    expect(source).toContain("upstream-ed25519-artifact");
+    expect(source).not.toContain("Checkout application source");
+    expect(source).not.toContain("bun install --cwd .eliza-source");
+    expect(control).toContain("Architecture: any");
+    expect(control).toContain("${shlibs:Depends}");
+    expect(rules).toContain("cp -a payload/.");
+    expect(rules).not.toContain("elizaos-app.mjs");
+    expect(rules).not.toContain("node_modules");
+    expect(packages.map((artifact) => artifact.id).sort()).toEqual([
+      "debian-package-amd64",
+      "debian-package-arm64",
+      "debian-package-riscv64",
+    ]);
+    expect(
+      packages.map((artifact) => artifact.target.architecture).sort(),
+    ).toEqual(["amd64", "arm64", "riscv64"]);
+  });
+
+  test("signed desktop distributors bind the protected release environment", () => {
+    for (const name of [
+      "release-elizaos-setup.yml",
+      "release-usb-installer.yml",
+    ]) {
+      const workflow = parseWorkflow(name);
+      const source = readFileSync(workflowPath(name), "utf8");
+
+      expect(workflow.jobs?.build).toBeDefined();
+      expect(source).toContain(
+        "environment: ${{ inputs.require_signing && 'release' || '' }}",
+      );
+      expect(source).toContain("inputs.require_signing == true");
+    }
+    const usbSource = readFileSync(
+      workflowPath("release-usb-installer.yml"),
+      "utf8",
+    );
+    expect(usbSource).toContain("Configure pinned release-manifest trust root");
+    expect(usbSource).toContain(
+      "secrets.ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64",
+    );
+    expect(usbSource).toContain("ephemeral validation-only release trust root");
+  });
+
+  test("homepage release E2E resolves workspace Playwright and WebAuthn runtime inputs", () => {
+    const homepagePackage = JSON.parse(
+      readFileSync(
+        join(repositoryRoot, "packages/os/homepage/package.json"),
+        "utf8",
+      ),
+    ) as {
+      dependencies?: Record<string, string>;
+      scripts?: Record<string, string>;
+    };
+
+    expect(homepagePackage.scripts?.["test:e2e"]).toBe("playwright test");
+    expect(homepagePackage.dependencies?.["@simplewebauthn/browser"]).toBe(
+      "^13.0.0",
+    );
+    expect(homepagePackage.scripts?.deploy).toContain("wrangler pages deploy");
+    expect(
+      (homepagePackage as { devDependencies?: Record<string, string> })
+        .devDependencies?.wrangler,
+    ).toBe("4.123.0");
+
+    const publisher = readFileSync(
+      workflowPath("publish-os-homepage.yml"),
+      "utf8",
+    );
+    expect(publisher).toContain("generate-os-homepage-data.mjs");
+    expect(publisher).toContain("verify-release-checksums.mjs");
+    expect(publisher).toContain("--require-distribution-signatures");
+    expect(publisher).toContain("CLOUDFLARE_ACCOUNT_ID");
+    expect(publisher).toContain("CLOUDFLARE_API_TOKEN");
+    expect(publisher).toContain(
+      ".result[0].deployment_trigger.metadata.commit_hash == $source",
+    );
+
+    const coordinator = readFileSync(
+      workflowPath("elizaos-os-full-release.yml"),
+      "utf8",
+    );
+    expect(coordinator).toContain("rehearse-homepage:");
+    expect(coordinator).toContain("publish-homepage:");
+    expect(coordinator).toContain(
+      "if: inputs.publish == true && needs.publish-homepage.result == 'success'",
+    );
+  });
+
+  test("latest Eliza source advances only through a recursive pinned PR", () => {
+    const workflow = parseWorkflow("update-eliza-source-lock.yml");
+    const source = readFileSync(
+      workflowPath("update-eliza-source-lock.yml"),
+      "utf8",
+    );
+
+    expect(workflow.permissions).toEqual({
+      contents: "write",
+      issues: "write",
+      "pull-requests": "write",
+    });
+    expect(source).toContain("submodules: recursive");
+    expect(source).toContain("update-eliza-source-lock.mjs");
+    expect(source).toContain("gh pr create");
+    expect(source).not.toContain("ref: develop");
+  });
+
+  test("every external action is pinned to an immutable commit", () => {
+    for (const name of workflowNames()) {
+      const workflow = parseWorkflow(name);
+      const externalUses = Object.values(workflow.jobs ?? {}).flatMap((job) => [
+        job.uses,
+        ...(job.steps ?? []).map((step) => step.uses),
+      ]);
+
+      for (const uses of externalUses) {
+        if (!uses || uses.startsWith("./")) continue;
+        expect(uses).toMatch(/^[^@\s]+@[0-9a-f]{40}$/);
+      }
+    }
+  });
+
+  test("every directly runnable job has an explicit timeout", () => {
+    for (const name of workflowNames()) {
+      const workflow = parseWorkflow(name);
+      for (const job of Object.values(workflow.jobs ?? {})) {
+        if (job.uses) continue;
+        expect(job["timeout-minutes"]).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  test("APT publication binds one signing key and deploys committed Pages content", () => {
+    const workflow = parseWorkflow("publish-apt-repo.yml");
+    const source = readFileSync(workflowPath("publish-apt-repo.yml"), "utf8");
+
+    expect(workflow.permissions).toMatchObject({
+      contents: "write",
+      pages: "write",
+      "id-token": "write",
+    });
+    expect(source).toContain(
+      "DEBIAN_GPG_KEY_ID must be the full primary-key fingerprint",
+    );
+    expect(source).toContain(
+      "Imported primary-key fingerprint does not match DEBIAN_GPG_KEY_ID",
+    );
+    expect(source).toContain("Expected exactly three Debian packages");
+    expect(source).toContain("amd64|arm64|riscv64");
+    expect(source).toContain("name: Validate GitHub Pages configuration");
+    expect(source).toContain("if: inputs.dry_run != true");
+    expect(source).toContain(
+      'sed -i "s/^SignWith:.*/SignWith: $APT_GPG_FINGERPRINT/"',
+    );
+    expect(source).toContain("git -C apt-repo archive HEAD");
+    expect(source).toContain(
+      "actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b",
+    );
+    expect(source).toContain(
+      "actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9",
+    );
+    expect(source).toContain(
+      "actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e",
+    );
+    expect(source).toContain("Remove temporary signing material");
   });
 
   test("manual recovery binds immutable identities and opens a draft PR", () => {

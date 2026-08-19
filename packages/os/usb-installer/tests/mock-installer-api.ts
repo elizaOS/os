@@ -1,5 +1,5 @@
 // Exercises USB installer browser flows and screenshot quality gates.
-import type { Page, Route } from "@playwright/test";
+import type { Page, Route } from "playwright/test";
 
 export const mockDrive = {
   id: "fake-usb",

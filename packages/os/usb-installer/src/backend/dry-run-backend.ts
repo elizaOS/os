@@ -28,9 +28,23 @@ interface ImageManifestValidationIssue {
   message: string;
 }
 
-// Production discovery is authoritative. Never fabricate downloadable images
-// when GitHub release metadata is unavailable; tests inject their own fixtures.
-export const DEFAULT_ELIZAOS_IMAGES: ElizaOsImage[] = [];
+export const DEFAULT_ELIZAOS_IMAGES: ElizaOsImage[] = [
+  {
+    id: "elizaos-linux-live-stable",
+    label: "elizaOS raw image (demo metadata; not downloadable)",
+    version: "0.0.0-demo",
+    channel: "stable",
+    architecture: "x86_64",
+    buildId: "demo-only",
+    publishedAt: "2026-08-17T00:00:00.000Z",
+    url: "https://example.invalid/elizaos-demo-x86_64.raw.zst",
+    checksumSha256: "0123456789abcdef".repeat(4),
+    sizeBytes: 4 * gib,
+    minUsbSizeBytes: 8 * gib,
+    manifestVersion: 1,
+    signatureUrl: "https://example.invalid/elizaos-demo-x86_64.raw.zst.sig",
+  },
+];
 
 export const MOCK_REMOVABLE_DRIVES: RemovableDrive[] = [
   {

@@ -1,0 +1,15 @@
+{
+  "name": "@elizaos/linux-installer-plan",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.0",
+    "typescript": "^6.0.3",
+    "vitest": "4.1.5"
+  }
+}

@@ -129,6 +129,7 @@ function validateBuild(v: unknown): AospBuild {
     manifestUrl: v.manifestUrl,
     sizeBytes: v.sizeBytes,
     ...(isString(v.artifactDir) ? { artifactDir: v.artifactDir } : {}),
+    ...(isString(v.manifestPath) ? { manifestPath: v.manifestPath } : {}),
     ...(isBoolean(v.wipeData) ? { wipeData: v.wipeData } : {}),
   };
 }
@@ -145,6 +146,7 @@ function validateFlashPlan(v: unknown): FlashPlan {
     build,
     steps: v.steps as FlashPlan["steps"],
     artifactDir: isString(v.artifactDir) ? v.artifactDir : null,
+    manifestPath: isString(v.manifestPath) ? v.manifestPath : null,
     // FlashRequest is a deeply-structured request type; it is validated only as
     // an object here (full field validation is a separate task), so the narrow
     // to its type stays an explicit assertion.

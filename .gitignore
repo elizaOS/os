@@ -9,6 +9,8 @@ dist/
 **/.turbo/
 coverage/
 *.tsbuildinfo
+__pycache__/
+*.py[cod]
 
 # Native build output and downloaded toolchains
 **/build/

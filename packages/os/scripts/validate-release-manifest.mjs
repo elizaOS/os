@@ -12,6 +12,9 @@ const manifestPath = args.manifest || defaultManifestPath;
 const manifest = await readJson(manifestPath);
 const result = validateManifest(manifest, {
   requirePublishableChecksums: Boolean(args["require-publishable-checksums"]),
+  requireDistributionSignatures: Boolean(
+    args["require-distribution-signatures"],
+  ),
 });
 
 for (const warning of result.warnings) {

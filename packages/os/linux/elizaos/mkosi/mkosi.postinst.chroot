@@ -1,0 +1,174 @@
+#!/bin/bash
+# Fail-closed workstation integration. The .chroot suffix is intentional:
+# unsuffixed mkosi scripts run on the host, not inside the image.
+set -euo pipefail
+
+required_packages=(dconf-cli gdm3 gnome-shell gnome-initial-setup network-manager speech-dispatcher-espeak-ng xdg-desktop-portal-gnome)
+for package in "${required_packages[@]}"; do
+    dpkg-query -W -f='${db:Status-Status}\n' "$package" | grep -qx 'installed' || {
+        echo "[mkosi.postinst] required package is not installed: $package" >&2
+        exit 1
+    }
+done
+
+for forbidden in \
+    /etc/sudoers.d/010-elizaos-agent \
+    /etc/systemd/system/elizaos-kiosk.service \
+    /etc/systemd/system/getty@tty1.service.d/autologin.conf \
+    /etc/systemd/system/serial-getty@ttyS0.service.d/autologin.conf; do
+    if [ -e "$forbidden" ] || [ -L "$forbidden" ]; then
+        echo "[mkosi.postinst] forbidden inherited live/kiosk file: $forbidden" >&2
+        exit 1
+    fi
+done
+
+source_root="${SRCDIR:-/work/src}"
+brand_source="${source_root}/elizaos/assets/logo_white_bluebg.svg"
+if [ ! -f "$brand_source" ]; then
+    echo "[mkosi.postinst] required branding input is missing: $brand_source" >&2
+    exit 1
+fi
+install -D -m 0644 "$brand_source" /usr/share/backgrounds/elizaos/elizaos-blue.svg
+
+grow_definition="${source_root}/elizaos/mkosi/mkosi.repart/30-home.conf"
+if [ ! -f "$grow_definition" ] || [ -L "$grow_definition" ]; then
+    echo "[mkosi.postinst] persistent grow definition is missing or a symlink" >&2
+    exit 1
+fi
+install -D -m 0644 "$grow_definition" /usr/lib/elizaos/repart-grow/30-home.conf
+
+control_source="${source_root}/control"
+control_inputs=(
+    THREAT_MODEL.md
+    eliza_control/__init__.py
+    eliza_control/__main__.py
+    eliza_control/audit.py
+    eliza_control/auth.py
+    eliza_control/broker.py
+    eliza_control/installer.py
+    eliza_control/policy.py
+    eliza_control/provision.py
+    eliza_control/protocol.py
+    eliza_control/remote.py
+    systemd/eliza-control-broker.service
+    systemd/eliza-control-broker.socket
+    systemd/eliza-control-provision.service
+    systemd/eliza-control-emergency-disable.service
+    sysusers.d/eliza-control.conf
+    tmpfiles.d/eliza-control.conf
+    polkit/49-eliza-control.rules
+    polkit/ai.elizaos.control.policy
+    protocol/audit-receipt.schema.json
+    protocol/broker-request.schema.json
+    protocol/execution-result.schema.json
+    protocol/installer-execution.schema.json
+    protocol/remote-envelope.schema.json
+    protocol/root-exec.schema.json
+)
+for input in "${control_inputs[@]}"; do
+    if [ ! -f "${control_source}/${input}" ] || [ -L "${control_source}/${input}" ]; then
+        echo "[mkosi.postinst] required control input is missing or a symlink: $input" >&2
+        exit 1
+    fi
+done
+
+install -d -m 0755 /usr/lib/python3/dist-packages/eliza_control
+install -m 0644 "${control_source}"/eliza_control/{__init__,__main__,audit,auth,broker,installer,policy,provision,protocol,remote}.py \
+    /usr/lib/python3/dist-packages/eliza_control/
+install -m 0644 "${control_source}"/systemd/eliza-control-broker.service /usr/lib/systemd/system/
+install -m 0644 "${control_source}"/systemd/eliza-control-broker.socket /usr/lib/systemd/system/
+install -m 0644 "${control_source}"/systemd/eliza-control-provision.service /usr/lib/systemd/system/
+install -m 0644 "${control_source}"/systemd/eliza-control-emergency-disable.service /usr/lib/systemd/system/
+install -D -m 0644 "${control_source}"/sysusers.d/eliza-control.conf /usr/lib/sysusers.d/eliza-control.conf
+install -D -m 0644 "${control_source}"/tmpfiles.d/eliza-control.conf /usr/lib/tmpfiles.d/eliza-control.conf
+install -D -m 0644 "${control_source}"/polkit/49-eliza-control.rules /usr/share/polkit-1/rules.d/49-eliza-control.rules
+install -D -m 0644 "${control_source}"/polkit/ai.elizaos.control.policy /usr/share/polkit-1/actions/ai.elizaos.control.policy
+install -D -m 0644 "${control_source}"/THREAT_MODEL.md /usr/share/doc/eliza-control/THREAT_MODEL.md
+install -d -m 0755 /usr/share/eliza-control/protocol
+install -m 0644 "${control_source}"/protocol/*.json /usr/share/eliza-control/protocol/
+
+desktop=/opt/elizaos/bin/eliza-desktop
+agent=/opt/elizaos/bin/eliza-agent
+manifest=/opt/elizaos/share/desktop-artifact-manifest.json
+case "${ELIZAOS_BUILD_MODE:-development}" in
+    development|fixture)
+        # An explicit developer/fixture image may exercise the base desktop
+        # without a cross-repository application artifact.
+        if { [ -e "$desktop" ] && [ ! -x "$agent" ]; } || \
+           { [ -e "$agent" ] && [ ! -x "$desktop" ]; }; then
+            echo "[mkosi.postinst] partial desktop artifact topology" >&2
+            exit 1
+        fi
+        ;;
+    release)
+        for required in "$manifest"; do
+            if [ ! -e "$required" ]; then
+                echo "[mkosi.postinst] release artifact input is missing: $required" >&2
+                exit 1
+            fi
+        done
+        expected_arch="${ARCHITECTURE:-unknown}"
+        [ "$expected_arch" != x86-64 ] || expected_arch=x86_64
+        signing_key="${ELIZAOS_DESKTOP_SIGNING_PUBLIC_KEY:-}"
+        signing_key_pin="${ELIZAOS_DESKTOP_SIGNING_PUBLIC_KEY_SPKI_SHA256:-}"
+        if [ -z "$signing_key" ] || [ -z "$signing_key_pin" ]; then
+            echo "[mkosi.postinst] release signing public key and pinned SPKI digest are required" >&2
+            exit 1
+        fi
+        verifier="${source_root}/elizaos/scripts/verify-desktop-artifact.py"
+        if [ ! -f "$verifier" ] || [ -L "$verifier" ]; then
+            echo "[mkosi.postinst] desktop artifact verifier is missing or is a symlink" >&2
+            exit 1
+        fi
+        python3 "$verifier" \
+            --manifest "$manifest" \
+            --architecture "$expected_arch" \
+            --public-key "$signing_key" \
+            --public-key-spki-sha256 "$signing_key_pin" \
+            --extract-to /opt/elizaos
+        for required in "$desktop" "$agent" /opt/elizaos/bin/eliza-doctor; do
+            if [ ! -x "$required" ] || [ -L "$required" ]; then
+                echo "[mkosi.postinst] verified release entrypoint is missing, linked, or not executable: $required" >&2
+                exit 1
+            fi
+        done
+        ;;
+    *)
+        echo "[mkosi.postinst] invalid ELIZAOS_BUILD_MODE=${ELIZAOS_BUILD_MODE}" >&2
+        exit 1
+        ;;
+esac
+
+systemctl enable gdm3.service NetworkManager.service systemd-resolved.service
+systemctl enable eliza-control-broker.socket
+systemctl enable elizaos-grow-persistent.service
+systemctl set-default graphical.target
+systemctl --global enable elizaos-session.target
+
+if command -v dconf >/dev/null 2>&1; then
+    dconf update
+fi
+
+cat >/etc/os-release <<'EOF'
+PRETTY_NAME="elizaOS Linux"
+NAME="elizaOS"
+ID=elizaos
+ID_LIKE=debian
+VERSION_ID="13"
+VERSION_CODENAME=trixie
+ANSI_COLOR="38;2;11;53;241"
+HOME_URL="https://elizaos.ai/"
+SUPPORT_URL="https://elizaos.ai/support"
+EOF
+
+default_target="$(readlink -f /etc/systemd/system/default.target)"
+[ "$default_target" = /usr/lib/systemd/system/graphical.target ] || {
+    echo "[mkosi.postinst] default target is not graphical.target: $default_target" >&2
+    exit 1
+}
+
+# The signed desktop artifact is staged by release tooling and owns
+# /opt/elizaos/bin. This integration never embeds application source or grants
+# it sudo. Missing executables are only allowed in explicit development/fixture
+# builds; release builds require the manifest, signature, and both entrypoints.
+echo "[mkosi.postinst] GNOME workstation integration complete"

@@ -17,7 +17,7 @@ import {
   UserCancelledElevationError,
   WslDetectedError,
 } from "./errors";
-import { fetchPublishedIsoImages } from "./release-discovery";
+import { fetchReleaseImages } from "./release-manifest";
 import type {
   ElizaOsImage,
   InstallerStep,
@@ -158,6 +158,7 @@ interface PsDiskRaw {
   IsSystem: boolean;
   DriveLetters: string[] | string | null;
   SystemDrive: string;
+  UniqueId?: string;
 }
 
 interface ClassifiedDisk {
@@ -217,10 +218,6 @@ export function classifyDiskSafety(disk: ClassifiedDisk): {
     safety: "safe-removable",
     description: `USB disk ${disk.number} - ${disk.friendlyName}`,
   };
-}
-
-async function fetchGitHubIsoImages(): Promise<ElizaOsImage[]> {
-  return fetchPublishedIsoImages();
 }
 
 async function downloadFile(
@@ -448,6 +445,7 @@ foreach ($d in $disks) {
     IsSystem = $isSystem
     DriveLetters = $letters
     SystemDrive = $systemDrive
+    UniqueId = [string]$d.UniqueId
   }
 }
 $result | ConvertTo-Json -Depth 4 -Compress
@@ -473,7 +471,7 @@ $result | ConvertTo-Json -Depth 4 -Compress
         systemDrive: raw.SystemDrive ?? "C:",
       };
       const verdict = classifyDiskSafety(classified);
-      return {
+      const drive: RemovableDrive = {
         id: String(classified.number),
         name: classified.friendlyName || `Disk ${classified.number}`,
         devicePath: `\\\\.\\PhysicalDrive${classified.number}`,
@@ -483,11 +481,14 @@ $result | ConvertTo-Json -Depth 4 -Compress
         safety: verdict.safety,
         description: verdict.description,
       };
+      const uniqueId = raw.UniqueId?.trim();
+      if (uniqueId) drive.stableId = `windows:${uniqueId}`;
+      return drive;
     });
   }
 
   async listImages(): Promise<ElizaOsImage[]> {
-    return fetchGitHubIsoImages();
+    return fetchReleaseImages();
   }
 
   async createWritePlan(request: WriteRequest): Promise<WritePlan> {

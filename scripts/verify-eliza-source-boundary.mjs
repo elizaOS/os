@@ -45,6 +45,7 @@ const forbiddenPaths = new Set([
 ]);
 const forbiddenWorkflowNames = new Set([
   "build-debian-package.yml",
+  "build-linux-mkosi.yml",
   "build-linux-iso.yml",
   "build-vm-image.yml",
   "elizaos-cuttlefish.yml",

@@ -10,6 +10,7 @@
   },
   "workspaces": [
     "packages/os/homepage",
+    "packages/os/linux/installer",
     "packages/os/setup",
     "packages/os/shared-system",
     "packages/os/usb-installer"
@@ -23,7 +24,7 @@
     "test:release": "node --test packages/os/scripts/__tests__/*.test.mjs && bun test packages/os/scripts/__tests__/*.test.ts",
     "migration:manifest": "node scripts/generate-migration-manifest.mjs",
     "verify:layout": "node scripts/verify-os-repository-layout.mjs",
-    "verify": "bun run verify:layout && bun run typecheck && bun run lint && bun run test:release",
+    "verify": "bun run verify:layout && bun run typecheck && bun run lint && bun run test && bun run test:release",
     "verify:linux": "make -C packages/os/linux/elizaos lint",
     "verify:riscv64": "node packages/scripts/run-bash-linux-only.mjs scripts/verify-riscv64-buildpaths.sh",
     "build:riscv64-artifacts": "node packages/scripts/run-bash-linux-only.mjs scripts/build-riscv64-artifacts.sh",

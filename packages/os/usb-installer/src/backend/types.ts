@@ -12,6 +12,8 @@ export interface RemovableDrive {
   platform: PlatformId;
   safety: DriveSafety;
   description?: string;
+  /** Platform-reported immutable identity (serial/WWN/unique id), when available. */
+  stableId?: string;
 }
 
 export interface ElizaOsImage {
@@ -29,6 +31,17 @@ export interface ElizaOsImage {
   manifestVersion: 1;
   releaseNotesUrl?: string;
   signatureUrl?: string;
+  /** Canonical mkosi release contract fields. Legacy fixtures may omit these. */
+  schemaVersion?: 1;
+  product?: "elizaOS";
+  sequence?: number;
+  expires?: string;
+  compressedSize?: number;
+  expandedSize?: number;
+  sha256Compressed?: string;
+  sha256Expanded?: string;
+  minDeviceBytes?: number;
+  format?: "raw.zst";
 }
 
 export type InstallerStepId =
@@ -60,6 +73,7 @@ export interface WriteRequest {
     devicePath: string;
     sizeBytes: number;
     name?: string;
+    stableId?: string;
   };
 }
 
@@ -73,6 +87,8 @@ export interface WritePlan {
 }
 
 export interface UsbInstallerBackend {
+  /** True only when this backend streams, verifies, expands, and reads back raw.zst media. */
+  readonly canonicalRawZstdSupported?: boolean;
   listRemovableDrives(): Promise<RemovableDrive[]>;
   listImages(): Promise<ElizaOsImage[]>;
   createWritePlan(request: WriteRequest): Promise<WritePlan>;

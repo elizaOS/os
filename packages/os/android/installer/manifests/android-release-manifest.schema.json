@@ -98,6 +98,7 @@
         "required": [
           "partition",
           "filename",
+          "url",
           "sha256",
           "sizeBytes",
           "required",
@@ -111,6 +112,11 @@
           "filename": {
             "type": "string",
             "pattern": "^[^/\\\\]+\\.img$"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https://"
           },
           "sha256": {
             "type": "string",

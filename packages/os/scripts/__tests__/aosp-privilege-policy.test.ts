@@ -35,6 +35,11 @@ test("generic AOSP policy excludes the app-only secure-settings grant", () => {
       "Lp3ColorPolicyService",
     ]),
   );
+  expect(manifest.hardwareKeyRemap).toMatchObject({
+    status: "explicitly-unsupported-no-dedicated-key",
+    mechanism: "framework-role-routing",
+    applicableTargets: ["tegu", "Cuttlefish"],
+  });
   expect(privappPermissions).not.toContain(
     '<permission name="android.permission.WRITE_SECURE_SETTINGS" />',
   );

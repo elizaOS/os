@@ -1,5 +1,5 @@
 // Exercises USB installer browser flows and screenshot quality gates.
-import { expect, type Page } from "@playwright/test";
+import { expect, type Page } from "playwright/test";
 import sharp from "sharp";
 
 type ScreenshotOptions = NonNullable<Parameters<Page["screenshot"]>[0]>;

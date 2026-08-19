@@ -4,41 +4,50 @@
 	dh $@
 
 override_dh_auto_build:
-	# Use bun if available (installed by CI), fallback to npm
-	if command -v bun >/dev/null 2>&1; then \
-		node scripts/init-submodules.mjs || true; \
-		node scripts/disable-local-eliza-workspace.mjs || true; \
-		ELIZAOS_APP_SKIP_LOCAL_UPSTREAMS=1 bun install --ignore-scripts; \
-		bun run build; \
-	else \
-		npm install --ignore-scripts; \
-		npm run build; \
-	fi
+	set -eu; \
+	for executable in eliza-agent eliza-desktop eliza-doctor; do \
+		test -f "payload/bin/$$executable"; \
+		test ! -L "payload/bin/$$executable"; \
+		test -x "payload/bin/$$executable"; \
+	done; \
+	test -s upstream/desktop-artifact-manifest.json; \
+	test -s upstream/desktop-artifact-manifest.json.sig; \
+	test -s upstream/desktop-signing-public.key; \
+	readelf -h payload/bin/eliza-desktop >/dev/null
 
 override_dh_auto_install:
-	# Install the built distribution
-	install -d debian/elizaos-app/usr/lib/elizaos-app
-	cp -r dist/ debian/elizaos-app/usr/lib/elizaos-app/
-	cp elizaos-app.mjs debian/elizaos-app/usr/lib/elizaos-app/
-	cp package.json debian/elizaos-app/usr/lib/elizaos-app/
-	cp -r node_modules/ debian/elizaos-app/usr/lib/elizaos-app/ 2>/dev/null || true
-
-	# Install the plugins manifest
-	install -m 644 plugins.json debian/elizaos-app/usr/lib/elizaos-app/
-
-	# Create the CLI wrapper
-	install -d debian/elizaos-app/usr/bin
-	printf '#!/bin/sh\nexec /usr/bin/node /usr/lib/elizaos-app/elizaos-app.mjs "$$@"\n' \
-		> debian/elizaos-app/usr/bin/elizaos-app
-	chmod 755 debian/elizaos-app/usr/bin/elizaos-app
-
-	# Install systemd user service
-	install -m 644 packaging/debian/elizaos-app.service debian/elizaos-app/usr/lib/elizaos-app/elizaos-app.service
+	set -eu; \
+	install -d -m 0755 debian/elizaos-app/opt/elizaos; \
+	cp -a payload/. debian/elizaos-app/opt/elizaos/; \
+	for executable in eliza-agent eliza-desktop eliza-doctor; do \
+		install -D -m 0755 "debian/$$executable" \
+			"debian/elizaos-app/usr/bin/$$executable"; \
+	done
+	install -D -m 0644 debian/elizaos-agent.service \
+		debian/elizaos-app/usr/lib/systemd/user/elizaos-agent.service
+	install -D -m 0644 debian/elizaos-desktop.service \
+		debian/elizaos-app/usr/lib/systemd/user/elizaos-desktop.service
+	install -D -m 0644 debian/elizaos-session.target \
+		debian/elizaos-app/usr/lib/systemd/user/elizaos-session.target
+	install -D -m 0644 debian/80-elizaos.preset \
+		debian/elizaos-app/usr/lib/systemd/user-preset/80-elizaos.preset
+	install -D -m 0644 upstream/desktop-artifact-manifest.json \
+		debian/elizaos-app/usr/share/elizaos/desktop-artifact-manifest.json
+	install -D -m 0644 upstream/desktop-artifact-manifest.json.sig \
+		debian/elizaos-app/usr/share/elizaos/desktop-artifact-manifest.json.sig
+	install -D -m 0644 upstream/desktop-signing-public.key \
+		debian/elizaos-app/usr/share/elizaos/desktop-signing-public.key
 
 override_dh_auto_test:
-	# Skip tests during package build
+	readelf -h payload/bin/eliza-desktop >/dev/null
+
+# The upstream archive signature authenticates the exact executable bytes.
+# Debian packaging must not rewrite those native payloads after verification.
+override_dh_strip:
+	true
+
+override_dh_dwz:
 	true
 
 override_dh_auto_clean:
-	node ../scripts/rm-path-recursive.mjs dist node_modules
 	dh_auto_clean

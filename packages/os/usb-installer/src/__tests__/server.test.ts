@@ -39,18 +39,37 @@ const image: ElizaOsImage = {
   manifestVersion: 1,
 };
 
+const canonicalRawImage: ElizaOsImage = {
+  ...image,
+  url: "https://download.elizaos.ai/elizaos.raw.zst",
+  signatureUrl: "https://download.elizaos.ai/elizaos.raw.zst.sig",
+  format: "raw.zst",
+  checksumSha256: trustedChecksum,
+  sha256Compressed: trustedChecksum,
+  sha256Expanded: "fedcba9876543210".repeat(4),
+  compressedSize: 4 * 1024 ** 3,
+  expandedSize: 6 * 1024 ** 3,
+  sizeBytes: 4 * 1024 ** 3,
+  minDeviceBytes: 8 * 1024 ** 3,
+  minUsbSizeBytes: 8 * 1024 ** 3,
+};
+
 class FakeBackend implements UsbInstallerBackend {
   public createRequests: WriteRequest[] = [];
   public executedPlan: WritePlan | null = null;
 
-  constructor(public currentDrive: RemovableDrive = drive) {}
+  constructor(
+    public currentDrive: RemovableDrive = drive,
+    public currentImage: ElizaOsImage = image,
+    public canonicalRawZstdSupported = false,
+  ) {}
 
   async listRemovableDrives(): Promise<RemovableDrive[]> {
     return [this.currentDrive];
   }
 
   async listImages(): Promise<ElizaOsImage[]> {
-    return [image];
+    return [this.currentImage];
   }
 
   async createWritePlan(request: WriteRequest): Promise<WritePlan> {
@@ -59,7 +78,7 @@ class FakeBackend implements UsbInstallerBackend {
     return {
       request,
       drive: this.currentDrive,
-      image,
+      image: this.currentImage,
       steps: [],
       privilegedWriteImplemented: true,
     };
@@ -140,6 +159,37 @@ describe("USB installer server", () => {
     expect(res.status).toBe(500);
     await expect(json(res)).resolves.toMatchObject({
       error: expect.stringContaining("Raw USB writes are disabled"),
+    });
+  });
+
+  it("permits canonical raw.zst plans only for an explicitly capable backend", async () => {
+    process.env.ELIZAOS_USB_ENABLE_RAW_WRITE = "1";
+    const requestPlan = () =>
+      request("/plan", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          driveId: drive.id,
+          imageId: canonicalRawImage.id,
+          dryRun: false,
+          acknowledgeDataLoss: true,
+        }),
+      });
+
+    const blocked = await createUsbInstallerHandler(
+      new FakeBackend(drive, canonicalRawImage, false),
+    )(requestPlan());
+    expect(blocked.status).toBe(500);
+    await expect(json(blocked)).resolves.toMatchObject({
+      error: expect.stringContaining("streaming decompression"),
+    });
+
+    const accepted = await createUsbInstallerHandler(
+      new FakeBackend(drive, canonicalRawImage, true),
+    )(requestPlan());
+    expect(accepted.status).toBe(200);
+    await expect(json(accepted)).resolves.toMatchObject({
+      planId: expect.any(String),
     });
   });
 

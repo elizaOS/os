@@ -16,7 +16,7 @@ export default {
   app: {
     name: "elizaOS Setup",
     identifier: "ai.elizaos.setup",
-    version: "1.0.0",
+    version: process.env.ELIZAOS_RELEASE_VERSION ?? "1.0.0",
     description:
       "Flash elizaOS AOSP builds onto Pixel devices via ADB and fastboot.",
   },
@@ -45,6 +45,14 @@ export default {
         "android-installer/scripts/validate-release-manifest.mjs",
       "../android/installer/scripts/validate-post-flash.sh":
         "android-installer/scripts/validate-post-flash.sh",
+    },
+    mac: {
+      codesign: Boolean(process.env.ELECTROBUN_DEVELOPER_ID),
+      notarize: Boolean(
+        process.env.ELECTROBUN_APPLEAPIISSUER &&
+          process.env.ELECTROBUN_APPLEAPIKEY &&
+          process.env.ELECTROBUN_APPLEAPIKEYPATH,
+      ),
     },
   },
 } satisfies ElectrobunConfig;

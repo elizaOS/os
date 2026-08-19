@@ -1,223 +1,274 @@
-# elizaOS Live OS — CI/CD production plan
+# elizaOS OS CI/CD production status
 
-Status snapshot: **8+ days of nightly red, no signed ISO ever published from CI.**
-The scaffolding for production-grade signed releases is already wired
-(SLSA Sigstore via OIDC, SHA256SUMS, SBOM via anchore/syft, GPG-signed APT
-repo) — but the builds don't complete, so end users have no verifiable ISO.
+Status snapshot: **locally release-gated, not yet remotely release-proven** as
+of 2026-08-17. Do not cut a release until the required GitHub configuration is
+present and the publish-disabled coordinator run is green with inspected
+artifacts.
 
-This doc inventories what exists, what's broken, and a priority-ordered
-plan to ship signed reproducible multi-arch releases that downstream users
-can verify with `gh attestation verify <iso> --owner elizaOS`.
+This repository is the release authority for OS images, installers, update
+metadata, APT distribution, and their CI. Application and native-runtime source
+remain owned by `elizaOS/eliza` and are consumed through the reviewed immutable
+lock at `packages/os/release/eliza-source.lock.json`.
 
-## Where we are (audit, 2026-05-25)
+## Candidate release boundary
 
-### Workflows that exist
+The checked candidate is `v0.1.0-beta.1`, described by
+`packages/os/release/v0.1.0-beta.1/manifest.json`. Its current scope is a
+digital beta containing:
 
-| Workflow | Purpose | Status |
-|---|---|---|
-| `build-linux-iso.yml` | Build amd64/arm64/riscv64 ISO + SHA256SUMS + SBOM + SLSA attestation | 🔴 Failing every night for 8+ days. Same root cause across all 3 archs. |
-| `elizaos-os-full-release.yml` | Tag-triggered release manifest validation + cross-artifact SHA256SUMS + SLSA over SHA256SUMS | 🔴 Recorded `startup_failure`; coordinator repair is tracked in [#16279](https://github.com/elizaOS/eliza/issues/16279) |
-| `update-os-release-manifest.yml` | Manual checksum recovery from an exact existing release-asset inventory into an evidenced draft PR | 🟡 Fail-closed recovery contract is present; no automatic trigger and no direct protected-branch push |
-| `elizaos-os-release.yml` | Earlier release pipeline | 🟡 Status not audited |
-| `publish-apt-repo.yml` | GPG-signed Debian APT repo (`DEBIAN_GPG_PRIVATE_KEY` secret) | 🟡 Likely works when secret is configured; not run recently |
-| `supply-chain.yaml` | SBOM (SPDX 2.3) + Grype vulnerability scan, weekly Mon 06:00 UTC | ✅ Works |
-| `release-electrobun.yml` | Electrobun signed release | 🟡 Not audited here |
-| `android-release.yml` / `publish-aosp-update-manifest.yml` | AOSP/Android release | Separate from Linux ISO scope |
+- signed persistent mkosi images and filesystem SPDX SBOMs for `x86_64`,
+  `arm64`, and `riscv64`;
+- the three detached image signatures plus the signed discovery manifest;
+- authenticated native Debian packages for `amd64`, `arm64`, and `riscv64`;
+- signed Setup bundles for macOS, Linux, and Windows;
+- a signed Linux USB Installer bundle with canonical `raw.zst` streaming and
+  expanded-byte readback support;
+- one manifest-bound `SHA256SUMS` file and GitHub artifact attestations.
 
-Cross-platform coordination and npm publication are outside this OS-specific
-plan and remain under repair in
-[#16279](https://github.com/elizaOS/eliza/issues/16279) and
-[#16277](https://github.com/elizaOS/eliza/issues/16277), respectively. This
-inventory does not claim those retained paths are healthy.
+Android images and physical USB commerce are not in this candidate. Add either
+only through a reviewed manifest change backed by its real platform evidence.
 
-### Releases published (npm only, ZERO ISO assets)
+## Release architecture
 
-- v2.0.3 (2026-05-20) — latest stable
-- v2.0.1 (2026-05-19)
-- v2.0.0 (2026-05-19)
-- v2.0.0-beta.2 (2026-05-17) — pre-release
-- v2.0.0-alpha.535 (2026-05-02) — pre-release
+`elizaos-os-full-release.yml` is the sole GitHub Release writer. It is manual
+and defaults to `publish=false`. Component workflows only build, validate,
+attest, and upload Actions artifacts.
 
-None of these have a Linux ISO asset attached. Anyone who wants an
-elizaOS Live USB currently must build it locally — there is no signed
-download path.
+The coordinator performs these gates in order:
 
-## Root cause of the nightly red
+1. bind the requested tag, channel, tracked manifest, and source commit;
+2. build, QEMU-qualify, sign, and independently verify all three mkosi images,
+   then build Debian, Setup, and USB artifacts;
+3. require every manifest-declared producer output exactly once;
+4. populate and strictly validate one canonical release bundle;
+5. generate deterministic checksums and verify filename, digest, size, and
+   bytes agree one-to-one with the populated manifest;
+6. attest the complete bundle;
+7. rehearse APT signing against the current repository state and validate the
+   GitHub Pages boundary without publishing it;
+8. when and only when `sign=true` and `publish=true`, stage a verified draft
+   GitHub Release, publish the signed APT branch and Pages deployment, then
+   promote the exact draft after rechecking its tag and asset count.
 
-CI step `just build` in `linux/` runs the `elizaos-app` recipe
-which checks `${app_out}/bin/launcher` exists OR `ELIZAOS_BUILD_APP=1` is
-set. CI sets neither. With `ELIZAOS_BUILD_APP=1`, the recipe would build
-the Electrobun app artifact from source (~20-30 min) before `lb build`
-runs. Without it, the chroot hook (`9100-install-elizaos` or its
-predecessor `0010-elizaos-agent.hook.chroot`) fails with:
+Publication is protected by the `release` environment. Desktop signing and
+APT credentials are mandatory for a publishing run. The signed Setup and USB
+jobs conditionally bind that environment themselves, because a called reusable
+workflow does not inherit the caller's environment; unsigned PR validation
+does not request the environment. The administration steps are in
+[os-release-admin-checklist.md](./os-release-admin-checklist.md).
 
-```
-ERROR: /opt/elizaos-artifacts missing; objective images require real elizaOS agent artifacts.
-E: config/hooks/normal/0010-elizaos-agent.hook.chroot failed (exit non-zero).
-```
+## Cross-repository source and caching
 
-This fails identically across all 3 matrix archs (amd64, arm64, riscv64).
+All Eliza-consuming workflows read one immutable repository and commit pair
+from `eliza-source.lock.json`. Source-verification jobs check out that exact
+commit and recursively initialize Eliza-owned submodules; release producers
+download and authenticate signed upstream artifacts bound to the same commit.
+A scheduled/manual updater resolves the latest configured branch head and
+opens a reviewable PR; release-time jobs never resolve a moving branch.
 
-### Two fix options
+The lock currently resolves `elizaOS/eliza:develop` to
+`5929de2162ecffa1fff069faabca65779d7dcb0f` (upstream commit timestamp
+2026-08-18T04:42:14Z), which was the authenticated branch head at the latest
+audit. The updater's tests assert the immutable lock shape rather than a stale
+literal SHA, so future reviewed update PRs can pass CI while still forcing a
+new source-qualified build.
 
-**Option A — single-job build** (simpler, slower per matrix entry)
-Set `ELIZAOS_BUILD_APP: 1` in the build-iso step's env block. Build time per
-arch grows from ~30 min to ~60 min, but no second job, no artifact
-upload/download dance.
+CI caches are scoped to the inputs they accelerate:
 
-**Option B — split into prep-app + build-iso jobs** (faster overall, more moving parts)
-1. `prep-app` job (runs once per matrix arch on a beefier runner): bun
-   install + `bun run build:desktop` + upload-artifact the Electrobun
-   `elizaOS-dev` tree (~2.5 GB).
-2. `build-iso` job depends on prep-app: download-artifact, set
-   `ELIZAOS_APP_ARTIFACT`, run `just build`.
+- Bun's content-addressed download cache uses runner platform and the relevant
+  frozen lockfiles, with a platform-scoped prefix fallback so a lockfile change
+  reuses existing package archives and downloads only missing entries;
+- Turbo caches cover source verification tasks;
+- mkosi package downloads persist by immutable Debian snapshot timestamp and
+  architecture, so multiple OS commits using the same snapshot reuse the same
+  authenticated package bytes;
+- Linux application artifacts use the Eliza commit and build inputs;
+- live-build state uses the verified APT snapshot identity;
+- Docker uses the GitHub Actions BuildKit cache;
+- Gradle, Electrobun platform cores, VM upstreams, and RISC-V outputs have
+  platform-specific caches.
 
-Option A is the right first step. Option B is the optimization once A is
-green.
+The native lanes share a checksum-pinned Zig archive cache. Cuttlefish also
+restores its costly fused-inference CMake state and staged libraries only on an
+exact fingerprint of the Eliza commit, recursive submodule pins, native build
+sources, requested target set, Zig version, Android NDK version, and workflow
+revision; it deliberately has no prefix fallback that could turn stale native
+bytes into a false green.
 
-## Industry standards (what real distros do)
+## Current verification evidence
 
-| Practice | Reference | Where we are |
-|---|---|---|
-| Reproducible build (`SOURCE_DATE_EPOCH`) | Debian/Tails default | ✅ Set, verified in xorriso log |
-| GPG-signed Release / Repomd | Debian, Fedora, Arch, Ubuntu | ✅ `publish-apt-repo.yml` scaffold; ⚠️ never end-to-end verified |
-| SHA256SUMS file published alongside release | Universal | ✅ Scaffold in `build-linux-iso.yml`; ⚠️ never published (build fails) |
-| Detached signature (`SHA256SUMS.asc` / `SHA256SUMS.sig`) | Debian, Fedora | ❌ Not wired |
-| SLSA build provenance + `gh attestation verify` | Modern (k8s, Node.js, npm) | ✅ Scaffold via `actions/attest-build-provenance@v4`; ⚠️ never minted |
-| SBOM (SPDX 2.3 or CycloneDX) attached to release | NIST/EO 14028 compliance | ✅ Working via `supply-chain.yaml` + scaffolded in build-iso |
-| Multi-arch matrix | Debian (12+ arches), Fedora, Arch | 🟡 Matrix exists (amd64, arm64, riscv64) but all 3 fail |
-| Signed end-user flasher tool | Tails (Tails Cloner), Fedora Media Writer, Rufus (signed Windows binary) | ❌ No flasher exists |
-| `gh attestation verify` documented in release notes | Modern Sigstore practice | ❌ Not documented |
-| Long-term download mirrors / torrent fallback | Debian, Fedora, Tails | ❌ N/A — no ISO ever published |
+The latest complete local source verification on 2026-08-17 passed:
 
-## Plan of attack (priority order)
+- repository layout validation;
+- 6 TypeScript typecheck tasks;
+- 5 Biome lint tasks;
+- 138 Node release/security tests with zero skips;
+- 43 Bun workflow/Android contract tests;
+- workflow authority/immutability contract tests;
+- YAML parsing and whitespace/diff checks.
 
-### Phase 1 — Unstick the nightly (highest leverage)
+The Linux static boundary also passes the legacy live-image smoke suite, mkosi
+contract lint, and 56 Python unit tests. This is source evidence only: the local
+host has no mkosi binary and does not replace signed image or QEMU proof.
 
-1. **Fix `build-linux-iso.yml`**: add `ELIZAOS_BUILD_APP: 1` to the
-   build-iso step's env. Bump `timeout-minutes` from 110 → 180 to absorb
-   the ~30 min extra for the app build.
-2. **Confirm nightly turns green** for at least amd64. Re-run via
-   `workflow_dispatch` instead of waiting 24 hours.
-3. **If arm64/riscv64 still fail after the env fix**, gate those matrix
-   entries with `continue-on-error: true` until Phase 3 of the OS work
-   lands real per-arch builds (see `packages/os/toolchains/bun-riscv64/`
-   for the riscv64 bun cross-build pipeline).
+`actionlint` passes the complete current workflow set. The normal Linux verification job now
+provisions actionlint 1.7.12 from a checksum-pinned upstream archive and runs it
+as a required step, so the final workflow revision will receive a fresh lint
+result on the PR head.
 
-### Phase 2 — Fix the release tag path
+Setup and USB front-end builds and package tests pass locally. A macOS stable
+Electrobun package reached disk-image creation, where local `hdiutil` failed
+with `Device not configured`; the GitHub macOS signing/notarization job remains
+the authoritative packaging boundary.
 
-4. **Diagnose `elizaos-os-full-release.yml` startup_failure** under
-   [#16279](https://github.com/elizaOS/eliza/issues/16279). Likely
-   missing GitHub Environment configuration, missing required secrets,
-   or invalid `permissions:` block. The 0–3 sec failure suggests a
-   workflow-level rejection before any job runs.
-5. **End-to-end test on a `workflow_dispatch`** before the next release
-   tag — don't let a real release tag be the first time the chain runs.
-6. **Verify the artifact handoff** between `build-linux-iso` (which
-   uploads `elizaos-live-stable-*.iso` + `.sha256`) and
-   `elizaos-os-full-release` (which expects them in `_artifacts/`).
-   Until that automatic path is repaired, use
-   `update-os-release-manifest.yml` only as a manual recovery boundary: pin the
-   current `develop` SHA and release-tag SHA. The workflow snapshots stable
-   asset IDs, names, sizes, and available GitHub digests, downloads by asset ID,
-   rejects pre/post inventory drift or any extra/replaced byte set, and opens an
-   evidence-complete draft PR. Review that exact-head PR; never treat recovery
-   as a release coordinator.
+The homepage production bundle resolves its workspace-local Playwright binary,
+declares the WebAuthn browser runtime dynamically imported by `@stwd/sdk`, and
+pins Wrangler. Its Vite production build and 104 non-visual browser tests pass
+locally, with two credential-gated live Steward tests skipped. The complete
+visual run correctly fails because its macOS and Linux pixel baselines still
+represent the retired four-artifact download page and older site styling.
+Refresh and manually review both platform baseline sets before treating the
+homepage lane as green; do not weaken or silently bypass that gate.
 
-### Phase 3 — Verify end-user verification path
+The USB suite passed 109 tests locally. Two block-device integration tests are
+Linux-only and therefore do not run on a macOS workstation. The Linux CI lane
+must execute them, including the privileged virtual-block-device test, before
+release approval. The candidate manifest now requires package, browser E2E,
+and virtual-block-device evidence for the Linux USB Installer.
 
-7. Trigger `build-linux-iso.yml` via `workflow_dispatch` against develop.
-8. Download the resulting ISO + SHA256SUMS + SBOM from the artifact tab.
-9. Run `gh attestation verify <iso> --owner elizaOS`. This must succeed
-   — if it doesn't, the SLSA attestation isn't being minted correctly
-   even when the build completes.
-10. Add the verify command + sha256sum command to the release notes
-    template (`.github/release-template.md` or equivalent).
+Linux canonical `.raw.zst` execution now routes only through the signed
+metadata pipeline: bounded download, descriptor-signature verification,
+compressed digest verification, streaming decompression, privileged whole-disk
+write, flush, and exact expanded-byte readback. The server enables this path
+only for backends that explicitly advertise the complete capability. macOS and
+Windows remain fail-closed so their legacy ISO writers cannot receive compressed
+mkosi bytes; equivalent signed/elevated adapters and hardware evidence remain
+release blockers for those platforms.
 
-### Phase 4 — Extend matrix to true multi-arch
+The main CI workflow now has a dedicated canonical Linux USB virtual-block job.
+It creates an isolated removable `scsi_debug` device, serves a test-signed
+`.raw.zst`, executes the real privileged streaming path, and independently
+reads back the expanded bytes. Missing kernel-module infrastructure is a hard
+failure, not a skipped or warning-only green. This workstation cannot execute
+that Linux kernel boundary; the GitHub job is required evidence.
 
-11. **arm64** — already in the matrix. Once Phase 1 lands, this should
-    work since Bun + Electrobun both have official arm64 Linux releases
-    (`bun-linux-aarch64.zip`, `electrobun-{cef,cli,core}-linux-arm64.tar.gz`).
-    The Dockerfile + build.sh need parameterization to swap
-    `grub-efi-amd64-bin`/`linux-image-amd64` for the arm64 equivalents.
-12. **riscv64** — gated on (a) Shaw pushing electrobun-riscv64
-    enablement patches (current `upstreams/electrobun-patches/` only has
-    diagnostic instrumentation) AND (b) running Shaw's
-    `packages/os/toolchains/bun-riscv64/run-build.sh` to produce the
-    `bun-linux-riscv64-musl.zip` (~8h cross-compile). Workflow can
-    consume the resulting zip via `ELIZA_BUN_RISCV64_URL`.
+Release evidence is producer-bound rather than coordinator-declared. mkosi
+assembly/QEMU, SBOM, Lintian, desktop package tests, browser/virtual-block
+tests, signing, and SLSA claims are written only by their producing jobs after
+the corresponding gates succeed. Every record binds the exact payload digest,
+repository, source commit, workflow run, and attempt; release assembly rejects
+name-only, missing, duplicate, stale, or byte-mismatched evidence.
 
-### Phase 5 — Signed end-user USB flasher
+## Remote state that still blocks a release
 
-13. **Choose tech**: Rust + Tauri (cross-platform, signed bundles per
-    OS) OR a signed bash script + GUI overlay (Zenity/Yad).
-14. **Required behavior** (per `CLAUDE.md`):
-    - Show only eligible removable drives
-    - Verify image checksum + signature before writing
-    - Require destructive confirmation with the exact target device
-    - Refuse internal/root disks
-    - Write, sync, verify, save a non-secret local install log
-15. **Sign per platform**: notarized macOS package, signed Windows
-    installer, Linux AppImage with detached signature.
+The most recent audited scheduled ISO run failed in the SeaBIOS/OVMF smoke
+boundary after the expensive image build:
+[run 31990977862](https://github.com/elizaOS/os/actions/runs/31990977862).
+Its authenticated job log proves the ISO and BIOS boot completed and reached an
+`amnesia` shell, but `elizaos-agent.service` never became active and
+`127.0.0.1:31337` refused every health connection until timeout. The current
+worktree adds Tails' VM-only remote-shell handshake and captures remote-shell
+diagnostics, but that change is not boot evidence until a new Linux CI run is
+green under both SeaBIOS and OVMF. The orchestration test now exercises the
+remote-shell `signal_ready` and live-user probe protocol on hosts that permit
+Unix-domain listening sockets; the restricted macOS workspace still exercises
+the serial fallback and reports that integration boundary explicitly. Neither
+local path is evidence that the ISO boots.
 
-### Phase 6 — Long-term release hygiene
+An authenticated repository-settings audit on 2026-08-17 found that the
+required administration is not merely unconfirmed: `develop` has no branch
+protection, no GitHub environments exist, GitHub Pages is disabled, Actions
+cannot create pull requests, and there are no repository or environment
+release secrets. GitHub currently allows all Actions but does not enforce
+full-SHA pins; every checked-in external action is nevertheless pinned to a
+full 40-character commit and a workflow contract now preserves that invariant.
 
-16. **Torrent + IPFS fallback** for the ISO (Debian, Fedora, Tails all
-    publish torrents for resilience).
-17. **Mirror network** — publish via 2-3 mirrors with signed metadata.
-18. **Update channels** — `alpha`/`beta`/`stable`/`enterprise` rings
-    per `CLAUDE.md`, with manifest publishing to a
-    versioned URL.
-19. **Hardware support matrix** as part of release notes — what real
-    hardware has been tested per release.
-20. **Reproducibility verification** by a third party — Debian's
-    [reproducible-builds.org](https://reproducible-builds.org/) model.
-    Two independent builders → identical SHA256.
+The dead OVA and legacy ISO workflows have been removed; their source fixtures
+remain only for regression tests. `build-linux-mkosi.yml` now owns the
+canonical three-architecture assembly boundary: it authenticates the exact
+pinned upstream GTK/WebKitGTK artifact, uses a dated Debian snapshot and
+persistent package cache, QEMU-boots the expanded disk through removable USB,
+generates an SPDX inventory from the read-only mounted root filesystem, signs
+the complete image set, and independently verifies its discovery manifest.
 
-## Concrete next sessions
+That producer is intentionally only a partial qualification boundary. Its raw
+image evidence records contain `mkosi-release-build`, `qemu-uefi-usb`,
+`persistent-reboot`, `usb-expanded-readback`, and SLSA provenance. The virtual
+USB lane writes and reads back every expanded byte, boots the same writable
+disk twice, verifies first-boot home growth, and confirms a sentinel survives
+the second boot. The release assembler still rejects promotion until jobs add
+whole-disk and alongside installation, logged-in desktop acceptance, and
+physical hardware qualification. The required protected native runner labels are
+`elizaos-release-build` on x64, arm64, and riscv64 machines plus
+`elizaos-release-signing` on the signing host. Those runners and their pinned
+firmware directories are not configured remotely yet.
 
-- **Session A** (2h): Phase 1 — fix `ELIZAOS_BUILD_APP` env, push fix in
-  separate PR, re-run via workflow_dispatch, watch turn green. THIS
-  IS WHERE I'D START.
-- **Session B** (2h): Phase 2 — diagnose + fix
-  `elizaos-os-full-release.yml` startup_failure under #16279.
-- **Session C** (1h): Phase 3 — verify `gh attestation verify` works.
-- **Sessions D-E** (4-6h): Phase 4 arm64 — parameterize Dockerfile +
-  build.sh, test locally, push fix to multi-arch.
-- **Sessions F+** (open-ended): Phase 4 riscv64 (depends on Shaw),
-  Phase 5 flasher tool.
+The Debian producer no longer builds missing application files from an Eliza
+source checkout or labels native dependencies as `Architecture: all`. It
+authenticates the same signed upstream artifact, preserves the complete payload
+under `/opt/elizaos`, and emits distinct `amd64`, `arm64`, and `riscv64`
+packages. APT rehearsal requires one package of the same version for every
+architecture before signing repository metadata.
 
-## Why this matters
+The pinned Eliza source also does not yet produce the required signed native
+GTK/WebKitGTK artifacts named `elizaos-linux-desktop-{x86_64,arm64,riscv64}`.
+The canonical workflow will fail before image assembly until an authenticated
+upstream run supplies them; it cannot substitute the legacy kiosk or an
+unsigned artifact.
 
-Every day without a signed ISO published from CI is a day where:
-- Users have no verifiable way to get elizaOS Live USB
-- Each `git pull && just build` is "trust me, bro" — no chain of custody
-- Security researchers can't audit a single canonical artifact
-- The substantial SLSA/Sigstore scaffolding that's already wired earns
-  zero return on the investment
-- Phase 3 (multi-arch) work can't be validated by CI nightly until the
-  CI builds work at all
+At PR #16 head `29702105842761194fb4834fb6b9f8874d95d6c4`, OS verification
+[run 32099913713](https://github.com/elizaOS/os/actions/runs/32099913713) and
+release validation
+[run 32099913757](https://github.com/elizaOS/os/actions/runs/32099913757)
+completed successfully after an extended runner queue. Those green runs bind
+only that pushed commit. The newer local fail-closed evidence, canonical-image,
+USB virtual-block, and workflow-audit changes require their own PR-head runs;
+do not transfer the older green status to unpushed bytes.
 
-The fixes are not large. The first one is **a single env-var addition in
-the build step**.
+Before publishing, an administrator must provide or confirm:
 
-## Open questions / decisions needed
+- authenticated `elizaOS/os` Actions and artifact access;
+- Actions permission to create pull requests;
+- protected `develop` with the applicable required checks;
+- protected `release` and `github-pages` environments;
+- Pages configured to deploy through GitHub Actions;
+- Apple, Windows, APT, release-image Ed25519, desktop-artifact trust, and
+  cross-repository artifact credentials listed in the admin checklist;
+- an approved candidate scope and tag;
+- real three-architecture mkosi, Debian, installer, persistence, hardware, and
+  platform-signing evidence from the coordinator rehearsal.
 
-- **GPG signing keys** — who owns the elizaOS release signing key?
-  Where is it stored (GitHub Environment secret? Sigstore alone?)? Has
-  it been rotated recently?
-- **Mirror infrastructure** — does elizaOS have / want CDN-backed
-  mirrors for the ISO downloads, or rely on GitHub Releases (which has
-  per-release 2 GB asset cap)?
-- **Update channel cadence** — nightly vs weekly vs monthly for `beta`
-  channel? `stable` only on tagged releases?
-- **Hardware test matrix** — what's the minimum set of real-hardware
-  models we'll claim support for? Apple Silicon? Framework? ThinkPad?
-  Raspberry Pi 5 (arm64)? VisionFive 2 (riscv64)?
+## Required remote sequence
 
-## Living-doc references
+1. Submit the scoped repository changes to `develop` through a PR.
+2. Drive every applicable required check green; inspect failures at their real
+   boundary rather than weakening or skipping them.
+3. Dispatch `elizaOS Full OS Release` with:
+   - the reviewed version tag;
+   - a candidate manifest that passes `assert-canonical-linux-release.mjs`
+     (the tracked beta candidate now declares this canonical asset set);
+   - channel `beta`;
+   - `sign=true`;
+   - `publish=false`.
+4. Download `elizaos-release-bundle` and the signed APT rehearsal. Verify
+   checksums, attestations, signatures/notarization, mkosi QEMU/USB/persistence
+   logs, Debian install/lintian, installer behavior, SBOM, hardware results, and
+   failure-path evidence.
+5. Re-run at the same reviewed commit with `sign=true` and `publish=true`. The
+   coordinator stages a verified draft GitHub Release, publishes and deploys
+   the signed APT repository, rechecks the exact tag and asset count, and only
+   then makes the GitHub Release public.
+6. From clean clients, verify the GitHub Release, Pages-hosted `InRelease`, APT
+   signing fingerprint, package installation, and public download instructions.
 
-- HANDOFF (session memory): `~/.claude/projects/-home-nubs-Git-iqlabs/memory/HANDOFF_2026-05-25_phase2_done_phase3_plan.md`
-- Stale-cache bug note: an internal stale-cache investigation note
-- Distribution channels overview: `CLAUDE.md`
+Do not publish from an unverified working tree, substitute a floating Eliza
+branch, allow missing artifacts, or turn a platform failure into
+`continue-on-error` to make the release appear green.
+
+## Deferred distribution work
+
+The first beta deliberately does not claim true multi-architecture ISO support,
+Android device support, mirrors/torrents, or confidential-compute hardware
+support without their real build and boot evidence. Add those surfaces through
+their own manifest records, reproducible inputs, signed metadata, and target
+hardware or emulator proof.

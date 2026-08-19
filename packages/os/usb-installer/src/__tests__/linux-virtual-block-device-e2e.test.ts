@@ -1,13 +1,17 @@
 // Exercises USB installer server and dry-run application behavior.
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { Readable, Writable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
+import { createZstdCompress } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
 import { createUsbInstallerHandler } from "../../server";
 import { LinuxUsbInstallerBackend } from "../backend/linux-backend";
+import { createArtifactSignaturePayload } from "../backend/raw-image-pipeline";
 import type { ElizaOsImage, RemovableDrive } from "../backend/types";
 
 const execFileAsync = promisify(execFile);
@@ -21,12 +25,30 @@ const PRODUCT = "ELIZAUSBTEST";
 const VIRTUAL_USB_SIZE = 64 * 1024 ** 2;
 const IMAGE_SIZE = 4 * 1024 ** 2;
 const previousRawWriteGate = process.env.ELIZAOS_USB_ENABLE_RAW_WRITE;
+const previousReleaseKey =
+  process.env.ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64;
+const originalFetch = globalThis.fetch;
 
 let loadedScsiDebug = false;
 let cleanupPaths: string[] = [];
 
 function sha256(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+async function zstd(bytes: Buffer): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  await pipeline(
+    Readable.from(bytes),
+    createZstdCompress(),
+    new Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        chunks.push(Buffer.from(chunk));
+        callback();
+      },
+    }),
+  );
+  return Buffer.concat(chunks);
 }
 
 function request(pathname: string, init: RequestInit = {}) {
@@ -187,6 +209,13 @@ afterEach(async () => {
   } else {
     process.env.ELIZAOS_USB_ENABLE_RAW_WRITE = previousRawWriteGate;
   }
+  if (previousReleaseKey === undefined) {
+    delete process.env.ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64;
+  } else {
+    process.env.ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64 =
+      previousReleaseKey;
+  }
+  globalThis.fetch = originalFetch;
 
   await Promise.allSettled(
     cleanupPaths.map((targetPath) =>
@@ -200,13 +229,12 @@ afterEach(async () => {
 
 describe("Linux USB installer virtual block-device E2E", () => {
   scsiDebugIt(
-    "writes a trusted image to a disposable scsi_debug removable block device",
+    "writes and reads back a signed raw.zst image on a disposable scsi_debug device",
     async () => {
       if (!(await scsiDebugModuleAvailable())) {
-        console.warn(
-          "scsi_debug kernel module is unavailable; skipping virtual block-device proof on this host.",
+        throw new Error(
+          "scsi_debug kernel module is unavailable; required virtual block-device proof cannot run.",
         );
-        return;
       }
 
       process.env.ELIZAOS_USB_ENABLE_RAW_WRITE = "1";
@@ -220,9 +248,14 @@ describe("Linux USB installer virtual block-device E2E", () => {
       for (let i = 0; i < sourceBytes.length; i += 1) {
         sourceBytes[i] = (i * 17 + 23) % 251;
       }
+      const compressedBytes = await zstd(sourceBytes);
+      const keyPair = generateKeyPairSync("ed25519");
+      process.env.ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64 =
+        keyPair.publicKey
+          .export({ type: "spki", format: "der" })
+          .toString("base64");
 
       const imageId = `virtual-block-e2e-${process.pid}-${Date.now()}`;
-      cleanupPaths.push(path.join("/tmp/elizaos-installer", `${imageId}.iso`));
 
       const image: ElizaOsImage = {
         id: imageId,
@@ -232,12 +265,43 @@ describe("Linux USB installer virtual block-device E2E", () => {
         architecture: "x86_64",
         buildId: "virtual-block-e2e",
         publishedAt: "2026-05-19T00:00:00.000Z",
-        url: "file://virtual-block-e2e.iso",
-        checksumSha256: sha256(sourceBytes),
-        sizeBytes: sourceBytes.length,
+        url: "https://virtual-block.test/elizaos.raw.zst",
+        signatureUrl: "https://virtual-block.test/elizaos.raw.zst.sig",
+        checksumSha256: sha256(compressedBytes),
+        sizeBytes: compressedBytes.length,
         minUsbSizeBytes: sourceBytes.length,
         manifestVersion: 1,
+        schemaVersion: 1,
+        product: "elizaOS",
+        sequence: 1,
+        expires: "2099-01-01T00:00:00.000Z",
+        compressedSize: compressedBytes.length,
+        expandedSize: sourceBytes.length,
+        sha256Compressed: sha256(compressedBytes),
+        sha256Expanded: sha256(sourceBytes),
+        minDeviceBytes: sourceBytes.length,
+        format: "raw.zst",
       };
+      const signature = sign(
+        null,
+        createArtifactSignaturePayload(image),
+        keyPair.privateKey,
+      );
+      globalThis.fetch = Object.assign(
+        async (input: string | URL | Request) => {
+          const url = String(input);
+          if (url === image.signatureUrl) {
+            return new Response(Uint8Array.from(signature).buffer);
+          }
+          if (url === image.url) {
+            return new Response(Uint8Array.from(compressedBytes).buffer, {
+              headers: { "content-length": String(compressedBytes.length) },
+            });
+          }
+          throw new Error(`Unexpected virtual block-device fetch: ${url}`);
+        },
+        { preconnect: originalFetch.preconnect },
+      );
 
       class VirtualBlockLinuxBackend extends LinuxUsbInstallerBackend {
         async listImages(): Promise<ElizaOsImage[]> {
@@ -247,11 +311,6 @@ describe("Linux USB installer virtual block-device E2E", () => {
 
       const backend = new VirtualBlockLinuxBackend({
         findEscalator: async () => ({ command: "sudo", argsPrefix: ["-n"] }),
-        resolveImage: async (_image, imagePath, onProgress) => {
-          await fs.mkdir(path.dirname(imagePath), { recursive: true });
-          await fs.writeFile(imagePath, sourceBytes);
-          onProgress(1);
-        },
         heartbeatIntervalMs: 50,
         heartbeatStallMs: 10_000,
       });
@@ -305,7 +364,7 @@ describe("Linux USB installer virtual block-device E2E", () => {
 
       const readback = await fs.readFile(readbackPath);
       expect(readback.length).toBe(sourceBytes.length);
-      expect(sha256(readback)).toBe(image.checksumSha256);
+      expect(sha256(readback)).toBe(image.sha256Expanded);
       expect(Buffer.compare(readback, sourceBytes)).toBe(0);
     },
     30_000,

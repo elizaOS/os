@@ -3,7 +3,7 @@
 //
 // Usage:
 //   node update-release-manifest.mjs \
-//     --manifest  release/beta-2026-05-16/manifest.json \
+//     --manifest  packages/os/release/v0.1.0-beta.1/manifest.json \
 //     --artifact  linux-live-iso-amd64 \
 //     --sha256    <hex> \
 //     --size      <bytes> \

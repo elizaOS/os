@@ -131,8 +131,8 @@ export interface CreateFetchHandlerDeps {
 
 /**
  * Build the route handler in isolation from `Bun.serve`. Exported so tests
- * (running under vitest/node, where `globalThis.Bun` is absent) can wrap it
- * with `node:http` and exercise the real wire with `fetch`.
+ * (running under vitest/node, where `globalThis.Bun` is absent) can exercise
+ * the production routing and response logic with standard WHATWG requests.
  */
 export function createFetchHandler(
   deps: CreateFetchHandlerDeps = {},

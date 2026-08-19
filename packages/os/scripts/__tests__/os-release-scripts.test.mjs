@@ -1,7 +1,6 @@
 // Exercises OS release pipeline scripts and evidence checks.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -22,48 +21,99 @@ import {
 } from "../tee-evidence-bridge.mjs";
 
 const execFileAsync = promisify(execFile);
-const repoRoot = path.resolve(
-  fileURLToPath(new URL("../..", import.meta.url)),
-);
+const repoRoot = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const confidentialManifestPath = path.join(
   repoRoot,
   "release/confidential-2026-05-21/manifest.json",
 );
 const digest = (char) => `sha256:${char.repeat(64)}`;
-const releaseFixtureTest = (name, fn) =>
-  test(
-    name,
-    existsSync(defaultManifestPath) && existsSync(confidentialManifestPath)
-      ? {}
-      : { skip: "release manifest fixtures are not checked in" },
-    fn,
-  );
+const releaseFixtureTest = test;
+
+const releaseManifestWithConfidentialTee = async () => {
+  const [releaseManifest, confidentialManifest] = await Promise.all([
+    readJson(defaultManifestPath),
+    readJson(confidentialManifestPath),
+  ]);
+  return {
+    ...releaseManifest,
+    tee: {
+      enabled: true,
+      providers: [confidentialManifest.tee.provider],
+      policyDigest: confidentialManifest.tee.policyDigest,
+      measurements: confidentialManifest.tee.measurements,
+      requiredClaims: confidentialManifest.tee.claims,
+    },
+  };
+};
 
 releaseFixtureTest(
-  "beta manifest carries required beta dates, presale terms, and artifact classes",
+  "beta manifest binds every required digital distribution class",
   async () => {
     const manifest = await readJson(defaultManifestPath);
     const result = validateManifest(manifest);
 
     assert.equal(result.ok, true, result.errors.join("\n"));
-    assert.equal(manifest.release.availableDate, "2026-05-16");
-    assert.equal(manifest.commerce.usbKeyPresale.priceUsd, 49);
-    assert.equal(
-      manifest.commerce.usbKeyPresale.estimatedShipWindow.starts,
-      "2026-10-01",
+    assert.equal(manifest.release.availableDate, "2026-08-17");
+    assert.equal(manifest.commerce, undefined);
+    assert.deepEqual(
+      new Set(manifest.release.requiredArtifactKinds),
+      new Set([
+        "raw-image",
+        "package",
+        "sbom",
+        "setup-installer",
+        "usb-installer",
+        "signature",
+        "release-metadata",
+      ]),
     );
-    assert.equal(
-      manifest.commerce.usbKeyPresale.estimatedShipWindow.ends,
-      "2026-10-31",
+    for (const kind of manifest.release.requiredArtifactKinds) {
+      assert.ok(manifest.artifacts.some((artifact) => artifact.kind === kind));
+    }
+    assert.ok(manifest.artifacts.every((artifact) => artifact.source));
+    const linuxUsb = manifest.artifacts.find(
+      (artifact) => artifact.id === "usb-installer-linux-x64",
+    );
+    assert.deepEqual(
+      new Set(linuxUsb?.validation.requiredEvidence),
+      new Set([
+        "sha256-generated",
+        "package-test",
+        "browser-e2e",
+        "virtual-block-device",
+      ]),
+    );
+  },
+);
+
+releaseFixtureTest(
+  "checked homepage downloads match the candidate end-user artifact set",
+  async () => {
+    const [manifest, homepage] = await Promise.all([
+      readJson(defaultManifestPath),
+      readJson(
+        path.join(
+          repoRoot,
+          "homepage/public/downloads/elizaos-beta-manifest.json",
+        ),
+      ),
+    ]);
+    const publicKinds = new Set([
+      "raw-image",
+      "package",
+      "setup-installer",
+      "usb-installer",
+    ]);
+    assert.deepEqual(
+      homepage.artifacts.map((artifact) => artifact.id),
+      manifest.artifacts
+        .filter((artifact) => publicKinds.has(artifact.kind))
+        .map((artifact) => artifact.id),
     );
     assert.ok(
-      manifest.artifacts.some((artifact) => artifact.kind === "raw-image"),
-    );
-    assert.ok(
-      manifest.artifacts.some((artifact) => artifact.kind === "vm-image"),
-    );
-    assert.ok(
-      manifest.artifacts.some((artifact) => artifact.kind === "android-image"),
+      homepage.artifacts.every(
+        (artifact) => artifact.url === null && artifact.checksumUrl === null,
+      ),
     );
   },
 );
@@ -118,6 +168,51 @@ releaseFixtureTest(
     );
     assert.ok(
       result.errors.some((error) => error.includes("sizeBytes is required")),
+    );
+  },
+);
+
+releaseFixtureTest(
+  "evidence collection resolves its directory beside the candidate manifest",
+  async () => {
+    const temporary = await mkdtemp(
+      path.join(os.tmpdir(), "elizaos-release-evidence-"),
+    );
+    const candidateDirectory = path.join(temporary, "candidate");
+    const manifestPath = path.join(candidateDirectory, "manifest.json");
+    await mkdir(candidateDirectory, { recursive: true });
+    await writeFile(manifestPath, await readFile(defaultManifestPath, "utf8"));
+
+    await execFileAsync(
+      process.execPath,
+      ["scripts/collect-release-evidence.mjs", "--manifest", manifestPath],
+      { cwd: repoRoot },
+    );
+
+    const reportPath = path.join(
+      candidateDirectory,
+      "evidence",
+      "release-evidence.json",
+    );
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(report.release.id, "elizaos-os-v0.1.0-beta.1");
+    assert.equal(report.manifestValidation.ok, true);
+  },
+);
+
+releaseFixtureTest(
+  "release manifests reject path-escaping evidence directories",
+  async () => {
+    const manifest = await readJson(defaultManifestPath);
+    const result = validateManifest({
+      ...manifest,
+      validation: { ...manifest.validation, evidenceDirectory: "../outside" },
+    });
+    assert.equal(result.ok, false);
+    assert.ok(
+      result.errors.includes(
+        "validation.evidenceDirectory must be a safe relative path",
+      ),
     );
   },
 );
@@ -197,14 +292,16 @@ releaseFixtureTest(
       sourceManifest.artifacts.find(
         (artifact) => artifact.kind === "raw-image",
       ),
-      sourceManifest.artifacts.find((artifact) => artifact.kind === "vm-image"),
-      sourceManifest.artifacts.find(
-        (artifact) => artifact.kind === "android-image",
-      ),
+      sourceManifest.artifacts.find((artifact) => artifact.kind === "signature"),
+      sourceManifest.artifacts.find((artifact) => artifact.kind === "package"),
     ];
 
     const manifest = {
       ...sourceManifest,
+      release: {
+        ...sourceManifest.release,
+        requiredArtifactKinds: ["raw-image", "signature", "package"],
+      },
       artifacts: fixtureArtifacts.map((artifact) => ({
         ...artifact,
         status: "candidate",
@@ -274,6 +371,74 @@ releaseFixtureTest(
         checksumsPath,
       ],
       { cwd: repoRoot },
+    );
+
+    const checksums = await readFile(checksumsPath, "utf8");
+    const firstEntry = checksumRecords[0];
+    await writeFile(
+      checksumsPath,
+      `${checksums}${firstEntry.sha256}  ${firstEntry.filename}\n`,
+    );
+    await assert.rejects(
+      execFileAsync(
+        process.execPath,
+        [
+          "scripts/verify-release-checksums.mjs",
+          "--manifest",
+          manifestPath,
+          "--artifact-root",
+          artifactRoot,
+          "--checksums",
+          checksumsPath,
+        ],
+        { cwd: repoRoot },
+      ),
+      (error) => error.stderr.includes("duplicate checksum entry"),
+    );
+
+    await writeFile(
+      checksumsPath,
+      `${checksums}${firstEntry.sha256}  undeclared.bin\n`,
+    );
+    await assert.rejects(
+      execFileAsync(
+        process.execPath,
+        [
+          "scripts/verify-release-checksums.mjs",
+          "--manifest",
+          manifestPath,
+          "--artifact-root",
+          artifactRoot,
+          "--checksums",
+          checksumsPath,
+        ],
+        { cwd: repoRoot },
+      ),
+      (error) => error.stderr.includes("not declared by the manifest"),
+    );
+
+    const wrongSizeManifest = await readJson(manifestPath);
+    wrongSizeManifest.artifacts[0].sizeBytes += 1;
+    await writeFile(
+      manifestPath,
+      `${JSON.stringify(wrongSizeManifest, null, 2)}\n`,
+    );
+    await writeFile(checksumsPath, checksums);
+    await assert.rejects(
+      execFileAsync(
+        process.execPath,
+        [
+          "scripts/verify-release-checksums.mjs",
+          "--manifest",
+          manifestPath,
+          "--artifact-root",
+          artifactRoot,
+          "--checksums",
+          checksumsPath,
+        ],
+        { cwd: repoRoot },
+      ),
+      (error) => error.stderr.includes("size mismatch"),
     );
   },
 );
@@ -475,7 +640,7 @@ test("TEE measurement validator rejects missing required digests", () => {
 releaseFixtureTest(
   "confidential manifest with a valid TEE block validates",
   async () => {
-    const manifest = await readJson(confidentialManifestPath);
+    const manifest = await releaseManifestWithConfidentialTee();
     const result = validateManifest(manifest);
     assert.equal(result.ok, true, result.errors.join("\n"));
     assert.equal(manifest.tee.enabled, true);
@@ -488,7 +653,7 @@ releaseFixtureTest(
 releaseFixtureTest(
   "manifest declaring TEE but missing a required digest fails closed",
   async () => {
-    const manifest = await readJson(confidentialManifestPath);
+    const manifest = await releaseManifestWithConfidentialTee();
     const broken = {
       ...manifest,
       tee: {
@@ -508,7 +673,7 @@ releaseFixtureTest(
 releaseFixtureTest(
   "manifest declaring an inference measurement must assert npuProtected + ioProtected",
   async () => {
-    const manifest = await readJson(confidentialManifestPath);
+    const manifest = await releaseManifestWithConfidentialTee();
     const broken = {
       ...manifest,
       tee: {
@@ -536,7 +701,7 @@ releaseFixtureTest(
 releaseFixtureTest(
   "TEE block rejects unknown / malformed measurement names",
   async () => {
-    const manifest = await readJson(confidentialManifestPath);
+    const manifest = await releaseManifestWithConfidentialTee();
     const unknownName = {
       ...manifest,
       tee: {
@@ -654,10 +819,7 @@ releaseFixtureTest(
     const manifest = await readJson(confidentialManifestPath);
     const golden = goldenMeasurementsOf(manifest);
     const tampered = await readJson(
-      path.join(
-        repoRoot,
-        "release/schema/tee-evidence.tampered.mock.json",
-      ),
+      path.join(repoRoot, "release/schema/tee-evidence.tampered.mock.json"),
     );
 
     assert.throws(
@@ -688,11 +850,7 @@ test("evidence bridge CLI fails closed when real hardware quote is requested", a
   await assert.rejects(
     execFileAsync(
       process.execPath,
-      [
-        "scripts/tee-evidence-bridge.mjs",
-        "--quote-source",
-        "tappd",
-      ],
+      ["scripts/tee-evidence-bridge.mjs", "--quote-source", "tappd"],
       { cwd: repoRoot },
     ),
     (error) => {

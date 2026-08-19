@@ -133,6 +133,7 @@ function addExpectedDriveSnapshot(request: WriteRequest, plan: WritePlan) {
       devicePath: plan.drive.devicePath,
       sizeBytes: plan.drive.sizeBytes,
       name: plan.drive.name,
+      ...(plan.drive.stableId ? { stableId: plan.drive.stableId } : {}),
     },
   };
 }
@@ -165,7 +166,9 @@ export function createUsbInstallerHandler(
       return plan;
     }
 
-    assertWritePlanAllowed(plan);
+    assertWritePlanAllowed(plan, {
+      canonicalRawZstdSupported: backend.canonicalRawZstdSupported === true,
+    });
     const planId = randomUUID();
     plans.set(planId, {
       plan,
@@ -199,7 +202,9 @@ export function createUsbInstallerHandler(
       dryRun: false,
       acknowledgeDataLoss: true,
     });
-    assertWritePlanAllowed(freshPlan);
+    assertWritePlanAllowed(freshPlan, {
+      canonicalRawZstdSupported: backend.canonicalRawZstdSupported === true,
+    });
 
     await backend.executeWritePlan(freshPlan, onProgress);
     plans.delete(planId);

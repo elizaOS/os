@@ -1,5 +1,5 @@
 // Exercises USB installer browser flows and screenshot quality gates.
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Page, test } from "playwright/test";
 import { mockInstallerApi } from "./mock-installer-api";
 import { captureScreenshotWithQualityRetry } from "./screenshot-quality";
 
