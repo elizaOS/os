@@ -230,6 +230,15 @@ describe("OS release workflow authority", () => {
     }
   });
 
+  test("Debian package publication fails when lintian fails", () => {
+    const workflow = readFileSync(
+      workflowPath("build-debian-package.yml"),
+      "utf8",
+    );
+    expect(workflow).toContain('exit "$LINTIAN_EXIT"');
+    expect(workflow).not.toContain("annotations only; not failing build");
+  });
+
   test("every checked-in AOSP brand resolves to an OS-owned vendor tree", () => {
     const brandDirectory = join(repositoryRoot, "scripts", "distro-android");
     const configs = readdirSync(brandDirectory).filter((entry) =>

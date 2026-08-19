@@ -110,9 +110,8 @@ jobs:
           echo "Found .deb: $DEB ($DEB_SIZE bytes)"
 
       - name: Lint .deb with lintian
-        # lintian is installed in the "Install Debian build tools" step above.
-        # Findings are surfaced as GitHub annotations but do NOT fail the build —
-        # this is a visibility step. Flip to --fail-on-error once noise is acceptable.
+        # Packaging defects are release blockers. Preserve annotations, then
+        # propagate lintian's exit status instead of publishing a known-bad .deb.
         if: steps.find_deb.outputs.deb_path != ''
         run: |
           set +e
@@ -127,7 +126,8 @@ jobs:
               P:*) echo "::notice::lintian: $line" ;;
             esac
           done < lintian.log
-          echo "lintian exit code: $LINTIAN_EXIT (annotations only; not failing build)"
+          echo "lintian exit code: $LINTIAN_EXIT"
+          exit "$LINTIAN_EXIT"
 
       - name: Upload lintian log
         if: always() && steps.find_deb.outputs.deb_path != ''
