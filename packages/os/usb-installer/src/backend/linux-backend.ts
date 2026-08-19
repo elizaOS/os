@@ -592,7 +592,11 @@ export async function writeCanonicalRawImageToLinuxDevice(
     async sync() {
       if (!writeCompletion) throw new Error("Raw image write never started.");
       await writeCompletion;
-      await execFileFn("sync", [drive.devicePath]);
+      await execFileFn(escalator.command, [
+        ...escalator.argsPrefix,
+        "sync",
+        drive.devicePath,
+      ]);
     },
   };
 

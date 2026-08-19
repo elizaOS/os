@@ -147,7 +147,20 @@ export class FileReleaseSequenceStore implements ReleaseSequenceStore {
       await fs.rename(temporaryPath, this.statePath);
       const directoryHandle = await fs.open(directory, "r");
       try {
-        await directoryHandle.sync();
+        try {
+          await directoryHandle.sync();
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (
+            process.platform !== "win32" ||
+            !["EPERM", "EINVAL", "ENOTSUP"].includes(code ?? "")
+          ) {
+            throw error;
+          }
+          // Windows does not expose POSIX directory fsync. The file itself was
+          // fsynced before the same-volume atomic rename above; all other
+          // platforms and error codes remain fail-closed.
+        }
       } finally {
         await directoryHandle.close();
       }

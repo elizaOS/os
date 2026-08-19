@@ -230,7 +230,10 @@ describe("LinuxUsbInstallerBackend.executeWritePlan", () => {
     expect(spawnCalls[0]?.args).toContain("of=/dev/sdb");
     expect(spawnCalls[1]?.args).toContain(`count=${expanded.length}`);
     expect(spawnCalls[1]?.args).toContain("iflag=count_bytes");
-    expect(execCalls).toContainEqual({ command: "sync", args: ["/dev/sdb"] });
+    expect(execCalls).toContainEqual({
+      command: "pkexec",
+      args: ["sync", "/dev/sdb"],
+    });
   });
 
   it("routes canonical raw.zst only through the verified streaming writer", async () => {

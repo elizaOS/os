@@ -8,22 +8,28 @@ export function configurePackagedReleaseSequenceState(
   platform: NodeJS.Platform = process.platform,
   userHome: string = homedir(),
 ): string {
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
   const configured = env[RELEASE_SEQUENCE_STATE_PATH_ENV];
-  if (configured) return configured;
+  if (configured) {
+    if (!pathApi.isAbsolute(configured)) {
+      throw new Error("Packaged release sequence state path must be absolute.");
+    }
+    return configured;
+  }
 
   let stateRoot: string;
   if (platform === "darwin") {
-    stateRoot = path.join(userHome, "Library", "Application Support");
+    stateRoot = pathApi.join(userHome, "Library", "Application Support");
   } else if (platform === "win32") {
-    stateRoot = env.LOCALAPPDATA || path.join(userHome, "AppData", "Local");
+    stateRoot = env.LOCALAPPDATA || pathApi.join(userHome, "AppData", "Local");
   } else {
-    stateRoot = env.XDG_STATE_HOME || path.join(userHome, ".local", "state");
+    stateRoot = env.XDG_STATE_HOME || pathApi.join(userHome, ".local", "state");
   }
 
-  if (!path.isAbsolute(stateRoot)) {
+  if (!pathApi.isAbsolute(stateRoot)) {
     throw new Error("Packaged release sequence state root must be absolute.");
   }
-  const statePath = path.join(
+  const statePath = pathApi.join(
     stateRoot,
     "elizaOS",
     "usb-installer",

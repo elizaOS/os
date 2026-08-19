@@ -15,7 +15,7 @@ describe("packaged release sequence state", () => {
     ],
     [
       "win32",
-      "/Users/eliza/AppData/Local/elizaOS/usb-installer/release-sequence.json",
+      "C:\\Users\\eliza\\AppData\\Local\\elizaOS\\usb-installer\\release-sequence.json",
     ],
   ] as const)(
     "selects an absolute per-user path on %s",
@@ -25,7 +25,11 @@ describe("packaged release sequence state", () => {
         configurePackagedReleaseSequenceState(
           env,
           platform,
-          platform === "linux" ? "/home/eliza" : "/Users/eliza",
+          platform === "linux"
+            ? "/home/eliza"
+            : platform === "win32"
+              ? "C:\\Users\\eliza"
+              : "/Users/eliza",
         ),
       ).toBe(expected);
       expect(env[RELEASE_SEQUENCE_STATE_PATH_ENV]).toBe(expected);
@@ -46,6 +50,13 @@ describe("packaged release sequence state", () => {
         { XDG_STATE_HOME: "relative/state" },
         "linux",
         "/home/eliza",
+      ),
+    ).toThrow("must be absolute");
+    expect(() =>
+      configurePackagedReleaseSequenceState(
+        { [RELEASE_SEQUENCE_STATE_PATH_ENV]: "relative/state.json" },
+        "win32",
+        "C:\\Users\\eliza",
       ),
     ).toThrow("must be absolute");
   });
