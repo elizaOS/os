@@ -225,30 +225,48 @@ describe("OS release workflow authority", () => {
   });
 
   test("desktop distributors share the exact Electrobun CLI and runtime cache", () => {
-    const caches = [
+    const workflowNames = [
       "release-elizaos-setup.yml",
       "release-usb-installer.yml",
-    ].map((name) =>
+    ];
+    const caches = workflowNames.map((name) =>
       namedJobStep(
         parseWorkflow(name),
         "build",
-        "Restore Electrobun CLI and core cache",
+        "Restore checksum-pinned Electrobun release assets",
       ),
     );
 
     for (const cache of caches) {
-      expect(cache.with?.path).toContain(
-        "node_modules/.bun/electrobun@*/node_modules/electrobun/.cache/electrobun*",
-      );
-      expect(cache.with?.path).toContain(
-        "node_modules/.bun/electrobun@*/node_modules/electrobun/dist-*",
-      );
+      expect(cache.with?.path).toBe("~/.cache/elizaos/electrobun/v1.18.1");
       expect(cache.with?.["restore-keys"]).toBeUndefined();
     }
     expect(caches[0]?.with?.key).toBe(caches[1]?.with?.key);
     expect(caches[0]?.with?.key).toBe(
-      "electrobun-runtime-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}",
+      "electrobun-assets-v1.18.1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/os/scripts/provision-electrobun-runtime.sh') }}",
     );
+
+    for (const name of workflowNames) {
+      const provision = namedJobStep(
+        parseWorkflow(name),
+        "build",
+        "Verify and provision Electrobun runtime",
+      );
+      expect(provision.run).toBe(
+        "packages/os/scripts/provision-electrobun-runtime.sh",
+      );
+    }
+
+    const provisioner = readFileSync(
+      join(
+        repositoryRoot,
+        "packages/os/scripts/provision-electrobun-runtime.sh",
+      ),
+      "utf8",
+    );
+    expect(provisioner).toContain('version="1.18.1"');
+    expect(provisioner.match(/[a-f0-9]{64}/g)?.length).toBe(15);
+    expect(provisioner).toContain("verify_sha256");
   });
 
   test("browser release lanes share an exact Playwright Chromium cache", () => {

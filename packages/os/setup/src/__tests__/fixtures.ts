@@ -26,3 +26,5 @@ export const FIXTURE_BUILDS: AospBuild[] = [
     sizeBytes: 8 * 1024 ** 3,
   },
 ];
+
+export const TEST_BUILDS = FIXTURE_BUILDS;

@@ -38,7 +38,7 @@ test("USB installer has no fabricated production image inventory", async () => {
     const backend = await source(
       `packages/os/usb-installer/src/backend/${platform}-backend.ts`,
     );
-    assert.match(backend, /fetchPublishedIsoImages/);
+    assert.match(backend, /fetch(?:PublishedIsoImages|ReleaseImages)/);
   }
 
   const discovery = await source(

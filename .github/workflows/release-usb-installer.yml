@@ -65,13 +65,14 @@ jobs:
           key: bun-downloads-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
           restore-keys: bun-downloads-${{ runner.os }}-${{ runner.arch }}-
       - run: bun install --frozen-lockfile
-      - name: Restore Electrobun CLI and core cache
+      - name: Restore checksum-pinned Electrobun release assets
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          path: |
-            node_modules/.bun/electrobun@*/node_modules/electrobun/.cache/electrobun*
-            node_modules/.bun/electrobun@*/node_modules/electrobun/dist-*
-          key: electrobun-runtime-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
+          path: ~/.cache/elizaos/electrobun/v1.18.1
+          key: electrobun-assets-v1.18.1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/os/scripts/provision-electrobun-runtime.sh') }}
+      - name: Verify and provision Electrobun runtime
+        shell: bash
+        run: packages/os/scripts/provision-electrobun-runtime.sh
       - run: bun run --cwd packages/os/usb-installer build
       - run: bun run --cwd packages/os/usb-installer typecheck
       - run: bun run --cwd packages/os/usb-installer test
