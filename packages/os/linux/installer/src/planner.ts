@@ -107,6 +107,15 @@ export function validateDiskInventory(disk: DiskInventory): void {
   ) {
     throw new Error("Only GPT inventory may include a GPT disk GUID.");
   }
+  if (
+    (disk.partitionTable === "gpt" &&
+      typeof disk.gptRedundancyVerified !== "boolean") ||
+    (disk.partitionTable !== "gpt" && disk.gptRedundancyVerified !== undefined)
+  ) {
+    throw new Error(
+      "GPT inventory must explicitly report redundant main/backup verification.",
+    );
+  }
   if (!FIRMWARE_MODES.has(disk.firmware))
     throw new Error("Unsupported firmware inventory value.");
   if (typeof disk.currentBootSource !== "boolean")
@@ -232,6 +241,7 @@ export function createDiskInventoryFingerprint(disk: DiskInventory): string {
       sizeBytes: disk.sizeBytes,
       logicalSectorBytes: disk.logicalSectorBytes,
       partitionTable: disk.partitionTable,
+      gptRedundancyVerified: disk.gptRedundancyVerified ?? null,
       currentBootSource: disk.currentBootSource,
       firmware: disk.firmware,
       protectedReason: disk.protectedReason ?? null,
@@ -251,6 +261,11 @@ function assertTarget(request: InstallRequest, disk: DiskInventory): void {
     throw new Error(
       "Refusing to install onto the disk that booted the installer.",
     );
+  if (disk.partitionTable === "gpt" && disk.gptRedundancyVerified !== true) {
+    throw new Error(
+      "Refusing to install because GPT main/backup redundancy is unverified.",
+    );
+  }
   if (disk.protectedReason)
     throw new Error(`Target disk is protected: ${disk.protectedReason}`);
   if (
@@ -437,6 +452,7 @@ function planBody(
         hardwareIdentity: { ...disk.hardwareIdentity },
         sizeBytes: disk.sizeBytes,
         logicalSectorBytes: disk.logicalSectorBytes,
+        gptRedundancyVerified: disk.gptRedundancyVerified,
       },
       preservedPartitionIds: [],
       partitions,
@@ -561,6 +577,7 @@ function planBody(
       hardwareIdentity: { ...disk.hardwareIdentity },
       sizeBytes: disk.sizeBytes,
       logicalSectorBytes: disk.logicalSectorBytes,
+      gptRedundancyVerified: disk.gptRedundancyVerified,
     },
     preservedPartitionIds: disk.partitions.map((item) => item.id).sort(),
     partitions,

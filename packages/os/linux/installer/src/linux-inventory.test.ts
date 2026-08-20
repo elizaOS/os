@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseLinuxLsblkInventory } from "./linux-inventory";
+import {
+  isSgdiskRedundancyVerified,
+  parseLinuxLsblkInventory,
+} from "./linux-inventory";
 
 const GIB = 1024 ** 3;
 const MIB = 1024 ** 2;
@@ -79,6 +82,7 @@ function serializedInventory(
 function parse(
   serialized = serializedInventory(),
   partitionTableVerified = true,
+  gptRedundancyVerified = true,
 ) {
   return parseLinuxLsblkInventory({
     stableId: "virtio-QEMU-DISK-0001",
@@ -88,10 +92,57 @@ function parse(
     firmware: "uefi",
     serialized,
     partitionTableVerified,
+    gptRedundancyVerified,
   });
 }
 
 describe("Linux read-only disk inventory parser", () => {
+  it("rejects sgdisk reports that recover corruption despite exit zero", () => {
+    expect(
+      isSgdiskRedundancyVerified({
+        exitCode: 0,
+        stdout:
+          "No problems found. 67517 free sectors available in 2 segments.\n",
+        stderr: "",
+      }),
+    ).toBe(true);
+    expect(
+      isSgdiskRedundancyVerified({
+        exitCode: 0,
+        stdout: [
+          "Caution: invalid backup GPT header, but valid main header; regenerating backup header from main header.",
+          "Warning! One or more CRCs don't match. You should repair the disk!",
+          "Main header: OK",
+          "Backup header: ERROR",
+          "No problems found. 67517 free sectors available in 2 segments.",
+        ].join("\n"),
+        stderr: "",
+      }),
+    ).toBe(false);
+    expect(
+      isSgdiskRedundancyVerified({
+        exitCode: 0,
+        stdout:
+          "Problem: main and backup partition tables do not match.\nNo problems found.\n",
+        stderr: "",
+      }),
+    ).toBe(false);
+    expect(
+      isSgdiskRedundancyVerified({
+        exitCode: 0,
+        stdout: "No problems found. 1 free sector available.\n",
+        stderr: "Warning: mismatched main and backup data.\n",
+      }),
+    ).toBe(false);
+    expect(
+      isSgdiskRedundancyVerified({
+        exitCode: 2,
+        stdout: "No problems found. 1 free sector available.\n",
+        stderr: "",
+      }),
+    ).toBe(false);
+  });
+
   it("binds whole-disk hardware identity, GPT IDs, boundaries, and free extents", () => {
     const inventory = parse();
 
@@ -102,6 +153,7 @@ describe("Linux read-only disk inventory parser", () => {
       gptDiskGuid: "b5afe67e-7ed7-4f10-99bd-efb8173c53ce",
     });
     expect(inventory.logicalSectorBytes).toBe(512);
+    expect(inventory.gptRedundancyVerified).toBe(true);
     expect(inventory.partitions).toHaveLength(2);
     expect(inventory.partitions[0]).toMatchObject({
       id: "b27e2419-9e58-416e-a921-d8d51a443692",
@@ -139,6 +191,9 @@ describe("Linux read-only disk inventory parser", () => {
     expect(parse(serializedInventory(), false).protectedReason).toMatch(
       /verification failed/,
     );
+    expect(parse(serializedInventory(), true, false).protectedReason).toMatch(
+      /GPT main\/backup/,
+    );
   });
 
   it("does not require partition-table verification for an empty disk", () => {
@@ -163,6 +218,7 @@ describe("Linux read-only disk inventory parser", () => {
         firmware: "unknown",
         serialized: serializedInventory(),
         partitionTableVerified: true,
+        gptRedundancyVerified: true,
       }).protectedReason,
     ).toMatch(/Firmware/);
   });

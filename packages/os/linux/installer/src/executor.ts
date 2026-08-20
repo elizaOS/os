@@ -87,6 +87,7 @@ function assertTargetIdentity(
     inventory.path !== plan.target.path ||
     inventory.sizeBytes !== plan.target.sizeBytes ||
     inventory.logicalSectorBytes !== plan.target.logicalSectorBytes ||
+    inventory.gptRedundancyVerified !== plan.target.gptRedundancyVerified ||
     inventory.hardwareIdentity.serial !== plan.target.hardwareIdentity.serial ||
     inventory.hardwareIdentity.wwn !== plan.target.hardwareIdentity.wwn ||
     inventory.hardwareIdentity.firmwarePath !==

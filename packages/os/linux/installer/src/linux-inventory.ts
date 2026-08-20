@@ -16,6 +16,7 @@ const MBR_PARTUUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{2}$/;
 const LSBLK = "/usr/bin/lsblk";
 const UDEVADM = "/usr/bin/udevadm";
 const SFDISK = "/usr/sbin/sfdisk";
+const SGDISK = "/usr/sbin/sgdisk";
 
 interface LsblkDevice {
   path?: unknown;
@@ -54,6 +55,21 @@ export interface LinuxInventoryCommandRunner {
     command: string,
     args: readonly string[],
   ): Promise<LinuxInventoryCommandResult>;
+}
+
+const SGDISK_FAILURE_PATTERN =
+  /\b(?:warning|caution|error|corrupt|damaged|invalid|mismatch(?:ed)?|problems?)\b|\b(?:doesn't|does not|don't|do not)\s+match\b/i;
+
+export function isSgdiskRedundancyVerified(
+  result: LinuxInventoryCommandResult,
+): boolean {
+  const report = `${result.stdout}\n${result.stderr}`;
+  const cleanReport = report.replace(/\bNo problems found\./g, "");
+  return (
+    result.exitCode === 0 &&
+    /\bNo problems found\./.test(report) &&
+    !SGDISK_FAILURE_PATTERN.test(cleanReport)
+  );
 }
 
 class ExecFileCommandRunner implements LinuxInventoryCommandRunner {
@@ -251,6 +267,7 @@ export function parseLinuxLsblkInventory(options: {
   firmware: DiskInventory["firmware"];
   serialized: string;
   partitionTableVerified: boolean;
+  gptRedundancyVerified: boolean;
 }): DiskInventory {
   let document: LsblkDocument;
   try {
@@ -300,13 +317,15 @@ export function parseLinuxLsblkInventory(options: {
       ? "Partition-table type is unknown."
       : partitionTable !== "none" && !options.partitionTableVerified
         ? "Partition-table verification failed."
-        : options.firmware === "unknown"
-          ? "Firmware mode is unknown."
-          : readOnly
-            ? "Target disk is read-only."
-            : removable
-              ? "Target disk is removable media."
-              : undefined;
+        : partitionTable === "gpt" && !options.gptRedundancyVerified
+          ? "GPT main/backup redundancy verification failed."
+          : options.firmware === "unknown"
+            ? "Firmware mode is unknown."
+            : readOnly
+              ? "Target disk is read-only."
+              : removable
+                ? "Target disk is removable media."
+                : undefined;
   const inventory: DiskInventory = {
     stableId: options.stableId,
     path: options.stablePath,
@@ -326,6 +345,9 @@ export function parseLinuxLsblkInventory(options: {
     sizeBytes,
     logicalSectorBytes: sectorBytes,
     partitionTable,
+    ...(partitionTable === "gpt"
+      ? { gptRedundancyVerified: options.gptRedundancyVerified }
+      : {}),
     currentBootSource: devices.some((device) =>
       mounts(device.mountpoints).includes("/"),
     ),
@@ -375,22 +397,24 @@ export class LinuxInstallInventoryProvider implements InstallInventoryProvider {
         "Linux inventory stable ID does not resolve to a block device.",
       );
     }
-    const [lsblk, firmwarePath, verification] = await Promise.all([
-      this.runner.run(LSBLK, [
-        "--json",
-        "--bytes",
-        "--paths",
-        "--output",
-        "PATH,KNAME,PKNAME,TYPE,SIZE,LOG-SEC,PTTYPE,PTUUID,FSTYPE,MOUNTPOINTS,PARTTYPE,PARTUUID,PARTLABEL,START,SERIAL,WWN,RO,RM",
-        devicePath,
-      ]),
-      this.runner.run(UDEVADM, [
-        "info",
-        "--query=path",
-        `--name=${devicePath}`,
-      ]),
-      this.runner.run(SFDISK, ["--verify", devicePath]),
-    ]);
+    const [lsblk, firmwarePath, verification, gptVerification] =
+      await Promise.all([
+        this.runner.run(LSBLK, [
+          "--json",
+          "--bytes",
+          "--paths",
+          "--output",
+          "PATH,KNAME,PKNAME,TYPE,SIZE,LOG-SEC,PTTYPE,PTUUID,FSTYPE,MOUNTPOINTS,PARTTYPE,PARTUUID,PARTLABEL,START,SERIAL,WWN,RO,RM",
+          devicePath,
+        ]),
+        this.runner.run(UDEVADM, [
+          "info",
+          "--query=path",
+          `--name=${devicePath}`,
+        ]),
+        this.runner.run(SFDISK, ["--verify", devicePath]),
+        this.runner.run(SGDISK, ["--verify", devicePath]),
+      ]);
     if (lsblk.exitCode !== 0 || firmwarePath.exitCode !== 0) {
       throw new Error("Linux inventory read-only probes failed.");
     }
@@ -405,6 +429,7 @@ export class LinuxInstallInventoryProvider implements InstallInventoryProvider {
       firmware: this.firmware,
       serialized: lsblk.stdout,
       partitionTableVerified: verification.exitCode === 0,
+      gptRedundancyVerified: isSgdiskRedundancyVerified(gptVerification),
     });
   }
 }

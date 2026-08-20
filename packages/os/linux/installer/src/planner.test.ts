@@ -26,6 +26,7 @@ function disk(overrides: Partial<DiskInventory> = {}): DiskInventory {
     sizeBytes: 512 * GIB,
     logicalSectorBytes: 512,
     partitionTable: "gpt",
+    gptRedundancyVerified: true,
     currentBootSource: false,
     firmware: "uefi",
     partitions: [
@@ -301,7 +302,7 @@ describe("elizaOS internal-disk installer planner", () => {
     );
   });
 
-  it("binds plans to serial, WWN, firmware path, sector size, and GPT GUID", () => {
+  it("binds plans to serial, WWN, firmware path, sector size, GPT GUID, and redundancy", () => {
     const target = disk();
     const reviewed = createInstallPlan(request(target), target);
 
@@ -336,6 +337,12 @@ describe("elizaOS internal-disk installer planner", () => {
         reviewed.planId,
       );
     }
+    expect(() =>
+      createInstallPlan(
+        request(disk({ gptRedundancyVerified: false })),
+        disk({ gptRedundancyVerified: false }),
+      ),
+    ).toThrow(/GPT main\/backup redundancy is unverified/);
   });
 
   it("rejects unknown runtime inventory enum values and malformed probe evidence", () => {
@@ -351,6 +358,23 @@ describe("elizaOS internal-disk installer planner", () => {
         hardwareIdentity: { ...disk().hardwareIdentity, serial: "" },
       }),
     ).toThrow("hardware identity");
+    const missingGptVerification = disk();
+    delete missingGptVerification.gptRedundancyVerified;
+    expect(() => validateDiskInventory(missingGptVerification)).toThrow(
+      "GPT inventory",
+    );
+    const mbrInventory = disk({
+      partitionTable: "mbr",
+      gptRedundancyVerified: undefined,
+      hardwareIdentity: {
+        ...disk().hardwareIdentity,
+        gptDiskGuid: undefined,
+      },
+    });
+    expect(() => validateDiskInventory(mbrInventory)).not.toThrow();
+    expect(() =>
+      validateDiskInventory({ ...mbrInventory, gptRedundancyVerified: true }),
+    ).toThrow("GPT inventory");
     expect(() =>
       validateDiskInventory({
         ...disk(),
