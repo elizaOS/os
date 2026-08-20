@@ -37,13 +37,24 @@ test("canonical Linux documentation declares the mkosi persistent workstation", 
 });
 
 test("local mkosi front door builds a pinned multiarch tool container", async () => {
-  const [makefile, dockerfile, binfmt, riscvFinalize, qemuQualify, snapshot] = await Promise.all([
+  const [
+    makefile,
+    dockerfile,
+    binfmt,
+    riscvFinalize,
+    qemuQualify,
+    persistenceQualify,
+    snapshot,
+  ] = await Promise.all([
     read("packages/os/linux/elizaos/Makefile"),
     read("packages/os/linux/elizaos/Dockerfile"),
     read("packages/os/linux/elizaos/scripts/ensure-foreign-binfmt.sh"),
     read("packages/os/linux/elizaos/mkosi/mkosi.finalize.chroot"),
     read("packages/os/linux/elizaos/scripts/mkosi-qemu-qualify.py"),
-    read("packages/os/linux/elizaos/debian-snapshot.lock.json").then(JSON.parse),
+    read("packages/os/linux/elizaos/scripts/mkosi-persistence-qualify.py"),
+    read("packages/os/linux/elizaos/debian-snapshot.lock.json").then(
+      JSON.parse,
+    ),
   ]);
 
   assert.match(dockerfile, /^FROM \$\{DEBIAN_BASE_IMAGE\}$/m);
@@ -52,6 +63,7 @@ test("local mkosi front door builds a pinned multiarch tool container", async ()
   assert.match(makefile, /DEBIAN_SNAPSHOT_SERIAL=\$\(DEBIAN_SNAPSHOT_SERIAL\)/);
   assert.match(makefile, /DEBIAN_BASE_IMAGE=\$\(DEBIAN_BASE_IMAGE\)/);
   assert.match(dockerfile, /^        qemu-user-binfmt \\/m);
+  assert.match(dockerfile, /^        qemu-system-x86 \\/m);
   assert.match(dockerfile, /^        ipxe-qemu \\/m);
   assert.match(makefile, /ELIZAOS_ARCH=\$\(ARCH\) \/work\/src\/elizaos\/scripts\/ensure-foreign-binfmt\.sh/);
   assert.match(binfmt, /\/usr\/lib\/binfmt\.d\/\$handler\.conf/);
@@ -64,14 +76,28 @@ test("local mkosi front door builds a pinned multiarch tool container", async ()
   assert.match(riscvFinalize, /kernel-modules\.initrd/);
   assert.match(qemuQualify, /You are in emergency mode/);
   assert.match(qemuQualify, /Failed to start initrd-switch-root\.service/);
+  assert.match(persistenceQualify, /You are in emergency mode/);
+  assert.match(persistenceQualify, /Failed to start initrd-switch-root\.service/);
+  assert.match(persistenceQualify, /normalized_console_text/);
+  assert.match(persistenceQualify, /Started gdm\.service - GNOME Display Manager/);
   assert.match(snapshot.baseImage, /^debian:trixie@sha256:[a-f0-9]{64}$/);
   assert.match(snapshot.serial, /^[0-9]{8}T[0-9]{6}Z$/);
 });
 
 test("development images may omit the future control broker but releases fail closed", async () => {
-  const postinstall = await read(
-    "packages/os/linux/elizaos/mkosi/mkosi.postinst.chroot",
-  );
+  const [postinstall, initialSetupProfile, brandingDefaults, iconTheme] =
+    await Promise.all([
+      read("packages/os/linux/elizaos/mkosi/mkosi.postinst.chroot"),
+      read(
+        "packages/os/linux/elizaos/mkosi/mkosi.extra/usr/share/dconf/profile/gnome-initial-setup",
+      ),
+      read(
+        "packages/os/linux/elizaos/mkosi/mkosi.extra/usr/share/glib-2.0/schemas/90_elizaos-branding.gschema.override",
+      ),
+      read(
+        "packages/os/linux/elizaos/mkosi/mkosi.extra/usr/share/icons/elizaOS/index.theme",
+      ),
+    ]);
 
   assert.match(postinstall, /partial control input topology/);
   assert.match(postinstall, /release control input topology is missing/);
@@ -80,6 +106,13 @@ test("development images may omit the future control broker but releases fail cl
     /control input topology absent in explicit \$\{build_mode\} build; broker disabled/,
   );
   assert.match(postinstall, /if \[ "\$control_installed" -eq 1 \]; then\n    systemctl enable eliza-control-broker\.socket/);
+  assert.match(postinstall, /logo_blue_nobg\.svg/);
+  assert.match(postinstall, /glib-compile-schemas/);
+  assert.match(postinstall, /gtk-update-icon-cache --force \/usr\/share\/icons\/elizaOS/);
+  assert.match(initialSetupProfile, /system-db:local/);
+  assert.match(brandingDefaults, /elizaos-blue\.svg/);
+  assert.match(brandingDefaults, /icon-theme='elizaOS'/);
+  assert.match(iconTheme, /Inherits=Adwaita,hicolor/);
 });
 
 test("release image schema accepts only raw zstd images for supported architectures", async () => {

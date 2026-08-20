@@ -11,13 +11,22 @@ package never changes a partition table.
 - **Implement the privileged inventory service.** Return whole-disk stable ID,
   current-boot ancestry, sector geometry, GPT primary/backup validity, exact
   partition/free extents, filesystem health, mount state, encryption state,
-  hibernation/Fast Startup state, and shrink minimums. Validate its serialized
-  schema before creating a plan.
+  hibernation/Fast Startup state, and shrink minimums. The typed planner and
+  executor already bind serial, optional WWN, firmware/sysfs path, logical
+  sector size, and GPT disk GUID. The Linux provider now resolves stable IDs
+  itself and populates those fields plus exact partition boundaries from fixed
+  read-only `lsblk`, `udevadm`, and `sfdisk --verify` calls. Add primary/backup
+  GPT-specific health evidence, boot ancestry through stacked devices, and the
+  filesystem/encryption/hibernation/shrink probes before connecting it to the
+  root service.
 - **Connect plan revalidation and authorization to the root service.** The
   library now reproduces the initial inventory/plan ID, verifies an expiring
   owner credential, re-enumerates before every typed action, and stops on
-  identity, journal, or inventory drift. Implement the OS credential verifier
-  and ensure the service accepts no renderer-supplied commands or device paths.
+  identity, journal, or inventory drift. Its file-backed journal durably syncs
+  every record and directory update, serializes and head-checks appends, and
+  fails closed on unsafe files or interrupted locks. Provision its owner-only
+  state directory, implement the OS credential verifier, and ensure the service
+  accepts no renderer-supplied commands or device paths.
 - **Implement recoverable GPT mutation.** Save and verify both GPT headers and
   partition entries to separate recovery media/state, perform typed operations,
   reread the kernel partition table, and prove rollback after every injected

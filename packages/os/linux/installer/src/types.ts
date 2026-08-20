@@ -35,9 +35,17 @@ export interface FreeExtent {
   endBytes: number;
 }
 
+export interface DiskHardwareIdentity {
+  serial: string;
+  wwn?: string;
+  firmwarePath: string;
+  gptDiskGuid?: string;
+}
+
 export interface DiskInventory {
   stableId: string;
   path: string;
+  hardwareIdentity: DiskHardwareIdentity;
   sizeBytes: number;
   logicalSectorBytes: number;
   partitionTable: "gpt" | "mbr" | "none" | "unknown";
@@ -87,7 +95,13 @@ export interface InstallPlan {
   schemaVersion: 1;
   planId: string;
   mode: InstallRequest["mode"];
-  target: { stableId: string; path: string; sizeBytes: number };
+  target: {
+    stableId: string;
+    path: string;
+    hardwareIdentity: DiskHardwareIdentity;
+    sizeBytes: number;
+    logicalSectorBytes: number;
+  };
   preservedPartitionIds: string[];
   partitions: PlannedPartition[];
   actions: InstallerAction[];

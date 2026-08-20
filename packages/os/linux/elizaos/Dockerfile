@@ -58,6 +58,7 @@ RUN test -n "${DEBIAN_SNAPSHOT_SERIAL}" \
         qemu-user-binfmt \
         qemu-system-arm \
         qemu-system-misc \
+        qemu-system-x86 \
         qemu-efi-aarch64 \
         qemu-efi-riscv64 \
         ipxe-qemu \

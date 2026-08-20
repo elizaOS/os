@@ -11,6 +11,16 @@ export {
   executeAuthorizedInstallPlan,
   InstallRecoveryRequiredError,
 } from "./executor";
+export { DurableFileInstallJournal } from "./file-journal";
+export type {
+  LinuxInstallInventoryProviderOptions,
+  LinuxInventoryCommandResult,
+  LinuxInventoryCommandRunner,
+} from "./linux-inventory";
+export {
+  LinuxInstallInventoryProvider,
+  parseLinuxLsblkInventory,
+} from "./linux-inventory";
 export {
   createDiskConfirmationToken,
   createDiskInventoryFingerprint,

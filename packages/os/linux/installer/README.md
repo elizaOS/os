@@ -11,11 +11,32 @@ product choices:
 `createInstallPlan()` never edits a disk and every returned plan has
 `executable: false`. `authorizeInstallPlan()` can convert that exact reviewed
 plan into an executable capability only after a fresh inventory reproduces the
-plan id and an expiring local-owner credential verifies. The execution
-orchestrator then re-enumerates stable disk identity before every typed action,
+plan id and an expiring local-owner credential verifies. Plans and inventory
+fingerprints bind the disk serial, optional WWN, firmware/sysfs path, logical
+sector size, and GPT disk GUID in addition to its stable id, path, size, and
+partition boundaries. The execution orchestrator then re-enumerates that exact
+disk identity before every typed action,
 requires a verified GPT backup, and writes a digest-chained durable journal
 before and after each operation. An interrupted or inconsistent journal stops
 with `InstallRecoveryRequiredError`; actions are never guessed or replayed.
+
+`DurableFileInstallJournal` is the Linux file-backed implementation for that
+boundary. It requires a pre-provisioned, canonical, owner-only directory; uses
+an exclusive per-plan writer lock; appends bounded JSONL records with `fsync`
+on both the file and containing directory; and refuses partial records,
+symlinks, hard links, unsafe modes, stale locks, and path-like plan IDs. A lock
+left by interruption is never silently removed: recovery must inspect it and
+the journal before execution can continue.
+
+`LinuxInstallInventoryProvider` is the read-only Linux whole-disk probe. It
+accepts only a whole-disk stable ID, resolves it through `/dev/disk/by-id`,
+requires the result to be a block device, and invokes absolute-path `lsblk`,
+`udevadm`, and `sfdisk --verify` commands with fixed argv, a sanitized
+environment, and no shell. Its parser binds serial, WWN,
+firmware path, sector size, GPT and partition UUIDs, exact byte boundaries,
+reported mountpoints, read-only/removable state, and conservative filesystem
+and encryption classifications. It emits no resize evidence; dedicated
+filesystem-native health and minimum-size probes must add that later.
 
 The package intentionally does not yet provide the root service, OS-native
 inventory probes, filesystem tools, GPT writer, image extractor, or bootloader

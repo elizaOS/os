@@ -85,7 +85,14 @@ function assertTargetIdentity(
   if (
     inventory.stableId !== plan.target.stableId ||
     inventory.path !== plan.target.path ||
-    inventory.sizeBytes !== plan.target.sizeBytes
+    inventory.sizeBytes !== plan.target.sizeBytes ||
+    inventory.logicalSectorBytes !== plan.target.logicalSectorBytes ||
+    inventory.hardwareIdentity.serial !== plan.target.hardwareIdentity.serial ||
+    inventory.hardwareIdentity.wwn !== plan.target.hardwareIdentity.wwn ||
+    inventory.hardwareIdentity.firmwarePath !==
+      plan.target.hardwareIdentity.firmwarePath ||
+    inventory.hardwareIdentity.gptDiskGuid !==
+      plan.target.hardwareIdentity.gptDiskGuid
   ) {
     throw new Error("Target disk identity changed after plan authorization.");
   }

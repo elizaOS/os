@@ -13,6 +13,8 @@ override_dh_auto_build:
 	test -s upstream/desktop-artifact-manifest.json; \
 	test -s upstream/desktop-artifact-manifest.json.sig; \
 	test -s upstream/desktop-signing-public.key; \
+	desktop-file-validate debian/ai.elizaos.app.desktop; \
+	appstreamcli validate --no-net debian/ai.elizaos.app.metainfo.xml; \
 	readelf -h payload/bin/eliza-desktop >/dev/null
 
 override_dh_auto_install:
@@ -31,6 +33,12 @@ override_dh_auto_install:
 		debian/elizaos-app/usr/lib/systemd/user/elizaos-session.target
 	install -D -m 0644 debian/80-elizaos.preset \
 		debian/elizaos-app/usr/lib/systemd/user-preset/80-elizaos.preset
+	install -D -m 0644 debian/ai.elizaos.app.desktop \
+		debian/elizaos-app/usr/share/applications/ai.elizaos.app.desktop
+	install -D -m 0644 debian/ai.elizaos.app.metainfo.xml \
+		debian/elizaos-app/usr/share/metainfo/ai.elizaos.app.metainfo.xml
+	install -D -m 0644 debian/elizaos-icon.svg \
+		debian/elizaos-app/usr/share/icons/hicolor/scalable/apps/ai.elizaos.app.svg
 	install -D -m 0644 upstream/desktop-artifact-manifest.json \
 		debian/elizaos-app/usr/share/elizaos/desktop-artifact-manifest.json
 	install -D -m 0644 upstream/desktop-artifact-manifest.json.sig \
@@ -39,6 +47,8 @@ override_dh_auto_install:
 		debian/elizaos-app/usr/share/elizaos/desktop-signing-public.key
 
 override_dh_auto_test:
+	desktop-file-validate debian/ai.elizaos.app.desktop
+	appstreamcli validate --no-net debian/ai.elizaos.app.metainfo.xml
 	readelf -h payload/bin/eliza-desktop >/dev/null
 
 # The upstream archive signature authenticates the exact executable bytes.

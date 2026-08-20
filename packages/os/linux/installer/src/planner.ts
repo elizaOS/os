@@ -72,6 +72,20 @@ function assertSafeInteger(name: string, value: number): void {
 export function validateDiskInventory(disk: DiskInventory): void {
   if (!disk.stableId.trim() || !disk.path.trim())
     throw new Error("Disk stableId and path are required.");
+  if (
+    !disk.hardwareIdentity.serial.trim() ||
+    !disk.hardwareIdentity.firmwarePath.trim() ||
+    (disk.hardwareIdentity.wwn !== undefined &&
+      !disk.hardwareIdentity.wwn.trim()) ||
+    (disk.hardwareIdentity.gptDiskGuid !== undefined &&
+      !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(
+        disk.hardwareIdentity.gptDiskGuid,
+      ))
+  ) {
+    throw new Error(
+      "Disk serial, firmware path, optional WWN, and optional GPT GUID must be exact hardware identity values.",
+    );
+  }
   assertSafeInteger("disk.sizeBytes", disk.sizeBytes);
   if (disk.sizeBytes < MIN_INSTALL_BYTES)
     throw new Error(
@@ -81,6 +95,18 @@ export function validateDiskInventory(disk: DiskInventory): void {
     throw new Error("Unsupported logical sector size.");
   if (!PARTITION_TABLES.has(disk.partitionTable))
     throw new Error("Unsupported partition-table inventory value.");
+  if (
+    disk.partitionTable === "gpt" &&
+    disk.hardwareIdentity.gptDiskGuid === undefined
+  ) {
+    throw new Error("GPT inventory must include the disk GUID.");
+  }
+  if (
+    disk.partitionTable !== "gpt" &&
+    disk.hardwareIdentity.gptDiskGuid !== undefined
+  ) {
+    throw new Error("Only GPT inventory may include a GPT disk GUID.");
+  }
   if (!FIRMWARE_MODES.has(disk.firmware))
     throw new Error("Unsupported firmware inventory value.");
   if (typeof disk.currentBootSource !== "boolean")
@@ -197,6 +223,12 @@ export function createDiskInventoryFingerprint(disk: DiskInventory): string {
       schemaVersion: 1,
       stableId: disk.stableId,
       path: disk.path,
+      hardwareIdentity: {
+        serial: disk.hardwareIdentity.serial,
+        wwn: disk.hardwareIdentity.wwn ?? null,
+        firmwarePath: disk.hardwareIdentity.firmwarePath,
+        gptDiskGuid: disk.hardwareIdentity.gptDiskGuid ?? null,
+      },
       sizeBytes: disk.sizeBytes,
       logicalSectorBytes: disk.logicalSectorBytes,
       partitionTable: disk.partitionTable,
@@ -402,7 +434,9 @@ function planBody(
       target: {
         stableId: disk.stableId,
         path: disk.path,
+        hardwareIdentity: { ...disk.hardwareIdentity },
         sizeBytes: disk.sizeBytes,
+        logicalSectorBytes: disk.logicalSectorBytes,
       },
       preservedPartitionIds: [],
       partitions,
@@ -524,7 +558,9 @@ function planBody(
     target: {
       stableId: disk.stableId,
       path: disk.path,
+      hardwareIdentity: { ...disk.hardwareIdentity },
       sizeBytes: disk.sizeBytes,
+      logicalSectorBytes: disk.logicalSectorBytes,
     },
     preservedPartitionIds: disk.partitions.map((item) => item.id).sort(),
     partitions,

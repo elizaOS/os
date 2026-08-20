@@ -17,6 +17,12 @@ function disk(overrides: Partial<DiskInventory> = {}): DiskInventory {
   return {
     stableId: "nvme-serial-123",
     path: "/dev/nvme0n1",
+    hardwareIdentity: {
+      serial: "S3Z9NB0K123456",
+      wwn: "eui.002538b221aabbcc",
+      firmwarePath: "/sys/devices/pci0000:00/0000:00:04.0/nvme/nvme0",
+      gptDiskGuid: "56f01c36-1e33-4b83-8ec6-f7a0e3c4af2e",
+    },
     sizeBytes: 512 * GIB,
     logicalSectorBytes: 512,
     partitionTable: "gpt",
@@ -84,6 +90,8 @@ describe("elizaOS internal-disk installer planner", () => {
       destructive: true,
     });
     expect(first.preservedPartitionIds).toEqual([]);
+    expect(first.target.hardwareIdentity).toEqual(target.hardwareIdentity);
+    expect(first.target.logicalSectorBytes).toBe(512);
   });
 
   it.each([
@@ -293,6 +301,43 @@ describe("elizaOS internal-disk installer planner", () => {
     );
   });
 
+  it("binds plans to serial, WWN, firmware path, sector size, and GPT GUID", () => {
+    const target = disk();
+    const reviewed = createInstallPlan(request(target), target);
+
+    for (const changed of [
+      disk({
+        hardwareIdentity: {
+          ...target.hardwareIdentity,
+          serial: "S3Z9NB0K654321",
+        },
+      }),
+      disk({
+        hardwareIdentity: {
+          ...target.hardwareIdentity,
+          wwn: "eui.002538b221ddeeff",
+        },
+      }),
+      disk({
+        hardwareIdentity: {
+          ...target.hardwareIdentity,
+          firmwarePath: "/sys/devices/pci0000:00/0000:00:05.0/nvme/nvme0",
+        },
+      }),
+      disk({ logicalSectorBytes: 4096 }),
+      disk({
+        hardwareIdentity: {
+          ...target.hardwareIdentity,
+          gptDiskGuid: "11385e1d-df71-4d61-93cd-13f272f15e7a",
+        },
+      }),
+    ]) {
+      expect(createInstallPlan(request(changed), changed).planId).not.toBe(
+        reviewed.planId,
+      );
+    }
+  });
+
   it("rejects unknown runtime inventory enum values and malformed probe evidence", () => {
     expect(() =>
       validateDiskInventory({
@@ -300,6 +345,18 @@ describe("elizaOS internal-disk installer planner", () => {
         firmware: "invented" as DiskInventory["firmware"],
       }),
     ).toThrow("firmware inventory");
+    expect(() =>
+      validateDiskInventory({
+        ...disk(),
+        hardwareIdentity: { ...disk().hardwareIdentity, serial: "" },
+      }),
+    ).toThrow("hardware identity");
+    expect(() =>
+      validateDiskInventory({
+        ...disk(),
+        hardwareIdentity: { ...disk().hardwareIdentity, gptDiskGuid: "bad" },
+      }),
+    ).toThrow("hardware identity");
     expect(() =>
       validateDiskInventory({
         ...disk(),
