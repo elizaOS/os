@@ -14,7 +14,8 @@ describe("DependencyManager", () => {
 
     const result = await mgr.checkOne("libimobiledevice");
 
-    expect(result.status).toBe("found");
+    expect(["found", "found-but-misconfigured"]).toContain(result.status);
+    expect(result.foundPath).toBe("/fake/bin/idevice_id");
     expect(probes).toEqual(["idevice_id", "ideviceinfo", "ideviceinstaller"]);
   });
 

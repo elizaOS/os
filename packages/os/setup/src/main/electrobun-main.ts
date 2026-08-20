@@ -26,6 +26,18 @@ import { createServer } from "../../server";
 
 const DEFAULT_PORT = 3743;
 
+function logEvent(event: string, fields: Record<string, unknown> = {}): void {
+  process.stdout.write(
+    `${JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: "info",
+      component: "elizaos-setup",
+      event,
+      ...fields,
+    })}\n`,
+  );
+}
+
 async function isPortFree(port: number): Promise<boolean> {
   return await new Promise<boolean>((resolve) => {
     const tester = createNetServer()
@@ -140,15 +152,11 @@ async function startRendererServer(
 async function main(): Promise<void> {
   const authToken = randomBytes(32).toString("hex");
   const { url: backendUrl, port: backendPort } = await startBackend(authToken);
-  console.log(
-    `[elizaos-setup] backend bound at ${backendUrl} (port ${backendPort})`,
-  );
+  logEvent("backend.bound", { url: backendUrl, port: backendPort });
 
   const { url: rendererUrl, port: rendererPort } =
     await startRendererServer(backendUrl);
-  console.log(
-    `[elizaos-setup] renderer bound at ${rendererUrl} (port ${rendererPort})`,
-  );
+  logEvent("renderer.bound", { url: rendererUrl, port: rendererPort });
 
   const preload = buildPreloadScript(backendUrl, authToken);
 
@@ -162,7 +170,7 @@ async function main(): Promise<void> {
   // Surface unhandled errors loudly instead of swallowing them — a broken
   // window creation should not silently produce a blank packaged app.
   Electrobun.events.on("will-quit", () => {
-    console.log("[elizaos-setup] will-quit");
+    logEvent("application.will_quit");
   });
 
   // Reference `win` so GC does not collect the window handle.
