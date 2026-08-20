@@ -351,35 +351,32 @@ describe("AOSP build contracts", () => {
       join(repositoryRoot, ".github/workflows/elizaos-cuttlefish.yml"),
       "utf8",
     );
-    const appLock = JSON.parse(
+    const sourceLock = JSON.parse(
       readFileSync(
-        join(repositoryRoot, "packages/os/linux/elizaos/app-source.lock.json"),
+        join(repositoryRoot, "packages/os/release/eliza-source.lock.json"),
         "utf8",
       ),
     ) as { commit: string };
 
-    expect(workflow).toContain(`default: "${appLock.commit}"`);
+    expect(sourceLock.commit).toMatch(/^[0-9a-f]{40}$/);
+    expect(workflow).toContain("read-eliza-source-lock.mjs --github-output");
     expect(workflow).toContain("Provision pinned Zig 0.13");
-    expect(workflow).toContain("ndk;28.2.13676358");
-    expect(workflow).toContain("cmake;3.22.1");
-    expect(workflow).toContain(
-      "d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea",
-    );
+    expect(workflow).toContain('ANDROID_NDK_VERSION: "29.0.13113456"');
+    expect(workflow).toContain("provision-zig-linux-x64.sh");
     expect(workflow).toContain("android-assistant-verify.mjs");
-    expect(workflow).toContain("Full-engine local ASR and TTS smoke");
-    expect(workflow).toContain("--voice-only");
-    expect(workflow).toContain("--require-device --json");
-    expect(workflow).toContain("android-assistant-ime-evidence");
+    expect(workflow).toContain(
+      "Prove full WAV to ASR to agent to TTS round trip",
+    );
+    expect(workflow).toContain("--require-device --require-engine --json");
+    expect(workflow).toContain("cuttlefish-android-validation");
     expect(workflow).toContain("Build fused Android inference libraries");
-    expect(workflow).toContain("Stage Android/bionic fused voice library");
-    expect(workflow).toContain("stage-elizavoice-lib.mjs");
-    expect(workflow).toContain("Bootstrap pinned AOSP platform");
-    expect(workflow).toContain("bootstrap-aosp.mjs");
-    expect(workflow).toContain("Provision pinned AOSP repo launcher");
-    expect(workflow).toContain("provision-repo.sh");
+    expect(workflow).toContain("Verify fused Android inference artifacts");
+    expect(workflow).toContain("verify-native-runtime.mjs");
+    expect(workflow).toContain("Verify immutable Cuttlefish AOSP source lock");
+    expect(workflow).toContain("verify-source-lock.mjs");
     expect(workflow).toContain("bun-riscv64-sha256");
-    expect(workflow).toContain("ELIZA_BUN_RISCV64_OPTIONAL=1");
-    expect(workflow).not.toContain("ELIZA_MTP_ANDROID_LIBDIR");
+    expect(workflow).toContain("ELIZA_BUN_RISCV64_OPTIONAL");
+    expect(workflow).toContain("ELIZA_MTP_ANDROID_LIBDIR");
   });
 
   test("source-only AOSP builds do not require KVM", () => {

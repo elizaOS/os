@@ -18,6 +18,7 @@
       "sourceStatus": "pinned",
       "installerEligible": false,
       "blockedReasons": [
+        "The active Gemma ASR artifact is not yet published and digest-pinned in the application catalog.",
         "No retained Pixel 9a flash and post-boot validation evidence exists yet."
       ]
     },

@@ -15,26 +15,27 @@ test("physical Android target inventory stays fail-closed", () => {
     `${repositoryRoot}/packages/os/android/vendor/eliza/AndroidProducts.mk`,
     "utf8",
   );
-  const pixel = inventory.targets.find((target) => target.codename === "tegu");
+  const pixel = inventory.targets.find((target) =>
+    target.codenames?.includes("tegu"),
+  );
   const lightPhone = inventory.targets.find(
-    (target) => target.codename === "TLP301",
+    (target) => target.codenames?.includes("TLP301"),
   );
 
   expect(pixel).toMatchObject({
-    status: "source-locked-candidate",
-    lunchProduct: "eliza_tegu_phone",
-    installerEligibility: "blocked-until-physical-evidence",
+    targetId: "pixel9a-tegu",
+    sourceStatus: "pinned",
+    productName: "eliza_tegu_phone",
+    installerEligible: false,
   });
-  expect(pixel.missingBoundaries).toContainEqual(
-    expect.stringContaining("active Gemma ASR artifact"),
+  expect(pixel.blockedReasons).toContainEqual(
+    expect.stringContaining("Gemma ASR artifact"),
   );
   expect(products).toContain("eliza_tegu_phone-trunk_staging-userdebug");
   expect(lightPhone).toMatchObject({
-    status: "blocked-no-authoritative-os-inputs",
-    lunchProduct: null,
-    sourceProfile: null,
-    forbiddenAliases: ["tegu"],
-    installerEligibility: "blocked",
+    targetId: "lightphone3-tlp301",
+    sourceStatus: "blocked",
+    installerEligible: false,
   });
   expect(products).not.toMatch(/TLP301|light[_-]?phone/i);
 });

@@ -14,6 +14,14 @@ SCRIPT = Path(__file__).with_name("mkosi-macos-lima.sh")
 
 
 class MacLimaHarnessTest(unittest.TestCase):
+    @staticmethod
+    def write_fake_uname(root: Path) -> None:
+        fake_uname = root / "uname"
+        fake_uname.write_text(
+            '#!/bin/sh\ncase "$1" in -s) printf "Darwin\\n" ;; -m) printf "arm64\\n" ;; *) exit 1 ;; esac\n'
+        )
+        fake_uname.chmod(0o755)
+
     def run_harness(self, *arguments: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [str(SCRIPT), *arguments],
@@ -56,6 +64,7 @@ class MacLimaHarnessTest(unittest.TestCase):
                 'printf "test 209715200 1 209715199 1%% /\\n"\n'
             )
             fake_df.chmod(0o755)
+            self.write_fake_uname(root)
             environment = os.environ.copy()
             environment["PATH"] = f"{root}:{environment['PATH']}"
             environment["CAPTURE"] = str(capture)
@@ -94,6 +103,7 @@ class MacLimaHarnessTest(unittest.TestCase):
                 'printf "test 209715200 1 209715199 1%% /\\n"\n'
             )
             fake_df.chmod(0o755)
+            self.write_fake_uname(root)
             environment = os.environ.copy()
             environment["PATH"] = f"{root}:{environment['PATH']}"
             environment["CAPTURE"] = str(capture)
@@ -118,6 +128,7 @@ class MacLimaHarnessTest(unittest.TestCase):
                 '#!/bin/sh\nif [ "$1" = list ]; then printf "%s\\n" existing-vm; fi\n'
             )
             fake.chmod(0o755)
+            self.write_fake_uname(root)
             environment = os.environ.copy()
             environment["PATH"] = f"{root}:{environment['PATH']}"
             result = subprocess.run(

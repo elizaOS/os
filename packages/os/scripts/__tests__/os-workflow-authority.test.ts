@@ -297,7 +297,8 @@ describe("OS release workflow authority", () => {
       workflowPath("build-debian-package.yml"),
       "utf8",
     );
-    expect(workflow).toContain('exit "$LINTIAN_EXIT"');
+    expect(workflow).toContain("if grep -q '^E:'");
+    expect(workflow).toContain('exit "$status"');
     expect(workflow).not.toContain("annotations only; not failing build");
   });
 

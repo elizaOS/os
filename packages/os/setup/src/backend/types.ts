@@ -108,6 +108,8 @@ export interface FlashPlan {
   build: AospBuild;
   steps: FlashStep[];
   artifactDir: string | null;
+  /** Exact release manifest used to authorize local or downloaded artifacts. */
+  manifestPath?: string | null;
   /** Original request — used by executor to decide dry-run vs real run, wipeData, etc. */
   request: FlashRequest;
   /** Short-lived, one-use server token binding execution to this exact plan. */

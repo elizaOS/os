@@ -212,8 +212,8 @@ jobs:
           while IFS= read -r line; do
             case "$line" in E:*) echo "::error::lintian: $line" ;; W:*) echo "::warning::lintian: $line" ;; esac
           done < "$WORK_ROOT/lintian.log"
-          ! grep -q '^E:' "$WORK_ROOT/lintian.log"
-          if [ "$status" -ge 2 ]; then exit "$status"; fi
+          if grep -q '^E:' "$WORK_ROOT/lintian.log"; then exit 1; fi
+          exit "$status"
       - name: Attest exact Debian package
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
         with:
