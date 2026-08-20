@@ -10,81 +10,86 @@ import type {
   IosInstallStepId,
   IosInstallStepStatus,
 } from "../backend/ios-types";
-import { authorizedFetch } from "../runtime/server-url";
+import { authorizedFetch, backendRoute } from "../runtime/server-url";
 
 // ── Design tokens ──────────────────────────────────────────────────────────────
 const C = {
-  bg: "#0a0a0a",
-  card: "#1a1a1a",
-  accent: "#00ff88",
-  accentDim: "#00cc6a",
-  text: "#f0f0f0",
-  muted: "#888",
-  error: "#ff4444",
-  border: "#2a2a2a",
+  accent: "#ff6a1f",
+  accentDim: "#ff8a24",
+  text: "#fdfaf7",
+  muted: "#8a8a94",
+  error: "#f6465d",
+  border: "#232329",
 };
 
 const s = {
   root: {
-    background: C.bg,
+    background: "transparent",
     color: C.text,
-    fontFamily: "'Inter', 'Helvetica Neue', Arial, sans-serif",
-    minHeight: "100vh",
+    fontFamily: "'Poppins', system-ui, -apple-system, sans-serif",
+    minHeight: "100%",
     display: "flex",
     flexDirection: "column" as const,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: "24px",
+    alignItems: "stretch",
+    padding: "clamp(28px, 5vw, 48px)",
   },
   card: {
-    background: C.card,
-    borderRadius: "16px",
-    border: `1px solid ${C.border}`,
-    padding: "32px",
+    background: "transparent",
+    borderRadius: 0,
+    border: "none",
+    padding: 0,
     width: "100%",
-    maxWidth: "480px",
+    maxWidth: "720px",
+    boxShadow: "none",
+    margin: "0 auto",
   },
   heading: {
-    fontSize: "22px",
-    fontWeight: 700,
-    margin: "0 0 8px",
+    fontSize: "clamp(22px, 3vw, 28px)",
+    fontWeight: 600,
+    letterSpacing: "-0.02em",
+    lineHeight: 1.2,
+    margin: "0 0 12px",
   },
   subheading: {
-    fontSize: "14px",
+    fontSize: "15px",
     color: C.muted,
     margin: "0 0 24px",
-    lineHeight: 1.5,
+    lineHeight: 1.6,
   },
   button: {
     background: C.accent,
-    color: "#000",
+    color: "#050506",
     border: "none",
-    borderRadius: "10px",
-    padding: "12px 24px",
-    fontSize: "15px",
-    fontWeight: 700,
+    borderRadius: "8px",
+    padding: "13px 18px",
+    fontSize: "14px",
+    fontWeight: 600,
     cursor: "pointer",
     width: "100%",
     marginTop: "16px",
+    textTransform: "none" as const,
+    letterSpacing: 0,
   },
   buttonSecondary: {
-    background: "transparent",
-    color: C.muted,
+    background: "#17171c",
+    color: C.text,
     border: `1px solid ${C.border}`,
-    borderRadius: "10px",
-    padding: "12px 24px",
-    fontSize: "15px",
+    borderRadius: "8px",
+    padding: "13px 18px",
+    fontSize: "14px",
     cursor: "pointer",
     width: "100%",
     marginTop: "8px",
+    textTransform: "none" as const,
+    letterSpacing: 0,
   },
   input: {
-    background: "#111",
+    background: "#17171c",
     border: `1px solid ${C.border}`,
     borderRadius: "8px",
     color: C.text,
     fontSize: "15px",
-    padding: "12px 14px",
+    padding: "14px 16px",
     width: "100%",
     boxSizing: "border-box" as const,
     marginBottom: "12px",
@@ -96,10 +101,10 @@ const s = {
     marginBottom: "6px",
   },
   notice: {
-    background: "#111",
+    background: "#17171c",
     border: `1px solid ${C.border}`,
-    borderRadius: "10px",
-    padding: "14px 16px",
+    borderRadius: "8px",
+    padding: "16px 18px",
     fontSize: "13px",
     lineHeight: 1.6,
     color: C.muted,
@@ -113,12 +118,17 @@ const s = {
     borderBottom: `1px solid ${C.border}`,
   },
   appCard: {
-    background: "#111",
+    background: "#17171c",
     border: `1px solid ${C.border}`,
-    borderRadius: "12px",
-    padding: "16px",
+    borderRadius: "8px",
+    padding: "18px",
     marginBottom: "12px",
     cursor: "pointer",
+    width: "100%",
+    color: C.text,
+    textAlign: "left" as const,
+    textTransform: "none" as const,
+    letterSpacing: 0,
   },
   spinner: {
     display: "inline-block",
@@ -130,7 +140,7 @@ const s = {
     animation: "spin 0.8s linear infinite",
   },
   progressBar: {
-    background: C.border,
+    background: "#e8e9ed",
     borderRadius: "4px",
     height: "6px",
     overflow: "hidden",
@@ -140,7 +150,6 @@ const s = {
     background: C.accent,
     height: "100%",
     width: `${pct}%`,
-    transition: "width 0.4s ease",
     borderRadius: "4px",
   }),
 };
@@ -169,7 +178,6 @@ function progressFromSteps(steps: IosInstallStep[]): number {
 }
 
 type Screen =
-  | "scanning"
   | "no-device"
   | "select-device"
   | "region-notice"
@@ -187,7 +195,7 @@ interface IosFlasherProps {
 }
 
 export function IosFlasher({ serverUrl }: IosFlasherProps) {
-  const [screen, setScreen] = useState<Screen>("scanning");
+  const [screen, setScreen] = useState<Screen>("no-device");
   const [devices, setDevices] = useState<IosDevice[]>([]);
   const [apps, setApps] = useState<IosApp[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<IosDevice | null>(null);
@@ -202,6 +210,7 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
   const [password, setPassword] = useState("");
   const [twoFaCode, setTwoFaCode] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [scanMessage, setScanMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const scanIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -215,20 +224,25 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
     }
   }, []);
 
-  const scanDevices = useCallback(async () => {
+  const scanDevices = useCallback(async (): Promise<
+    "found" | "none" | "unavailable"
+  > => {
     try {
-      const res = await authorizedFetch(`${serverUrl}/ios/devices`);
-      if (!res.ok) return;
+      const res = await authorizedFetch(
+        backendRoute(serverUrl, "/ios/devices"),
+      );
+      if (!res.ok) return "unavailable";
       const data = (await res.json()) as IosDevice[];
       setDevices(data);
 
       if (data.length > 0 && !regionShownRef.current) {
+        setScanMessage(null);
         regionShownRef.current = true;
 
         // Fetch region notice and apps in parallel
         const [regionRes, appsRes] = await Promise.all([
-          authorizedFetch(`${serverUrl}/ios/region`),
-          authorizedFetch(`${serverUrl}/ios/apps`),
+          authorizedFetch(backendRoute(serverUrl, "/ios/region")),
+          authorizedFetch(backendRoute(serverUrl, "/ios/apps")),
         ]);
         if (regionRes.ok)
           setRegionNotice(
@@ -244,13 +258,15 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
           setScreen("select-device");
         }
         stopScanning();
-      } else if (data.length === 0 && screen === "scanning") {
-        setScreen("no-device");
+        return "found";
       }
+      return data.length > 0 ? "found" : "none";
     } catch {
-      // Network not ready yet — keep polling
+      // The background poll keeps trying; an explicit check surfaces a
+      // friendly recovery message through handleCheckForDevice.
+      return "unavailable";
     }
-  }, [serverUrl, screen, stopScanning]);
+  }, [serverUrl, stopScanning]);
 
   useEffect(() => {
     scanIntervalRef.current = setInterval(scanDevices, 2000);
@@ -277,17 +293,40 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
     setScreen("apple-id-login");
   }
 
+  async function handleCheckForDevice() {
+    setLoading(true);
+    setScanMessage(null);
+    regionShownRef.current = false;
+    if (scanIntervalRef.current === null) {
+      scanIntervalRef.current = setInterval(scanDevices, 2000);
+    }
+    const result = await scanDevices();
+    if (result === "none") {
+      setScanMessage(
+        "No iPhone or iPad found yet. Check the cable, unlock it, and tap Trust, then try again.",
+      );
+    } else if (result === "unavailable") {
+      setScanMessage(
+        "The installer couldn't check for devices. Wait a moment, then try again.",
+      );
+    }
+    setLoading(false);
+  }
+
   async function handleAppleIdLogin(e: React.FormEvent) {
     e.preventDefault();
     if (!appleId.trim() || !password) return;
     setError(null);
     setLoading(true);
     try {
-      const res = await authorizedFetch(`${serverUrl}/ios/authenticate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ appleId, password }),
-      });
+      const res = await authorizedFetch(
+        backendRoute(serverUrl, "/ios/authenticate"),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ appleId, password }),
+        },
+      );
       const data = (await res.json()) as IosAuthState;
       setAuthState(data);
       if (data.status === "awaiting-2fa") {
@@ -311,7 +350,7 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
     setError(null);
     setLoading(true);
     try {
-      const res = await authorizedFetch(`${serverUrl}/ios/2fa`, {
+      const res = await authorizedFetch(backendRoute(serverUrl, "/ios/2fa"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code: twoFaCode }),
@@ -335,26 +374,32 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
     setLoading(true);
     setError(null);
     try {
-      const planRes = await authorizedFetch(`${serverUrl}/ios/plan`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          deviceUdid: selectedDevice.udid,
-          appId: selectedApp.id,
-          appleId: auth.appleId ?? appleId,
-        }),
-      });
+      const planRes = await authorizedFetch(
+        backendRoute(serverUrl, "/ios/plan"),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            deviceUdid: selectedDevice.udid,
+            appId: selectedApp.id,
+            appleId: auth.appleId ?? appleId,
+          }),
+        },
+      );
       const planData = (await planRes.json()) as IosInstallPlan;
       setPlan(planData);
       setSteps(planData.steps);
       setScreen("installing");
 
       // SSE execute stream
-      const execRes = await authorizedFetch(`${serverUrl}/ios/execute`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan: planData }),
-      });
+      const execRes = await authorizedFetch(
+        backendRoute(serverUrl, "/ios/execute"),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ plan: planData }),
+        },
+      );
 
       if (!execRes.body) throw new Error("No response body");
       const reader = execRes.body.getReader();
@@ -406,59 +451,39 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
   }
 
   // ── Render helpers ──
-  function renderScanningScreen() {
-    return (
-      <div style={s.card}>
-        <p style={{ ...s.heading, textAlign: "center" }}>
-          Scanning for iPhone/iPad…
-        </p>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "center",
-            margin: "24px 0",
-          }}
-        >
-          <div style={s.spinner} />
-        </div>
-        <p style={{ ...s.subheading, textAlign: "center" }}>
-          Connect your device with a USB cable and unlock it.
-        </p>
-      </div>
-    );
-  }
-
   function renderNoDeviceScreen() {
     return (
-      <div style={s.card}>
-        <p style={{ ...s.heading, textAlign: "center" }}>
-          Connect your iPhone or iPad
-        </p>
-        <div
-          style={{ textAlign: "center", fontSize: "48px", margin: "16px 0" }}
-        >
-          🔌
+      <div style={s.card} className="ios-connect-card">
+        <div className="ios-connect-copy">
+          <p style={s.heading}>Connect your device</p>
+          <ol className="connection-checklist">
+            <li>
+              <strong>Connect with a USB cable</strong>
+              <span>Use a cable that supports data, not just charging.</span>
+            </li>
+            <li>
+              <strong>Unlock your device</strong>
+              <span>Keep it unlocked while the installer checks it.</span>
+            </li>
+            <li>
+              <strong>Tap Trust if asked</strong>
+              <span>Approve “Trust This Computer” on your device.</span>
+            </li>
+          </ol>
+          <button
+            style={s.button}
+            type="button"
+            disabled={loading}
+            aria-busy={loading}
+            onClick={() => void handleCheckForDevice()}
+          >
+            {loading ? "Looking for your device…" : "Check for my device"}
+          </button>
+          <p className="quiet-help" role={scanMessage ? "status" : undefined}>
+            {scanMessage ??
+              "The installer will continue when your device appears."}
+          </p>
         </div>
-        <p style={{ ...s.subheading, textAlign: "center" }}>
-          Plug your device in with a USB cable, unlock it, and tap{" "}
-          <strong>Trust This Computer</strong> if prompted.
-        </p>
-        <div style={{ ...s.notice, marginTop: "12px" }}>
-          <strong>Tip:</strong> Make sure iTunes or Finder is not blocking the
-          connection.
-        </div>
-        <button
-          style={s.button}
-          type="button"
-          onClick={() => {
-            regionShownRef.current = false;
-            setScreen("scanning");
-            scanIntervalRef.current = setInterval(scanDevices, 2000);
-            scanDevices();
-          }}
-        >
-          Retry
-        </button>
       </div>
     );
   }
@@ -820,11 +845,13 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
           style={s.button}
           type="button"
           onClick={() => {
-            setScreen("scanning");
+            setScreen("no-device");
             regionShownRef.current = false;
             setSteps([]);
             setPlan(null);
             setError(null);
+            scanIntervalRef.current = setInterval(scanDevices, 2000);
+            void scanDevices();
           }}
         >
           Install on another device
@@ -847,8 +874,6 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
   // ── Screen dispatch ──
   function renderScreen() {
     switch (screen) {
-      case "scanning":
-        return renderScanningScreen();
       case "no-device":
         return renderNoDeviceScreen();
       case "select-device":
@@ -872,10 +897,11 @@ export function IosFlasher({ serverUrl }: IosFlasherProps) {
 
   return (
     <div style={s.root}>
-      <div style={{ marginBottom: "20px", textAlign: "center" }}>
-        <span style={{ fontSize: "13px", color: C.muted }}>
-          iOS Sideloader — elizaOS
-        </span>
+      <div className="ios-section-header">
+        <h2>Install Eliza on iPhone or iPad</h2>
+        <p>
+          Connect your device to install the Eliza app outside the App Store.
+        </p>
       </div>
       {renderScreen()}
     </div>

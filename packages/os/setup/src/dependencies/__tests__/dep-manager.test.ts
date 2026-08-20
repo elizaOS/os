@@ -3,6 +3,22 @@ import { describe, expect, it } from "vitest";
 import { DependencyManager } from "../dep-manager";
 
 describe("DependencyManager", () => {
+  it("checks the command names shipped by libimobiledevice and ideviceinstaller", async () => {
+    const probes: string[] = [];
+    const mgr = new DependencyManager({
+      whichBinary: (name) => {
+        probes.push(name);
+        return `/fake/bin/${name}`;
+      },
+    });
+
+    const result = await mgr.checkOne("libimobiledevice");
+
+    expect(["found", "found-but-misconfigured"]).toContain(result.status);
+    expect(result.foundPath).toBe("/fake/bin/idevice_id");
+    expect(probes).toEqual(["idevice_id", "ideviceinfo", "ideviceinstaller"]);
+  });
+
   it("checkOne returns a single result", async () => {
     const mgr = new DependencyManager();
     const result = await mgr.checkOne("adb");

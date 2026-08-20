@@ -22,6 +22,7 @@
     "format:check": "bunx @biomejs/biome format src vite.config.ts vitest.config.ts"
   },
   "dependencies": {
+    "@fontsource/poppins": "^5.2.7",
     "vite": "^8.0.0"
   },
   "peerDependencies": {

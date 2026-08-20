@@ -52,6 +52,25 @@ export function authorizedFetch(
   return fetch(input, { ...init, headers });
 }
 
+/**
+ * Join a backend-owned route to either a direct loopback backend base
+ * (`http://127.0.0.1:<port>`) or the Vite development proxy base (`/api`).
+ *
+ * Callers pass the API base exactly once. This keeps packaged requests off the
+ * renderer origin and prevents the historical `<backend>/api/api/...` and
+ * `<backend>/api/...` mismatches caused by individual clients guessing where
+ * the proxy prefix belongs.
+ */
+export function backendRoute(base: string, route: string): string {
+  if (!isNonEmptyString(base)) {
+    throw new Error("[elizaos-setup] Backend base must not be empty.");
+  }
+  if (!route.startsWith("/")) {
+    throw new Error("[elizaos-setup] Backend route must start with '/'.");
+  }
+  return `${stripTrailingSlash(base)}${route}`;
+}
+
 function readEnv(): ImportMetaEnvLike | undefined {
   try {
     const meta = import.meta as { env?: ImportMetaEnvLike };

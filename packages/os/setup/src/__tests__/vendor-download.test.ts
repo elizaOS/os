@@ -10,6 +10,10 @@ const SCRIPT = readFileSync(
   join(__dirname, "..", "..", "vendor", "download.mjs"),
   "utf8",
 );
+const SIDELOADER_INSTALLER = readFileSync(
+  join(__dirname, "..", "..", "vendor", "sideloader-installer.mjs"),
+  "utf8",
+);
 
 describe("vendor/download.mjs source contract", () => {
   it("computes SHA-256 of every download", () => {
@@ -21,8 +25,15 @@ describe("vendor/download.mjs source contract", () => {
     expect(SCRIPT).toContain("refusing to install unverified");
   });
 
-  it("requires a sibling .sha256 for Sideloader or refuses install", () => {
-    expect(SCRIPT).toContain("Sideloader checksum unavailable");
+  it("installs only the reviewed, pinned Sideloader archive", () => {
+    expect(SCRIPT).toContain("installPinnedSideloader");
+    expect(SCRIPT).not.toContain("releases/latest");
+    expect(SIDELOADER_INSTALLER).toContain("Sideloader checksum mismatch");
+    expect(SIDELOADER_INSTALLER).toContain("archive size mismatch");
+    expect(SIDELOADER_INSTALLER).toContain("extractZip");
+    expect(SIDELOADER_INSTALLER).toContain(
+      "renameSync(stagedPath, destinationPath)",
+    );
   });
 
   it("uses argv arrays for unzip/powershell — no shell-string interpolation", () => {

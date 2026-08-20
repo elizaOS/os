@@ -1,6 +1,6 @@
 // Exercises the setup backend's loopback authorization and plan trust boundary.
 import { describe, expect, it, vi } from "vitest";
-import { createFetchHandler } from "../../server";
+import { createFetchHandler, createServerErrorResponse } from "../../server";
 import type { AdbFlasherBackend } from "../backend/adb-backend";
 import type { FlashPlan, FlashRequest } from "../backend/types";
 
@@ -11,6 +11,18 @@ function request(path: string, init: RequestInit = {}): Request {
 }
 
 describe("setup server authorization", () => {
+  it("translates backend failures at the HTTP boundary without leaking details", async () => {
+    const response = createServerErrorResponse(
+      new Error("sensitive native command output"),
+    );
+
+    expect(response.status).toBe(500);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    const body = await response.text();
+    expect(body).toContain("could not complete this request");
+    expect(body).not.toContain("sensitive native command output");
+  });
+
   it("rejects requests without the per-process token", async () => {
     const handler = createFetchHandler({ authToken: token });
     const response = await handler(request("/devices"));

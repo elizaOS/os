@@ -1,5 +1,5 @@
 // Implements backend device and HTTP operations for the AOSP setup flasher.
-import { authorizedFetch } from "../runtime/server-url";
+import { authorizedFetch, backendRoute } from "../runtime/server-url";
 import type {
   AospBuild,
   AospFlasherBackend,
@@ -187,7 +187,7 @@ export class HttpAospFlasherBackend implements AospFlasherBackend {
   }
 
   private async getJson(path: string): Promise<unknown> {
-    const res = await authorizedFetch(`${this.base}${path}`);
+    const res = await authorizedFetch(backendRoute(this.base, path));
     if (!res.ok) {
       throw new Error(`GET ${path} failed: HTTP ${res.status}`);
     }
@@ -195,7 +195,7 @@ export class HttpAospFlasherBackend implements AospFlasherBackend {
   }
 
   private async postJson(path: string, body: unknown): Promise<unknown> {
-    const res = await authorizedFetch(`${this.base}${path}`, {
+    const res = await authorizedFetch(backendRoute(this.base, path), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -271,7 +271,7 @@ export class HttpAospFlasherBackend implements AospFlasherBackend {
     if (!plan.executionToken) {
       throw new Error("Flash plan is missing its one-use execution token.");
     }
-    const res = await authorizedFetch(`${this.base}/execute`, {
+    const res = await authorizedFetch(backendRoute(this.base, "/execute"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ executionToken: plan.executionToken }),

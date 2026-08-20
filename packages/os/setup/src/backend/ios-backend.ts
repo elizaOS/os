@@ -94,7 +94,7 @@ export class SideloaderIosBackend implements IosBackend {
   }
 
   async listDevices(): Promise<IosDevice[]> {
-    const { stdout, exitCode } = await runCommand("ideviceid", ["-l"]);
+    const { stdout, exitCode } = await runCommand("idevice_id", ["-l"]);
     if (exitCode !== 0 || !stdout.trim()) return [];
 
     const udids = stdout
@@ -251,7 +251,7 @@ export class SideloaderIosBackend implements IosBackend {
       // Step: detect-device
       onProgress("detect-device", "running");
       const { stdout: deviceList, exitCode: detectExit } = await runCommand(
-        "ideviceid",
+        "idevice_id",
         ["-l"],
       );
       if (detectExit !== 0 || !deviceList.includes(udid)) {

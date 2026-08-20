@@ -3,6 +3,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import sideloaderChecksums from "../../vendor/checksums.json";
+import { installPinnedSideloader } from "../../vendor/sideloader-installer.mjs";
 import type {
   Dependency,
   DependencyCheckResult,
@@ -115,7 +117,7 @@ const DEPENDENCY_DEFINITIONS: Record<DependencyId, Dependency> = {
     id: "libimobiledevice",
     name: "libimobiledevice",
     description: "Detects and communicates with iOS devices",
-    commands: ["ideviceid", "ideviceinfo", "ideviceinstaller"],
+    commands: ["idevice_id", "ideviceinfo", "ideviceinstaller"],
     requiredFor: ["ios"],
   },
   sideloader: {
@@ -170,7 +172,7 @@ function getVersion(binary: string, foundPath: string): string | undefined {
   const versionFlags: Record<string, string> = {
     adb: "--version",
     fastboot: "--version",
-    ideviceid: "--version",
+    idevice_id: "--version",
     ideviceinfo: "--version",
     ideviceinstaller: "--version",
     sideloader: "--version",
@@ -293,8 +295,8 @@ function getManualInstructions(id: DependencyId): ManualInstallInstructions {
           title: "Install libimobiledevice (macOS)",
           steps: [
             "Install Homebrew from https://brew.sh",
-            "Run: brew install libimobiledevice",
-            "Verify: ideviceid --version",
+            "Run: brew install libimobiledevice ideviceinstaller",
+            "Verify: idevice_id --version && ideviceinstaller --version",
           ],
           url: "https://libimobiledevice.org",
         };
@@ -316,7 +318,7 @@ function getManualInstructions(id: DependencyId): ManualInstallInstructions {
           steps: [
             steps[distro],
             "Ensure usbmuxd is running so udev rules under /etc/udev/rules.d/39-libimobiledevice.rules are honored.",
-            "Verify: ideviceid --version",
+            "Verify: idevice_id --version",
           ],
           url: "https://libimobiledevice.org",
         };
@@ -334,9 +336,9 @@ function getManualInstructions(id: DependencyId): ManualInstallInstructions {
       return {
         title: "Install Sideloader",
         steps: [
-          "Download from https://github.com/Dadoum/Sideloader/releases",
-          "Make executable: chmod +x sideloader",
-          "Move to PATH: sudo mv sideloader /usr/local/bin/",
+          "Use Install automatically to download the reviewed Sideloader CLI archive",
+          "The installer verifies the pinned archive before extracting its binary",
+          "For manual installation, use the exact release and checksum documented in vendor/checksums.json",
         ],
         url: "https://github.com/Dadoum/Sideloader/releases",
       };
@@ -416,46 +418,13 @@ async function downloadPlatformTools(): Promise<boolean> {
 }
 
 async function downloadSideloader(): Promise<boolean> {
-  const apiUrl =
-    "https://api.github.com/repos/Dadoum/Sideloader/releases/latest";
   try {
-    const res = await fetch(apiUrl, {
-      headers: { "User-Agent": "elizaos-setup/1.0" },
+    await installPinnedSideloader({
+      vendorRoot: VENDOR_BIN_DIR,
+      platform: process.platform,
+      arch: process.arch,
+      config: sideloaderChecksums.sideloader,
     });
-    if (!res.ok) return false;
-
-    const release = (await res.json()) as {
-      assets: { name: string; browser_download_url: string }[];
-    };
-
-    const platformSuffix =
-      process.platform === "darwin"
-        ? "macos"
-        : process.platform === "linux"
-          ? "linux"
-          : "windows";
-
-    const asset = release.assets.find(
-      (a) =>
-        a.name.toLowerCase().includes(platformSuffix) &&
-        !a.name.endsWith(".sha256"),
-    );
-    if (!asset) return false;
-
-    const binRes = await fetch(asset.browser_download_url);
-    if (!binRes.ok) return false;
-
-    const destDir = VENDOR_BIN_DIR;
-    const destPath = join(destDir, "sideloader");
-
-    const { mkdir, writeFile, chmod } = await import("node:fs/promises");
-    await mkdir(destDir, { recursive: true });
-    const buf = await binRes.arrayBuffer();
-    await writeFile(destPath, new Uint8Array(buf));
-    if (process.platform !== "win32") {
-      await chmod(destPath, 0o755);
-    }
-
     return true;
   } catch {
     return false;
@@ -547,6 +516,7 @@ export class DependencyManager {
             "brew",
             "install",
             "libimobiledevice",
+            "ideviceinstaller",
           ]);
         } else if (platform === "linux") {
           installed = await this.runLinuxInstall("libimobiledevice");

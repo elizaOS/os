@@ -1,33 +1,35 @@
-// Renders AOSP setup flasher UI controls and installer state.
-import { useState } from "react";
+// Renders the branded, guided entry point for every elizaOS install path.
+import { useMemo, useState } from "react";
 import { HttpAospFlasherBackend } from "../backend/http-backend";
 import { FlasherApp } from "./FlasherApp";
 import { IosFlasher } from "./IosFlasher";
-
-// ---------------------------------------------------------------------------
-// Tab definitions
-// ---------------------------------------------------------------------------
 
 type TabId = "usb" | "android" | "ios";
 
 interface Tab {
   id: TabId;
-  label: string;
+  title: string;
+  description: string;
 }
 
 const TABS: Tab[] = [
-  { id: "usb", label: "💾 USB Boot Drive" },
-  { id: "android", label: "📱 Android Flash" },
-  { id: "ios", label: "🍎 iPhone / iPad" },
+  {
+    id: "usb",
+    title: "Computer",
+    description: "Bootable USB",
+  },
+  {
+    id: "android",
+    title: "Android",
+    description: "Supported Pixel",
+  },
+  {
+    id: "ios",
+    title: "iPhone & iPad",
+    description: "Eliza app",
+  },
 ];
 
-// ---------------------------------------------------------------------------
-// Linked installer panels
-// ---------------------------------------------------------------------------
-
-// USB installer integration note: this shell launches the standalone
-// `usb-installer` as a separate dev server or the packaged
-// `elizaOS USB Installer.app`, so raw USB writes stay in the dedicated app.
 const USB_INSTALLER_DEV_URL = "http://127.0.0.1:3742";
 const USB_INSTALLER_DOWNLOAD_URL = "https://elizaos.ai/downloads#usb-installer";
 
@@ -82,92 +84,63 @@ function handleOpenUsbInstaller(): void {
 
 function UsbInstallerPanel() {
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        height: "100%",
-        padding: "40px 24px",
-      }}
-    >
-      <div
-        style={{
-          background: "#1a1a1a",
-          border: "1px solid #2a2a2a",
-          borderRadius: "12px",
-          padding: "40px 48px",
-          maxWidth: "520px",
-          width: "100%",
-          textAlign: "center",
-        }}
-      >
-        <div style={{ fontSize: "48px", marginBottom: "16px" }}>💾</div>
-        <h2
-          style={{
-            color: "#ffffff",
-            fontSize: "20px",
-            fontWeight: 600,
-            margin: "0 0 12px",
-          }}
-        >
-          USB Boot Drive
-        </h2>
-        <p
-          style={{
-            color: "#888888",
-            fontSize: "14px",
-            lineHeight: "1.6",
-            margin: "0 0 20px",
-          }}
-        >
-          Create a bootable elizaOS USB drive with the standalone{" "}
-          <strong style={{ color: "#cccccc" }}>elizaOS USB Installer</strong>.
+    <div className="install-panel-content usb-panel">
+      <div className="install-panel-copy">
+        <h2>Set up a computer</h2>
+        <p className="panel-lede">
+          Create a bootable USB drive for a desktop or laptop. The installer
+          downloads and verifies the right elizaOS image for you.
         </p>
-        <button
-          type="button"
-          onClick={handleOpenUsbInstaller}
-          style={{
-            background: "#00ff88",
-            color: "#000",
-            border: "none",
-            borderRadius: "8px",
-            padding: "12px 24px",
-            fontSize: "14px",
-            fontWeight: 700,
-            cursor: "pointer",
-            marginBottom: "12px",
-          }}
-        >
-          Open USB Installer
-        </button>
-        <div style={{ fontSize: "12px", color: "#666" }}>
-          Or{" "}
+        <div className="safety-note" role="note">
+          <strong>Your drive is not changed automatically.</strong>
+          <span>
+            You will review the exact drive before anything is erased.
+          </span>
+        </div>
+        <div className="panel-actions">
           <button
             type="button"
-            onClick={() => openExternal(USB_INSTALLER_DOWNLOAD_URL)}
-            style={{
-              background: "none",
-              border: "none",
-              color: "#00ff88",
-              cursor: "pointer",
-              padding: 0,
-              fontSize: "12px",
-              textDecoration: "underline",
-            }}
+            className="brand-button"
+            onClick={handleOpenUsbInstaller}
           >
-            download the USB Installer here
+            Open USB Installer
           </button>
-          .
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => openExternal(USB_INSTALLER_DOWNLOAD_URL)}
+          >
+            Download it instead
+          </button>
         </div>
+      </div>
+
+      <div className="requirements">
+        <h3>What you need</h3>
+        <ol className="how-it-works" aria-label="What you need for USB setup">
+          <li>
+            <div>
+              <strong>A spare USB drive</strong>
+              <p>16 GB or larger. Its contents will be erased.</p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <strong>The computer you are setting up</strong>
+              <p>You will choose its hardware type in the next app.</p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <strong>About 15 minutes</strong>
+              <p>Download time depends on your connection.</p>
+            </div>
+          </li>
+        </ol>
       </div>
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Main shell
-// ---------------------------------------------------------------------------
 
 export interface InstallerShellProps {
   serverUrl: string;
@@ -175,92 +148,66 @@ export interface InstallerShellProps {
 
 export function InstallerShell({ serverUrl }: InstallerShellProps) {
   const [activeTab, setActiveTab] = useState<TabId>("usb");
-
-  const backend = new HttpAospFlasherBackend(`${serverUrl}/api`);
+  const backend = useMemo(
+    () => new HttpAospFlasherBackend(serverUrl),
+    [serverUrl],
+  );
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100vh",
-        background: "#0a0a0a",
-        color: "#ffffff",
-        fontFamily:
-          '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-        overflow: "hidden",
-      }}
-    >
-      {/* Top bar */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "12px",
-          padding: "0 24px",
-          height: "56px",
-          borderBottom: "1px solid #1e1e1e",
-          flexShrink: 0,
-        }}
-      >
-        <span
-          style={{
-            color: "#00ff88",
-            fontWeight: 700,
-            fontSize: "15px",
-            letterSpacing: "-0.01em",
-          }}
+    <div className="installer-shell">
+      <header className="installer-topbar">
+        <div className="installer-brand">
+          <img
+            className="installer-logo"
+            src="./brand/logos/eliza_logotext.svg"
+            alt="Eliza"
+          />
+          <span className="brand-divider" aria-hidden />
+          <span className="setup-label">Installer</span>
+        </div>
+        <button
+          type="button"
+          className="header-help"
+          onClick={() => openExternal("https://docs.elizaos.ai")}
         >
-          elizaOS
-        </span>
-        <span style={{ color: "#333333", fontSize: "15px" }}>/</span>
-        <span style={{ color: "#888888", fontSize: "15px" }}>Installer</span>
-      </div>
+          Help
+        </button>
+      </header>
 
-      {/* Tab bar */}
-      <div
-        style={{
-          display: "flex",
-          gap: "0",
-          padding: "0 24px",
-          borderBottom: "1px solid #1e1e1e",
-          flexShrink: 0,
-        }}
-      >
-        {TABS.map((tab) => {
-          const isActive = tab.id === activeTab;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              style={{
-                background: "none",
-                border: "none",
-                borderBottom: isActive
-                  ? "2px solid #00ff88"
-                  : "2px solid transparent",
-                color: isActive ? "#00ff88" : "#666666",
-                cursor: "pointer",
-                fontSize: "13px",
-                fontWeight: isActive ? 600 : 400,
-                padding: "12px 20px",
-                transition: "color 0.15s, border-color 0.15s",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
+      <main className="installer-main">
+        <section className="installer-intro">
+          <h1>Install elizaOS</h1>
+          <p>Choose where you want to use it.</p>
+        </section>
 
-      {/* Tab content */}
-      <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
-        {activeTab === "usb" && <UsbInstallerPanel />}
-        {activeTab === "android" && <FlasherApp backend={backend} />}
-        {activeTab === "ios" && <IosFlasher serverUrl={serverUrl} />}
-      </div>
+        <nav className="install-tabs" aria-label="Choose a device">
+          {TABS.map((tab) => {
+            const isActive = tab.id === activeTab;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                className={`install-tab${isActive ? " active" : ""}`}
+                onClick={() => setActiveTab(tab.id)}
+                aria-pressed={isActive}
+              >
+                <strong>{tab.title}</strong>
+                <span>{tab.description}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        <section className={`installer-workspace workspace-${activeTab}`}>
+          {activeTab === "usb" && <UsbInstallerPanel />}
+          {activeTab === "android" && <FlasherApp backend={backend} embedded />}
+          {activeTab === "ios" && <IosFlasher serverUrl={serverUrl} />}
+        </section>
+
+        <footer className="installer-footer">
+          You can close the installer at any time before confirming a change.
+        </footer>
+      </main>
     </div>
   );
 }

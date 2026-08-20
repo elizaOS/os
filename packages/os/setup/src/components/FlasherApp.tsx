@@ -40,6 +40,13 @@ function stepIcon(status: FlashStepStatus): string {
   }
 }
 
+function deviceCheckErrorMessage(error: unknown): string {
+  if (error instanceof TypeError) {
+    return "The installer could not reach its device service. Try again in a moment.";
+  }
+  return "We couldn't check for Android devices. Reconnect your device, then try again.";
+}
+
 // ---------------------------------------------------------------------------
 // State machine
 // ---------------------------------------------------------------------------
@@ -60,11 +67,7 @@ type Screen =
 // ---------------------------------------------------------------------------
 
 function Spinner() {
-  return (
-    <span className="spinner" aria-hidden>
-      ⏳
-    </span>
-  );
+  return <span className="spinner" role="status" aria-label="Loading" />;
 }
 
 // ---- Screen 1: Device Detection ----
@@ -902,9 +905,10 @@ function ErrorScreen({ message, onRetry }: ErrorScreenProps) {
 
 interface FlasherAppProps {
   backend: AospFlasherBackend;
+  embedded?: boolean;
 }
 
-export function FlasherApp({ backend }: FlasherAppProps) {
+export function FlasherApp({ backend, embedded = false }: FlasherAppProps) {
   const [screen, setScreen] = useState<Screen>("detecting");
   const [devices, setDevices] = useState<ConnectedDevice[]>([]);
   const [builds, setBuilds] = useState<AospBuild[]>([]);
@@ -932,14 +936,10 @@ export function FlasherApp({ backend }: FlasherAppProps) {
     setDetectLoading(true);
     setDetectError(null);
     try {
-      const [nextDevices, nextBuilds] = await Promise.all([
-        backend.listConnectedDevices(),
-        buildsLoadedRef.current
-          ? Promise.resolve(builds)
-          : backend.listBuilds(),
-      ]);
+      const nextDevices = await backend.listConnectedDevices();
       setDevices(nextDevices);
-      if (!buildsLoadedRef.current) {
+      if (nextDevices.length > 0 && !buildsLoadedRef.current) {
+        const nextBuilds = await backend.listBuilds();
         setBuilds(nextBuilds);
         buildsLoadedRef.current = true;
         if (nextBuilds[0] && !selectedBuildId) {
@@ -947,11 +947,11 @@ export function FlasherApp({ backend }: FlasherAppProps) {
         }
       }
     } catch (err) {
-      setDetectError(err instanceof Error ? err.message : String(err));
+      setDetectError(deviceCheckErrorMessage(err));
     } finally {
       setDetectLoading(false);
     }
-  }, [backend, builds, selectedBuildId]);
+  }, [backend, selectedBuildId]);
 
   useEffect(() => {
     void loadDevices();
@@ -977,8 +977,10 @@ export function FlasherApp({ backend }: FlasherAppProps) {
     try {
       const s = await backend.getDeviceSpecs(device.serial);
       setSpecs(s);
-    } catch (err) {
-      setSpecsError(err instanceof Error ? err.message : String(err));
+    } catch {
+      setSpecsError(
+        "We couldn't read this device's details. Reconnect it, then try again.",
+      );
     } finally {
       setSpecsLoading(false);
     }
@@ -1074,16 +1076,18 @@ export function FlasherApp({ backend }: FlasherAppProps) {
   const selectedBuild = builds.find((b) => b.id === selectedBuildId);
 
   return (
-    <main className="flasher-shell">
-      <section className="header-band">
-        <div>
-          <p className="eyebrow">elizaOS media tool</p>
-          <h1>AOSP Flasher</h1>
-        </div>
-        {selectedDevice && (
-          <span className="status-pill">{selectedDevice.model}</span>
-        )}
-      </section>
+    <main className={`flasher-shell${embedded ? " flasher-embedded" : ""}`}>
+      {!embedded && (
+        <section className="header-band">
+          <div>
+            <p className="eyebrow">elizaOS media tool</p>
+            <h1>AOSP Flasher</h1>
+          </div>
+          {selectedDevice && (
+            <span className="status-pill">{selectedDevice.model}</span>
+          )}
+        </section>
+      )}
 
       <section className="workspace-body">
         {screen === "detecting" && (
@@ -1170,17 +1174,19 @@ export function FlasherApp({ backend }: FlasherAppProps) {
         )}
       </section>
 
-      <section className="footer-band">
-        <span className="footer-brand">elizaOS AOSP Flasher</span>
-        <a
-          className="cta-link"
-          href="https://elizaos.ai"
-          target="_blank"
-          rel="noreferrer"
-        >
-          elizaOS docs
-        </a>
-      </section>
+      {!embedded && (
+        <section className="footer-band">
+          <span className="footer-brand">elizaOS AOSP Flasher</span>
+          <a
+            className="cta-link"
+            href="https://elizaos.ai"
+            target="_blank"
+            rel="noreferrer"
+          >
+            elizaOS docs
+          </a>
+        </section>
+      )}
     </main>
   );
 }
