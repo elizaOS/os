@@ -165,9 +165,12 @@ build_native_plugin() {
 # vsetvli loops; a named core like sifive_x280 advertises VLEN=512
 # via zvl512b and produces code that silently truncates at smaller
 # VLEN (qemu-user reports VLEN=128, the RVV-spec minimum).
-QJL_RVV=""; POLAR_RVV=""; TBQ_RVV=""
+# Zig's clang driver treats GCC-style `-march=rv64gcv1p0` as a CPU model and
+# rejects it. Use Zig's supported generic RV64 feature form for QJL on every
+# maintained version; it enables RVV without baking in a fixed VLEN.
+QJL_RVV="-DQJL_RVV_COMPILE_OPTIONS=-mcpu=generic_rv64+v+m+a+f+d+c"
+POLAR_RVV=""; TBQ_RVV=""
 if [ "$ZIG_MAJOR_MINOR" = "0.13" ]; then
-    QJL_RVV="-DQJL_RVV_COMPILE_OPTIONS=-mcpu=sifive_x280;-mabi=lp64d"
     POLAR_RVV="-DPOLARQUANT_RVV_COMPILE_OPTIONS=-mcpu=sifive_x280;-mabi=lp64d"
     TBQ_RVV="-DTURBOQUANT_RVV_FLAGS=-mcpu=generic_rv64+v+m+a+f+d+c"
 fi

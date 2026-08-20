@@ -63,10 +63,10 @@ sudo apt-get install -y \
     cmake build-essential \
     file binutils
 # Zig 0.14+ — pick the release for your host arch.
-curl -fsSL https://ziglang.org/download/0.14.0/zig-linux-x86_64-0.14.0.tar.xz \
+curl -fsSL https://ziglang.org/download/0.14.1/zig-x86_64-linux-0.14.1.tar.xz \
     | sudo tar -C /opt -xJ
-sudo ln -sf /opt/zig-linux-x86_64-0.14.0/zig /usr/local/bin/zig
-zig version       # → 0.14.0
+sudo ln -sf /opt/zig-x86_64-linux-0.14.1/zig /usr/local/bin/zig
+zig version       # → 0.14.1
 
 # 2. Optional: Android NDK r27+ (only needed for android-riscv64-cpu).
 #    Skip this if you're only validating the Linux riscv64 lane.

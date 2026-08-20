@@ -379,6 +379,20 @@ describe("AOSP build contracts", () => {
     expect(workflow).toContain("ELIZA_MTP_ANDROID_LIBDIR");
   });
 
+  test("riscv64 QJL uses Zig-supported variable-length vector flags", () => {
+    const driver = readFileSync(
+      join(repositoryRoot, "scripts/build-riscv64-artifacts.sh"),
+      "utf8",
+    );
+
+    expect(driver).toContain(
+      'QJL_RVV="-DQJL_RVV_COMPILE_OPTIONS=-mcpu=generic_rv64+v+m+a+f+d+c"',
+    );
+    expect(driver).not.toContain(
+      "QJL_RVV_COMPILE_OPTIONS=-mcpu=sifive_x280",
+    );
+  });
+
   test("source-only AOSP builds do not require KVM", () => {
     if (process.platform !== "linux" || process.arch !== "x64") return;
     expect(() =>

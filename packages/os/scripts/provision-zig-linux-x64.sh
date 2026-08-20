@@ -16,9 +16,15 @@ version="${1:-}"
 case "$version" in
     0.13.0)
         archive_sha256=d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea
+        archive_name="zig-linux-x86_64-${version}.tar.xz"
         ;;
     0.14.0)
         archive_sha256=473ec26806133cf4d1918caf1a410f8403a13d979726a9045b421b685031a982
+        archive_name="zig-linux-x86_64-${version}.tar.xz"
+        ;;
+    0.14.1)
+        archive_sha256=24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c
+        archive_name="zig-x86_64-linux-${version}.tar.xz"
         ;;
     *)
         echo "unsupported pinned Zig version: ${version:-<empty>}" >&2
@@ -36,8 +42,8 @@ if [ -z "${RUNNER_TEMP:-}" ] || [ -z "${GITHUB_PATH:-}" ]; then
 fi
 
 cache_dir="${HOME}/.cache/elizaos/zig-archives"
-archive="${cache_dir}/zig-linux-x86_64-${version}.tar.xz"
-url="https://ziglang.org/download/${version}/zig-linux-x86_64-${version}.tar.xz"
+archive="${cache_dir}/${archive_name}"
+url="https://ziglang.org/download/${version}/${archive_name}"
 mkdir -p "$cache_dir"
 if [ -L "$archive" ]; then
     echo "refusing a symlinked Zig archive cache entry: $archive" >&2
