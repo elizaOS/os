@@ -15,6 +15,8 @@ export interface AospBuild {
   channel: "stable" | "beta" | "nightly";
   /** device codename, e.g. "caiman" */
   targetDevice: string;
+  /** stable repository hardware target identifier */
+  targetId: string;
   architecture: "arm64-v8a" | "x86_64" | "riscv64";
   publishedAt: string;
   /** points to android-release-manifest JSON */
@@ -48,6 +50,7 @@ export interface AndroidReleaseManifest {
   buildFingerprint: string;
   buildType?: "user" | "userdebug" | "eng" | "unknown";
   supportedDevices: Array<{
+    targetId: string;
     codename: string;
     marketingName?: string;
     tier: "lab-validated" | "candidate" | "manual" | "blocked";

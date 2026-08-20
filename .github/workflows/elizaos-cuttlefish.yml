@@ -155,7 +155,7 @@ jobs:
       # and the brand `build:android:system` runs Gradle which needs a full SDK.
       - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699
         with:
-          packages: "platform-tools build-tools;36.0.0 platforms;android-36 ndk;29.0.13113456"
+          packages: "platform-tools build-tools;36.0.0 platforms;android-36 ndk;28.2.13676358 cmake;3.22.1"
 
       - name: Install workspace dependencies
         working-directory: .eliza-source
@@ -173,7 +173,7 @@ jobs:
           echo "build-cmd=$BUILD_CMD" >> "$GITHUB_OUTPUT"
           REQUIRES_RISCV64=$(node -e "const c=JSON.parse(require('fs').readFileSync('$BRAND_CONFIG','utf8')); console.log(String(c.productName ?? '').includes('riscv64') ? 'true' : 'false')")
           echo "requires-riscv64=$REQUIRES_RISCV64" >> "$GITHUB_OUTPUT"
-          INFERENCE_TARGETS=$(node -e "const c=JSON.parse(require('fs').readFileSync('$BRAND_CONFIG','utf8')); const p=String(c.productName ?? ''); const target=p.includes('riscv64')?'android-riscv64-cpu-fused':p.includes('x86_64')?'android-x86_64-cpu-fused':null; console.log(['android-arm64-vulkan-fused', target].filter(Boolean).join(' '))")
+          INFERENCE_TARGETS=$(node -e "const c=JSON.parse(require('fs').readFileSync('$BRAND_CONFIG','utf8')); const p=String(c.productName ?? ''); const target=p.includes('riscv64')?'android-riscv64-cpu-fused':p.includes('x86_64')?'android-x86_64-cpu-fused':null; console.log(['android-arm64-cpu-fused', target].filter(Boolean).join(' '))")
           echo "inference-targets=$INFERENCE_TARGETS" >> "$GITHUB_OUTPUT"
           DISTRO_NAME=$(node -p "JSON.parse(require('fs').readFileSync('$BRAND_CONFIG','utf8')).distroName")
           echo "distro-name=$DISTRO_NAME" >> "$GITHUB_OUTPUT"
@@ -204,15 +204,21 @@ jobs:
             --assets-dir packages/app-core/platforms/android/app/src/main/assets/agent \
             "${args[@]}"
 
+      - name: Stage Android/bionic fused voice library
+        working-directory: .eliza-source
+        env:
+          ELIZA_NDK_VERSION: 28.2.13676358
+        run: |
+          node packages/app-core/scripts/stage-elizavoice-lib.mjs \
+            --abi arm64-v8a \
+            --variant cpu
+
       - name: Build privileged APK (${{ steps.brand.outputs.distro-name }})
         working-directory: .eliza-source
         env:
           ELIZAOS_OS_REPO_ROOT: ${{ github.workspace }}
           ELIZA_BUN_RISCV64_URL: ${{ inputs.bun-riscv64-url }}
           ELIZA_BUN_RISCV64_SHA256: ${{ inputs.bun-riscv64-sha256 }}
-          ELIZA_MTP_ANDROID_LIBDIR: ${{ github.workspace }}/.eliza-source/packages/app-core/platforms/android/app/src/main/assets/agent/arm64-v8a
-          ELIZA_MTP_ANDROID_LIBDIR_X86_64: ${{ github.workspace }}/.eliza-source/packages/app-core/platforms/android/app/src/main/assets/agent/x86_64
-          ELIZA_MTP_ANDROID_LIBDIR_RISCV64: ${{ github.workspace }}/.eliza-source/packages/app-core/platforms/android/app/src/main/assets/agent/riscv64
         run: |
           if [ "${{ steps.brand.outputs.requires-riscv64 }}" = "true" ]; then
             if [ -z "$ELIZA_BUN_RISCV64_URL" ] || [ -z "$ELIZA_BUN_RISCV64_SHA256" ]; then
@@ -249,3 +255,46 @@ jobs:
         env:
           ELIZAOS_ELIZA_ROOT: ${{ github.workspace }}/.eliza-source
         run: bash scripts/aosp/cuttlefish-native-inference-smoke.sh
+
+      - name: Full-engine local ASR and TTS smoke
+        if: inputs.launch == true
+        env:
+          ELIZAOS_ELIZA_ROOT: ${{ github.workspace }}/.eliza-source
+        run: |
+          node scripts/aosp/deploy-pixel.mjs \
+            --abi x86_64 \
+            --skip-libllama \
+            --skip-aosp-build \
+            --voice-only
+
+      - name: Verify assistant role, voice IME, and assist-key routing
+        if: inputs.launch == true
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="${RUNNER_TEMP}/android-assistant-ime"
+          mkdir -p "$evidence"
+          adb shell screenrecord --time-limit 30 /data/local/tmp/assistant-ime.mp4 &
+          recorder_pid=$!
+          set +e
+          node .eliza-source/packages/app/scripts/android-assistant-verify.mjs \
+            --require-device --json | tee "$evidence/assertions.log"
+          verify_status=${PIPESTATUS[0]}
+          set -e
+          wait "$recorder_pid" || true
+          adb pull /data/local/tmp/assistant-ime.mp4 "$evidence/assistant-ime.mp4" || true
+          adb logcat -d -v threadtime > "$evidence/logcat.txt"
+          adb shell dumpsys activity activities > "$evidence/activities.txt"
+          adb shell settings get secure voice_interaction_service \
+            > "$evidence/voice_interaction_service.txt"
+          adb shell settings get secure default_input_method \
+            > "$evidence/default_input_method.txt"
+          exit "$verify_status"
+
+      - name: Upload assistant and IME evidence
+        if: always() && inputs.launch == true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: android-assistant-ime-evidence-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/android-assistant-ime
+          if-no-files-found: error

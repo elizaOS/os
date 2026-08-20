@@ -18,8 +18,8 @@
 #   6. The assistant/full-control capability manifest is baked into
 #      /product/etc/eliza/ for static image validation and field debug.
 
-PRODUCT_BRAND := Eliza
-PRODUCT_MANUFACTURER := Eliza
+PRODUCT_BRAND := elizaOS
+PRODUCT_MANUFACTURER := elizaOS
 
 PRODUCT_PACKAGES += \
     Eliza \

@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "targets": [
+    {
+      "targetId": "pixel9a-tegu",
+      "marketingName": "Pixel 9a",
+      "manufacturer": "Google",
+      "codenames": ["tegu"],
+      "reviewedAt": "2026-08-18",
+      "authoritativeReferences": [
+        "https://developers.google.com/android/drivers",
+        "https://android.googlesource.com/platform/manifest/+/refs/tags/android-15.0.0_r31"
+      ],
+      "productName": "eliza_tegu_phone",
+      "lunchTarget": "eliza_tegu_phone-trunk_staging-userdebug",
+      "expectedFingerprintPrefix": "elizaOS/eliza_tegu_phone/tegu:",
+      "aospLockPath": "packages/os/android/pixel9a.lock.json",
+      "sourceStatus": "pinned",
+      "installerEligible": false,
+      "blockedReasons": [
+        "No retained Pixel 9a flash and post-boot validation evidence exists yet."
+      ]
+    },
+    {
+      "targetId": "lightphone3-tlp301",
+      "marketingName": "Light Phone III",
+      "manufacturer": "Light",
+      "codenames": ["TLP301"],
+      "reviewedAt": "2026-08-18",
+      "authoritativeReferences": [
+        "https://github.com/lightphone/light-sdk",
+        "https://developers.thelightphone.com/"
+      ],
+      "sourceStatus": "blocked",
+      "installerEligible": false,
+      "blockedReasons": [
+        "Light's official light-sdk is an application/tool SDK, not a bootable LightOS/AOSP source, signing, or flash contract.",
+        "No authoritative AOSP device tree or board configuration has been published.",
+        "No kernel source or boot-image contract has been published.",
+        "No licensed vendor-blob manifest has been published.",
+        "No validated bootloader unlock, flash, or rollback procedure exists."
+      ]
+    }
+  ]
+}

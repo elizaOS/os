@@ -103,6 +103,7 @@ function validateBuild(v: unknown): AospBuild {
     throw new Error("build.channel must be one of stable|beta|nightly");
   if (!isString(v.targetDevice))
     throw new Error("build.targetDevice must be a string");
+  if (!isString(v.targetId)) throw new Error("build.targetId must be a string");
   if (
     !isString(v.architecture) ||
     !["arm64-v8a", "x86_64", "riscv64"].includes(v.architecture)
@@ -122,6 +123,7 @@ function validateBuild(v: unknown): AospBuild {
     version: v.version,
     channel: v.channel as AospBuild["channel"],
     targetDevice: v.targetDevice,
+    targetId: v.targetId,
     architecture: v.architecture as AospBuild["architecture"],
     publishedAt: v.publishedAt,
     manifestUrl: v.manifestUrl,

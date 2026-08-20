@@ -40,10 +40,10 @@ printf 'super-image-fixture\n' >"$ARTIFACT_DIR/super.img"
 cat >"$BIN_DIR/adb" <<'EOF'
 #!/usr/bin/env bash
 case "$*" in
-  *"devices -l"*) printf 'List of devices attached\nTEST123 device usb:1-1 product:test model:Test device:caiman\n' ;;
+  *"devices -l"*) printf 'List of devices attached\nTEST123 device usb:1-1 product:test model:Test device:tegu\n' ;;
   *"get-state"*) echo device ;;
-  *"getprop ro.product.device"*) echo caiman ;;
-  *"getprop ro.build.fingerprint"*) echo 'elizaos/caiman/caiman:16/example:userdebug/test-keys' ;;
+  *"getprop ro.product.device"*) echo tegu ;;
+  *"getprop ro.build.fingerprint"*) echo 'elizaOS/eliza_tegu_phone/tegu:15/example:userdebug/test-keys' ;;
   *"getprop ro.boot.slot_suffix"*) echo '_a' ;;
   *"getprop sys.boot_completed"*) echo 1 ;;
   *"pm path ai.elizaos.app"*) echo 'package:/system/priv-app/Eliza/Eliza.apk' ;;
@@ -63,7 +63,7 @@ cat >"$BIN_DIR/fastboot" <<'EOF'
 #!/usr/bin/env bash
 case "$*" in
   *"getvar unlocked"*) echo 'unlocked: yes' >&2 ;;
-  *"getvar product"*) echo 'product: caiman' >&2 ;;
+  *"getvar product"*) echo 'product: tegu' >&2 ;;
   *) echo "fake fastboot $*" ;;
 esac
 EOF
@@ -110,8 +110,8 @@ VALIDATE_OUT="$TMP_DIR/validate.out"
   --manifest "$ROOT/manifests/android-release-manifest.example.json" \
   >"$VALIDATE_OUT"
 assert_contains "$VALIDATE_OUT" "Dry-run only. No ADB commands were executed."
-assert_contains "$VALIDATE_OUT" "ro.product.device=caiman"
-assert_contains "$VALIDATE_OUT" "ro.build.fingerprint^=elizaos/caiman/caiman:"
+assert_contains "$VALIDATE_OUT" "ro.product.device=tegu"
+assert_contains "$VALIDATE_OUT" "ro.build.fingerprint^=elizaOS/eliza_tegu_phone/tegu:"
 pass "post-flash validator dry-run reads manifest expectations"
 
 VALIDATE_EXEC_OUT="$TMP_DIR/validate-exec.out"
@@ -129,6 +129,42 @@ node "$ROOT/scripts/validate-release-manifest.mjs" \
   >"$MANIFEST_OUT"
 assert_contains "$MANIFEST_OUT" "manifest ok: elizaos-android-example-2026.05.0"
 pass "manifest validator accepts example manifest"
+
+INELIGIBLE_MANIFEST="$TMP_DIR/ineligible-lab-manifest.json"
+node - "$ROOT/manifests/android-release-manifest.example.json" "$INELIGIBLE_MANIFEST" <<'NODE'
+const { readFileSync, writeFileSync } = require('node:fs');
+const [source, target] = process.argv.slice(2);
+const manifest = JSON.parse(readFileSync(source, 'utf8'));
+manifest.supportedDevices[0].tier = 'lab-validated';
+writeFileSync(target, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+INELIGIBLE_OUT="$TMP_DIR/ineligible-lab.out"
+if node "$ROOT/scripts/validate-release-manifest.mjs" \
+  "$INELIGIBLE_MANIFEST" >"$INELIGIBLE_OUT" 2>&1; then
+  fail "manifest validator promoted an installer-ineligible hardware target"
+fi
+assert_contains "$INELIGIBLE_OUT" "cannot be lab-validated while this target is installer-ineligible"
+pass "manifest validator refuses inventory-bypassing lab promotion"
+
+INCOMPLETE_EVIDENCE_MANIFEST="$TMP_DIR/incomplete-evidence-manifest.json"
+node - "$ROOT/manifests/android-release-manifest.example.json" "$INCOMPLETE_EVIDENCE_MANIFEST" <<'NODE'
+const { readFileSync, writeFileSync } = require('node:fs');
+const [source, target] = process.argv.slice(2);
+const manifest = JSON.parse(readFileSync(source, 'utf8'));
+manifest.validation.requiredValidationTokens = ['pm path'];
+manifest.buildFingerprint = 'elizaOS/wrong/tegu:15/example:userdebug/test-keys';
+delete manifest.rollback.previousReleaseId;
+writeFileSync(target, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+INCOMPLETE_EVIDENCE_OUT="$TMP_DIR/incomplete-evidence.out"
+if node "$ROOT/scripts/validate-release-manifest.mjs" \
+  "$INCOMPLETE_EVIDENCE_MANIFEST" >"$INCOMPLETE_EVIDENCE_OUT" 2>&1; then
+  fail "manifest validator accepted incomplete runtime/rollback evidence"
+fi
+assert_contains "$INCOMPLETE_EVIDENCE_OUT" 'must include "cmd role holders"'
+assert_contains "$INCOMPLETE_EVIDENCE_OUT" "must start with elizaOS/eliza_tegu_phone/tegu:"
+assert_contains "$INCOMPLETE_EVIDENCE_OUT" "must identify a retained known-good release"
+pass "manifest validator enforces runtime and rollback evidence contracts"
 
 HASH_BOOT="$(node -e "const {createHash}=require('node:crypto'); const {readFileSync}=require('node:fs'); process.stdout.write(createHash('sha256').update(readFileSync(process.argv[1])).digest('hex'))" "$ARTIFACT_DIR/boot.img")"
 HASH_VENDOR_BOOT="$(node -e "const {createHash}=require('node:crypto'); const {readFileSync}=require('node:fs'); process.stdout.write(createHash('sha256').update(readFileSync(process.argv[1])).digest('hex'))" "$ARTIFACT_DIR/vendor_boot.img")"
@@ -151,3 +187,18 @@ node "$ROOT/scripts/validate-release-manifest.mjs" \
   >"$ARTIFACT_VALIDATE_OUT"
 assert_contains "$ARTIFACT_VALIDATE_OUT" "artifacts ok: $ARTIFACT_DIR"
 pass "manifest validator checks artifact size and hashes"
+
+EXTRA_ARTIFACT_DIR="$TMP_DIR/artifacts-with-extra-image"
+mkdir -p "$EXTRA_ARTIFACT_DIR"
+cp "$ARTIFACT_DIR/boot.img" "$EXTRA_ARTIFACT_DIR/boot.img"
+cp "$ARTIFACT_DIR/vendor_boot.img" "$EXTRA_ARTIFACT_DIR/vendor_boot.img"
+cp "$ARTIFACT_DIR/super.img" "$EXTRA_ARTIFACT_DIR/super.img"
+printf 'undeclared-dtbo-image\n' >"$EXTRA_ARTIFACT_DIR/dtbo.img"
+EXTRA_ARTIFACT_OUT="$TMP_DIR/extra-artifact.out"
+if node "$ROOT/scripts/validate-release-manifest.mjs" \
+  "$ARTIFACT_MANIFEST" \
+  --artifact-dir "$EXTRA_ARTIFACT_DIR" >"$EXTRA_ARTIFACT_OUT" 2>&1; then
+  fail "manifest validator accepted an undeclared image that the installer would flash"
+fi
+assert_contains "$EXTRA_ARTIFACT_OUT" "dtbo.img: image is not declared by the release manifest"
+pass "manifest validator refuses undeclared flash images"
