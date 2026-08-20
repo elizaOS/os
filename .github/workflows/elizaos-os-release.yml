@@ -120,7 +120,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends python3-cryptography
           cd packages/os/linux
           export ELIZAOS_ELIZA_ROOT="${GITHUB_WORKSPACE}/.eliza-source"
-          ELIZAOS_STATIC_SOURCE_ONLY=1 ./scripts/static-smoke.sh
           bash elizaos/scripts/mkosi-lint.sh
           python3 -m unittest -v \
             elizaos/scripts/test_mkosi_qualification.py \

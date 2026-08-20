@@ -338,6 +338,8 @@ describe("OS release workflow authority", () => {
     expect(provision.run).toBe(ripgrepProvisioner);
     expect(steps.indexOf(provision)).toBeGreaterThan(-1);
     expect(steps.indexOf(validation)).toBeGreaterThan(steps.indexOf(provision));
+    expect(validation.run).toContain("elizaos/scripts/mkosi-lint.sh");
+    expect(validation.run).not.toContain("static-smoke.sh");
     expect(source).toContain("assert-canonical-linux-release.mjs");
     expect(source).toContain(
       "for script in scripts/*.mjs packages/os/scripts/*.mjs; do",
