@@ -11,8 +11,11 @@ product choices:
 `createInstallPlan()` never edits a disk and every returned plan has
 `executable: false`. `authorizeInstallPlan()` can convert that exact reviewed
 plan into an executable capability only after a fresh inventory reproduces the
-plan id and an expiring local-owner credential verifies. The execution
-orchestrator then re-enumerates stable disk identity before every typed action,
+plan id and an expiring local-owner credential verifies. Plans and inventory
+fingerprints bind the disk serial, optional WWN, firmware/sysfs path, logical
+sector size, and GPT disk GUID in addition to its stable id, path, size, and
+partition boundaries. The execution orchestrator then re-enumerates that exact
+disk identity before every typed action,
 requires a verified GPT backup, and writes a digest-chained durable journal
 before and after each operation. An interrupted or inconsistent journal stops
 with `InstallRecoveryRequiredError`; actions are never guessed or replayed.
