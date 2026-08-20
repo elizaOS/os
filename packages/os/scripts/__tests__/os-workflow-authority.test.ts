@@ -224,6 +224,19 @@ describe("OS release workflow authority", () => {
     expect(riscvSource).not.toContain("restore-keys: riscv64-out-");
   });
 
+  test("RISC-V cold-build failures retain their compiler diagnostics", () => {
+    const source = readFileSync(workflowPath("riscv64-smoke.yml"), "utf8");
+
+    expect(source).toContain("name: Print failed RISC-V build diagnostics");
+    expect(source).toContain(`if: \${{ failure() }}`);
+    expect(source).toContain("tail -n 250");
+    expect(source).toContain("name: riscv64-build-diagnostics");
+    expect(source).toContain(
+      ".eliza-source/packages/native/plugins/*/build/**/*.log",
+    );
+    expect(source).toContain("include-hidden-files: true");
+  });
+
   test("desktop distributors share the exact Electrobun CLI and runtime cache", () => {
     const workflowNames = [
       "release-elizaos-setup.yml",

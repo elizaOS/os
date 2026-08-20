@@ -122,6 +122,38 @@ jobs:
         run: |
           bun run build:riscv64-artifacts
 
+      - name: Print failed RISC-V build diagnostics
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          found=0
+          while IFS= read -r -d '' log; do
+            found=1
+            echo "::group::$log"
+            tail -n 250 "$log"
+            echo "::endgroup::"
+          done < <(
+            find .eliza-source/packages/native/plugins build \
+              -type f -name '*.log' -print0 2>/dev/null
+          )
+          if [ "$found" -eq 0 ]; then
+            echo "No RISC-V build logs were produced."
+          fi
+
+      - name: Upload RISC-V build diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: riscv64-build-diagnostics
+          path: |
+            .eliza-source/packages/native/plugins/*/build/*.log
+            .eliza-source/packages/native/plugins/*/build/**/*.log
+            build/*.log
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 7
+
       - name: QEMU smoke every riscv64 artifact
         run: |
           bun run check:riscv64-artifacts
