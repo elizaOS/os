@@ -11,8 +11,9 @@
 # harness). Unset = skip all builds.
 #
 # Tooling requirements (caller's job to install):
-#   - zig 0.14+        (Zig toolchain; provides riscv64-linux-musl — every
-#                       cross-build here is zig/musl, so no Android NDK is needed)
+#   - zig 0.13.0       (known-good shared-link toolchain; provides
+#                       riscv64-linux-musl — every cross-build here is
+#                       zig/musl, so no Android NDK is needed)
 #   - cmake 3.21+      (drives every package's cross-build)
 #   - node 20+         (drives compile-libllama.mjs)
 #
@@ -61,8 +62,10 @@ if [ -z "$ZIG_BIN" ]; then
     cat >&2 <<'EOF'
 [build-riscv64-artifacts] zig not on PATH.
 
-Install Zig 0.14+ from https://ziglang.org/download/ — every cross-build in
-this harness drives `zig cc --target=riscv64-linux-musl` directly.
+Install pinned Zig 0.13.0 from https://ziglang.org/download/ — every cross-build
+in this harness drives `zig cc --target=riscv64-linux-musl` directly. Zig
+0.14.x is not eligible here because its riscv64 compiler_rt archive is non-PIC
+and cannot link the required libggml shared objects.
 
 EOF
     exit 2

@@ -32,7 +32,10 @@ jobs:
     env:
       ELIZA_RISCV64_SMOKE: "1"
       ELIZAOS_ELIZA_ROOT: ${{ github.workspace }}/.eliza-source
-      ZIG_VERSION: "0.14.1"
+      # Keep the full shared-lib smoke on the same known-good linker as the
+      # canonical AOSP/Cuttlefish build. Zig 0.14.x emits a non-PIC riscv64
+      # compiler_rt archive and fails closed while linking libggml-base.so.
+      ZIG_VERSION: "0.13.0"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -64,7 +67,7 @@ jobs:
           path: ~/.cache/elizaos/zig-archives
           key: zig-archive-${{ runner.os }}-${{ runner.arch }}-${{ env.ZIG_VERSION }}
 
-      - name: Install Zig 0.14
+      - name: Install pinned Zig
         run: packages/os/scripts/provision-zig-linux-x64.sh "$ZIG_VERSION"
 
       - name: Setup Bun

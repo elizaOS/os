@@ -439,7 +439,7 @@ describe("OS release workflow authority", () => {
       "refusing a symlinked Zig archive cache entry",
     );
     expect(riscv).toContain(`${zigProvisioner} "$ZIG_VERSION"`);
-    expect(riscv).toContain('ZIG_VERSION: "0.14.1"');
+    expect(riscv).toContain('ZIG_VERSION: "0.13.0"');
     expect(riscv).toContain("zig-archive-${{ runner.os }}-${{ runner.arch }}-");
     expect(cuttlefish).toContain(`${zigProvisioner} "$ZIG_VERSION"`);
     expect(cuttlefish).toContain("Compute native inference source fingerprint");

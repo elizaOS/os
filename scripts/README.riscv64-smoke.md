@@ -62,11 +62,11 @@ sudo apt-get install -y \
     qemu-user-static binfmt-support \
     cmake build-essential \
     file binutils
-# Zig 0.14+ — pick the release for your host arch.
-curl -fsSL https://ziglang.org/download/0.14.1/zig-x86_64-linux-0.14.1.tar.xz \
+# Zig 0.13.0 — the shared-lib linker pin used by CI and Cuttlefish.
+curl -fsSL https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz \
     | sudo tar -C /opt -xJ
-sudo ln -sf /opt/zig-x86_64-linux-0.14.1/zig /usr/local/bin/zig
-zig version       # → 0.14.1
+sudo ln -sf /opt/zig-linux-x86_64-0.13.0/zig /usr/local/bin/zig
+zig version       # → 0.13.0
 
 # 2. Optional: Android NDK r27+ (only needed for android-riscv64-cpu).
 #    Skip this if you're only validating the Linux riscv64 lane.
