@@ -13,8 +13,12 @@ package never changes a partition table.
   partition/free extents, filesystem health, mount state, encryption state,
   hibernation/Fast Startup state, and shrink minimums. The typed planner and
   executor already bind serial, optional WWN, firmware/sysfs path, logical
-  sector size, and GPT disk GUID; the service must populate those fields from
-  OS-owned probes and validate its serialized schema before creating a plan.
+  sector size, and GPT disk GUID. The Linux provider now resolves stable IDs
+  itself and populates those fields plus exact partition boundaries from fixed
+  read-only `lsblk`, `udevadm`, and `sfdisk --verify` calls. Add primary/backup
+  GPT-specific health evidence, boot ancestry through stacked devices, and the
+  filesystem/encryption/hibernation/shrink probes before connecting it to the
+  root service.
 - **Connect plan revalidation and authorization to the root service.** The
   library now reproduces the initial inventory/plan ID, verifies an expiring
   owner credential, re-enumerates before every typed action, and stops on
