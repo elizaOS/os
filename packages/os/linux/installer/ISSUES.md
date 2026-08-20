@@ -2,7 +2,9 @@
 
 These are implementation issues, not claims of completed installation support.
 The current package produces deterministic plans with `executable: false` and
-never changes a partition table.
+contains a fail-closed authorization/journal orchestration boundary. No
+root-owned service or privileged operation backend is connected, so the
+package never changes a partition table.
 
 ## P0 — trusted inventory and execution boundary
 
@@ -11,10 +13,11 @@ never changes a partition table.
   partition/free extents, filesystem health, mount state, encryption state,
   hibernation/Fast Startup state, and shrink minimums. Validate its serialized
   schema before creating a plan.
-- **Implement plan revalidation and authorization.** Immediately before every
-  mutation, reproduce the inventory fingerprint and plan ID, require the active
-  local owner's confirmation, and reject any path, size, identity, geometry, or
-  evidence drift. Do not accept renderer-supplied commands or device paths.
+- **Connect plan revalidation and authorization to the root service.** The
+  library now reproduces the initial inventory/plan ID, verifies an expiring
+  owner credential, re-enumerates before every typed action, and stops on
+  identity, journal, or inventory drift. Implement the OS credential verifier
+  and ensure the service accepts no renderer-supplied commands or device paths.
 - **Implement recoverable GPT mutation.** Save and verify both GPT headers and
   partition entries to separate recovery media/state, perform typed operations,
   reread the kernel partition table, and prove rollback after every injected

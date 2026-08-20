@@ -9,12 +9,18 @@ product choices:
   installation.
 
 `createInstallPlan()` never edits a disk and every returned plan has
-`executable: false`. A future privileged executor must re-enumerate the disk,
-revalidate its stable identity, sector size, partition boundaries, filesystem
-health and encryption state, and compare a newly generated plan id immediately
-before each mutation. The owner confirmation token includes a canonical digest
-of the complete reviewed partition/free-space inventory, so any intervening
-layout or probe-evidence change requires a new review and acknowledgement.
+`executable: false`. `authorizeInstallPlan()` can convert that exact reviewed
+plan into an executable capability only after a fresh inventory reproduces the
+plan id and an expiring local-owner credential verifies. The execution
+orchestrator then re-enumerates stable disk identity before every typed action,
+requires a verified GPT backup, and writes a digest-chained durable journal
+before and after each operation. An interrupted or inconsistent journal stops
+with `InstallRecoveryRequiredError`; actions are never guessed or replayed.
+
+The package intentionally does not yet provide the root service, OS-native
+inventory probes, filesystem tools, GPT writer, image extractor, or bootloader
+backend. Those implementations and disposable-block-device qualification are
+required before the typed operation adapter may be connected to a real disk.
 Tests must use inventory fixtures or disposable virtual block devices only.
 
 ## Alongside support contract
@@ -35,10 +41,13 @@ Tests must use inventory fixtures or disposable virtual block devices only.
 
 ## Required executor gates
 
-Before any release can mutate a real internal disk, add and hardware-test:
+Before any release can mutate a real internal disk, implement and
+hardware-test:
 
-1. an authenticated root-owned installer service with a typed operation API;
-2. whole-disk stable identity (serial/WWN/unique id), not a mutable device path;
+1. the authenticated root-owned service behind the existing typed operation
+   API;
+2. whole-disk inventory probes using serial/WWN/unique id, not a mutable device
+   path;
 3. OS-native filesystem probes and shrink tools with post-resize checks;
 4. redundant partition-table backup and recovery instructions;
 5. bootloader/NVRAM handling for Windows Boot Manager, Intel Mac EFI, and Linux;
