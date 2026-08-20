@@ -118,6 +118,8 @@ export function validateDiskInventory(disk: DiskInventory): void {
   }
   if (!FIRMWARE_MODES.has(disk.firmware))
     throw new Error("Unsupported firmware inventory value.");
+  if (typeof disk.bootAncestryResolved !== "boolean")
+    throw new Error("Boot ancestry inventory must be explicit.");
   if (typeof disk.currentBootSource !== "boolean")
     throw new Error("Current boot-source inventory must be explicit.");
 
@@ -242,6 +244,7 @@ export function createDiskInventoryFingerprint(disk: DiskInventory): string {
       logicalSectorBytes: disk.logicalSectorBytes,
       partitionTable: disk.partitionTable,
       gptRedundancyVerified: disk.gptRedundancyVerified ?? null,
+      bootAncestryResolved: disk.bootAncestryResolved,
       currentBootSource: disk.currentBootSource,
       firmware: disk.firmware,
       protectedReason: disk.protectedReason ?? null,
@@ -261,6 +264,11 @@ function assertTarget(request: InstallRequest, disk: DiskInventory): void {
     throw new Error(
       "Refusing to install onto the disk that booted the installer.",
     );
+  if (!disk.bootAncestryResolved) {
+    throw new Error(
+      "Refusing to install because current boot-device ancestry is unresolved.",
+    );
+  }
   if (disk.partitionTable === "gpt" && disk.gptRedundancyVerified !== true) {
     throw new Error(
       "Refusing to install because GPT main/backup redundancy is unverified.",
@@ -453,6 +461,7 @@ function planBody(
         sizeBytes: disk.sizeBytes,
         logicalSectorBytes: disk.logicalSectorBytes,
         gptRedundancyVerified: disk.gptRedundancyVerified,
+        bootAncestryResolved: disk.bootAncestryResolved,
       },
       preservedPartitionIds: [],
       partitions,
@@ -578,6 +587,7 @@ function planBody(
       sizeBytes: disk.sizeBytes,
       logicalSectorBytes: disk.logicalSectorBytes,
       gptRedundancyVerified: disk.gptRedundancyVerified,
+      bootAncestryResolved: disk.bootAncestryResolved,
     },
     preservedPartitionIds: disk.partitions.map((item) => item.id).sort(),
     partitions,

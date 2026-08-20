@@ -50,6 +50,7 @@ export interface DiskInventory {
   logicalSectorBytes: number;
   partitionTable: "gpt" | "mbr" | "none" | "unknown";
   gptRedundancyVerified?: boolean;
+  bootAncestryResolved: boolean;
   currentBootSource: boolean;
   firmware: "uefi" | "apple-intel-efi" | "apple-silicon" | "bios" | "unknown";
   protectedReason?: string;
@@ -103,6 +104,7 @@ export interface InstallPlan {
     sizeBytes: number;
     logicalSectorBytes: number;
     gptRedundancyVerified?: boolean;
+    bootAncestryResolved: boolean;
   };
   preservedPartitionIds: string[];
   partitions: PlannedPartition[];

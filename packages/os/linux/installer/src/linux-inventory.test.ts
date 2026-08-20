@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   isSgdiskRedundancyVerified,
+  parseLinuxBootAncestorPaths,
   parseLinuxLsblkInventory,
+  parseLinuxRootBlockSource,
 } from "./linux-inventory";
 
 const GIB = 1024 ** 3;
@@ -83,6 +85,8 @@ function parse(
   serialized = serializedInventory(),
   partitionTableVerified = true,
   gptRedundancyVerified = true,
+  bootAncestorPaths: readonly string[] = [],
+  bootAncestryResolved = true,
 ) {
   return parseLinuxLsblkInventory({
     stableId: "virtio-QEMU-DISK-0001",
@@ -93,10 +97,73 @@ function parse(
     serialized,
     partitionTableVerified,
     gptRedundancyVerified,
+    bootAncestorPaths,
+    bootAncestryResolved,
   });
 }
 
 describe("Linux read-only disk inventory parser", () => {
+  it("resolves root block sources and complete inverse ancestry", () => {
+    expect(
+      parseLinuxRootBlockSource(
+        JSON.stringify({
+          filesystems: [{ source: "/dev/mapper/cryptroot[/@]", target: "/" }],
+        }),
+      ),
+    ).toBe("/dev/mapper/cryptroot");
+    expect(
+      parseLinuxRootBlockSource(
+        JSON.stringify({
+          filesystems: [{ source: "overlay", target: "/" }],
+        }),
+      ),
+    ).toBeUndefined();
+    expect(
+      parseLinuxBootAncestorPaths(
+        JSON.stringify({
+          blockdevices: [
+            { path: "/dev/mapper/cryptroot", type: "crypt" },
+            { path: "/dev/md0", type: "raid1" },
+            { path: "/dev/nvme1n1p2", type: "part" },
+            { path: "/dev/nvme1n1", type: "disk" },
+            { path: "/dev/nvme0n1p2", type: "part" },
+            { path: "/dev/nvme0n1", type: "disk" },
+          ],
+        }),
+        "/dev/mapper/cryptroot",
+      ),
+    ).toEqual([
+      "/dev/mapper/cryptroot",
+      "/dev/md0",
+      "/dev/nvme0n1",
+      "/dev/nvme0n1p2",
+      "/dev/nvme1n1",
+      "/dev/nvme1n1p2",
+    ]);
+    expect(() =>
+      parseLinuxBootAncestorPaths(
+        JSON.stringify({ blockdevices: [] }),
+        "/dev/mapper/cryptroot",
+      ),
+    ).toThrow(/incomplete/);
+    expect(() =>
+      parseLinuxBootAncestorPaths(
+        JSON.stringify({
+          blockdevices: [{ path: "/dev/../etc/passwd", type: "disk" }],
+        }),
+        "/dev/mapper/cryptroot",
+      ),
+    ).toThrow(/invalid/);
+    expect(() =>
+      parseLinuxBootAncestorPaths(
+        JSON.stringify({
+          blockdevices: [{ path: "/dev/mapper/cryptroot", type: "crypt" }],
+        }),
+        "/dev/mapper/cryptroot",
+      ),
+    ).toThrow(/incomplete/);
+  });
+
   it("rejects sgdisk reports that recover corruption despite exit zero", () => {
     expect(
       isSgdiskRedundancyVerified({
@@ -154,6 +221,7 @@ describe("Linux read-only disk inventory parser", () => {
     });
     expect(inventory.logicalSectorBytes).toBe(512);
     expect(inventory.gptRedundancyVerified).toBe(true);
+    expect(inventory.bootAncestryResolved).toBe(true);
     expect(inventory.partitions).toHaveLength(2);
     expect(inventory.partitions[0]).toMatchObject({
       id: "b27e2419-9e58-416e-a921-d8d51a443692",
@@ -194,6 +262,22 @@ describe("Linux read-only disk inventory parser", () => {
     expect(parse(serializedInventory(), true, false).protectedReason).toMatch(
       /GPT main\/backup/,
     );
+    expect(
+      parse(serializedInventory(), true, true, [], false).protectedReason,
+    ).toMatch(/boot-device ancestry/);
+    expect(
+      parse(serializedInventory(), true, true, ["/dev/vda"], true)
+        .currentBootSource,
+    ).toBe(true);
+    const directRoot = parse(
+      serializedInventory({}, { mountpoints: ["/"] }),
+      true,
+      true,
+      [],
+      false,
+    );
+    expect(directRoot.bootAncestryResolved).toBe(true);
+    expect(directRoot.currentBootSource).toBe(true);
   });
 
   it("does not require partition-table verification for an empty disk", () => {
@@ -219,6 +303,8 @@ describe("Linux read-only disk inventory parser", () => {
         serialized: serializedInventory(),
         partitionTableVerified: true,
         gptRedundancyVerified: true,
+        bootAncestorPaths: [],
+        bootAncestryResolved: true,
       }).protectedReason,
     ).toMatch(/Firmware/);
   });

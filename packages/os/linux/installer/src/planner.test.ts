@@ -27,6 +27,7 @@ function disk(overrides: Partial<DiskInventory> = {}): DiskInventory {
     logicalSectorBytes: 512,
     partitionTable: "gpt",
     gptRedundancyVerified: true,
+    bootAncestryResolved: true,
     currentBootSource: false,
     firmware: "uefi",
     partitions: [
@@ -302,7 +303,7 @@ describe("elizaOS internal-disk installer planner", () => {
     );
   });
 
-  it("binds plans to serial, WWN, firmware path, sector size, GPT GUID, and redundancy", () => {
+  it("binds plans to hardware, GPT, and resolved boot ancestry", () => {
     const target = disk();
     const reviewed = createInstallPlan(request(target), target);
 
@@ -343,6 +344,12 @@ describe("elizaOS internal-disk installer planner", () => {
         disk({ gptRedundancyVerified: false }),
       ),
     ).toThrow(/GPT main\/backup redundancy is unverified/);
+    expect(() =>
+      createInstallPlan(
+        request(disk({ bootAncestryResolved: false })),
+        disk({ bootAncestryResolved: false }),
+      ),
+    ).toThrow(/boot-device ancestry is unresolved/);
   });
 
   it("rejects unknown runtime inventory enum values and malformed probe evidence", () => {
@@ -363,6 +370,12 @@ describe("elizaOS internal-disk installer planner", () => {
     expect(() => validateDiskInventory(missingGptVerification)).toThrow(
       "GPT inventory",
     );
+    expect(() =>
+      validateDiskInventory({
+        ...disk(),
+        bootAncestryResolved: undefined as unknown as boolean,
+      }),
+    ).toThrow("Boot ancestry inventory");
     const mbrInventory = disk({
       partitionTable: "mbr",
       gptRedundancyVerified: undefined,

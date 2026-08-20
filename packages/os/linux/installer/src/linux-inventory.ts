@@ -14,6 +14,7 @@ const GPT_GUID_PATTERN =
   /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const MBR_PARTUUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{2}$/;
 const LSBLK = "/usr/bin/lsblk";
+const FINDMNT = "/usr/bin/findmnt";
 const UDEVADM = "/usr/bin/udevadm";
 const SFDISK = "/usr/sbin/sfdisk";
 const SGDISK = "/usr/sbin/sgdisk";
@@ -44,6 +45,10 @@ interface LsblkDocument {
   blockdevices?: unknown;
 }
 
+interface FindmntDocument {
+  filesystems?: unknown;
+}
+
 export interface LinuxInventoryCommandResult {
   stdout: string;
   stderr: string;
@@ -70,6 +75,78 @@ export function isSgdiskRedundancyVerified(
     /\bNo problems found\./.test(report) &&
     !SGDISK_FAILURE_PATTERN.test(cleanReport)
   );
+}
+
+const DEVICE_PATH_PATTERN = /^\/dev\/[A-Za-z0-9._/+:-]+$/;
+
+function isSafeDevicePath(path: string): boolean {
+  return (
+    DEVICE_PATH_PATTERN.test(path) &&
+    !path.includes("//") &&
+    !path.split("/").some((segment) => segment === "." || segment === "..")
+  );
+}
+
+export function parseLinuxRootBlockSource(
+  serialized: string,
+): string | undefined {
+  let document: FindmntDocument;
+  try {
+    document = JSON.parse(serialized) as FindmntDocument;
+  } catch {
+    throw new Error("Linux inventory findmnt output is not valid JSON.");
+  }
+  if (
+    !Array.isArray(document.filesystems) ||
+    document.filesystems.length !== 1
+  ) {
+    throw new Error("Linux inventory must resolve exactly one root mount.");
+  }
+  const filesystem = document.filesystems[0];
+  if (typeof filesystem !== "object" || filesystem === null) {
+    throw new Error("Linux inventory root mount is not an object.");
+  }
+  const entry = filesystem as { source?: unknown; target?: unknown };
+  if (entry.target !== "/") {
+    throw new Error(
+      "Linux inventory root mount target changed during probing.",
+    );
+  }
+  const source = requiredString("root mount source", entry.source);
+  const subvolume = source.indexOf("[");
+  const devicePath = subvolume === -1 ? source : source.slice(0, subvolume);
+  if (
+    (subvolume !== -1 && !source.endsWith("]")) ||
+    !isSafeDevicePath(devicePath)
+  ) {
+    return undefined;
+  }
+  return devicePath;
+}
+
+export function parseLinuxBootAncestorPaths(
+  serialized: string,
+  rootSource: string,
+): string[] {
+  let document: LsblkDocument;
+  try {
+    document = JSON.parse(serialized) as LsblkDocument;
+  } catch {
+    throw new Error("Linux inventory boot ancestry output is not valid JSON.");
+  }
+  const devices = flattenDevices(document.blockdevices);
+  const paths = new Set(
+    devices.map((device) => requiredString("boot ancestor path", device.path)),
+  );
+  if (
+    paths.size === 0 ||
+    !devices.some((device) => device.type === "disk") ||
+    !isSafeDevicePath(rootSource) ||
+    [...paths].some((path) => !isSafeDevicePath(path))
+  ) {
+    throw new Error("Linux inventory boot ancestry is incomplete or invalid.");
+  }
+  return [...paths].sort();
 }
 
 class ExecFileCommandRunner implements LinuxInventoryCommandRunner {
@@ -268,6 +345,8 @@ export function parseLinuxLsblkInventory(options: {
   serialized: string;
   partitionTableVerified: boolean;
   gptRedundancyVerified: boolean;
+  bootAncestorPaths: readonly string[];
+  bootAncestryResolved: boolean;
 }): DiskInventory {
   let document: LsblkDocument;
   try {
@@ -312,6 +391,14 @@ export function parseLinuxLsblkInventory(options: {
   const wwn = optionalString(disk.wwn);
   const readOnly = booleanColumn("read-only", disk.ro);
   const removable = booleanColumn("removable", disk.rm);
+  const directlyMountedRoot = devices.some((device) =>
+    mounts(device.mountpoints).includes("/"),
+  );
+  const currentBootSource =
+    directlyMountedRoot ||
+    options.bootAncestorPaths.includes(options.devicePath);
+  const bootAncestryResolved =
+    directlyMountedRoot || options.bootAncestryResolved;
   const protectedReason =
     partitionTable === "unknown"
       ? "Partition-table type is unknown."
@@ -319,13 +406,15 @@ export function parseLinuxLsblkInventory(options: {
         ? "Partition-table verification failed."
         : partitionTable === "gpt" && !options.gptRedundancyVerified
           ? "GPT main/backup redundancy verification failed."
-          : options.firmware === "unknown"
-            ? "Firmware mode is unknown."
-            : readOnly
-              ? "Target disk is read-only."
-              : removable
-                ? "Target disk is removable media."
-                : undefined;
+          : !bootAncestryResolved
+            ? "Current boot-device ancestry is unresolved."
+            : options.firmware === "unknown"
+              ? "Firmware mode is unknown."
+              : readOnly
+                ? "Target disk is read-only."
+                : removable
+                  ? "Target disk is removable media."
+                  : undefined;
   const inventory: DiskInventory = {
     stableId: options.stableId,
     path: options.stablePath,
@@ -348,9 +437,8 @@ export function parseLinuxLsblkInventory(options: {
     ...(partitionTable === "gpt"
       ? { gptRedundancyVerified: options.gptRedundancyVerified }
       : {}),
-    currentBootSource: devices.some((device) =>
-      mounts(device.mountpoints).includes("/"),
-    ),
+    bootAncestryResolved,
+    currentBootSource,
     firmware: options.firmware,
     ...(protectedReason ? { protectedReason } : {}),
     partitions,
@@ -397,6 +485,54 @@ export class LinuxInstallInventoryProvider implements InstallInventoryProvider {
         "Linux inventory stable ID does not resolve to a block device.",
       );
     }
+    const rootMount = await this.runner.run(FINDMNT, [
+      "--json",
+      "--output",
+      "SOURCE,TARGET",
+      "--target",
+      "/",
+    ]);
+    if (rootMount.exitCode !== 0) {
+      throw new Error("Linux inventory root-mount probe failed.");
+    }
+    const rootSource = parseLinuxRootBlockSource(rootMount.stdout);
+    let bootAncestorPaths: string[] = [];
+    let bootAncestryResolved = false;
+    if (rootSource) {
+      const bootAncestry = await this.runner.run(LSBLK, [
+        "--json",
+        "--paths",
+        "--inverse",
+        "--list",
+        "--output",
+        "PATH,TYPE",
+        rootSource,
+      ]);
+      if (bootAncestry.exitCode === 0) {
+        const reportedPaths = parseLinuxBootAncestorPaths(
+          bootAncestry.stdout,
+          rootSource,
+        );
+        try {
+          const [canonicalRootSource, ...canonicalPaths] = await Promise.all(
+            [rootSource, ...reportedPaths].map((path) => realpath(path)),
+          );
+          const statuses = await Promise.all(
+            [canonicalRootSource, ...canonicalPaths].map((path) => stat(path)),
+          );
+          if (
+            statuses.every((status) => status.isBlockDevice()) &&
+            canonicalPaths.includes(canonicalRootSource)
+          ) {
+            bootAncestorPaths = [...new Set(canonicalPaths)].sort();
+            bootAncestryResolved = true;
+          }
+        } catch {
+          bootAncestorPaths = [];
+          bootAncestryResolved = false;
+        }
+      }
+    }
     const [lsblk, firmwarePath, verification, gptVerification] =
       await Promise.all([
         this.runner.run(LSBLK, [
@@ -430,6 +566,8 @@ export class LinuxInstallInventoryProvider implements InstallInventoryProvider {
       serialized: lsblk.stdout,
       partitionTableVerified: verification.exitCode === 0,
       gptRedundancyVerified: isSgdiskRedundancyVerified(gptVerification),
+      bootAncestorPaths,
+      bootAncestryResolved,
     });
   }
 }

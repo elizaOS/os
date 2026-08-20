@@ -20,7 +20,9 @@ export type {
 export {
   isSgdiskRedundancyVerified,
   LinuxInstallInventoryProvider,
+  parseLinuxBootAncestorPaths,
   parseLinuxLsblkInventory,
+  parseLinuxRootBlockSource,
 } from "./linux-inventory";
 export {
   createDiskConfirmationToken,
