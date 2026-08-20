@@ -20,6 +20,14 @@ requires a verified GPT backup, and writes a digest-chained durable journal
 before and after each operation. An interrupted or inconsistent journal stops
 with `InstallRecoveryRequiredError`; actions are never guessed or replayed.
 
+`DurableFileInstallJournal` is the Linux file-backed implementation for that
+boundary. It requires a pre-provisioned, canonical, owner-only directory; uses
+an exclusive per-plan writer lock; appends bounded JSONL records with `fsync`
+on both the file and containing directory; and refuses partial records,
+symlinks, hard links, unsafe modes, stale locks, and path-like plan IDs. A lock
+left by interruption is never silently removed: recovery must inspect it and
+the journal before execution can continue.
+
 The package intentionally does not yet provide the root service, OS-native
 inventory probes, filesystem tools, GPT writer, image extractor, or bootloader
 backend. Those implementations and disposable-block-device qualification are
