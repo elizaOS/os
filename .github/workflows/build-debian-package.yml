@@ -36,6 +36,7 @@ on:
     paths:
       - ".github/workflows/build-debian-package.yml"
       - "packages/os/linux/packaging/debian/**"
+      - "packages/os/linux/elizaos/assets/logo_blue_nobg.svg"
       - "packages/os/linux/elizaos/scripts/verify-desktop-artifact.py"
 
 permissions:
@@ -48,6 +49,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install desktop metadata validators
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends appstream desktop-file-utils
       - name: Validate architecture and native-payload contract
         run: |
           set -euo pipefail
@@ -57,6 +62,9 @@ jobs:
           grep -Fq '${shlibs:Depends}' "$packaging/control"
           grep -Fq 'payload/bin/eliza-desktop' "$packaging/rules"
           grep -Fq 'readelf -h' "$packaging/rules"
+          test -s packages/os/linux/elizaos/assets/logo_blue_nobg.svg
+          desktop-file-validate "$packaging/ai.elizaos.app.desktop"
+          appstreamcli validate --no-net "$packaging/ai.elizaos.app.metainfo.xml"
           for executable in eliza-agent eliza-desktop eliza-doctor; do
             test -x "$packaging/$executable"
             sh -n "$packaging/$executable"
@@ -115,7 +123,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            binutils debhelper dpkg-dev lintian zstd
+            appstream binutils debhelper desktop-file-utils dpkg-dev lintian zstd
       - name: Download signed native desktop and agent artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -165,6 +173,7 @@ jobs:
         run: |
           set -euo pipefail
           cp -a packages/os/linux/packaging/debian "$WORK_ROOT/source/debian"
+          cp -- packages/os/linux/elizaos/assets/logo_blue_nobg.svg "$WORK_ROOT/source/debian/elizaos-icon.svg"
           mkdir -p "$WORK_ROOT/source/upstream"
           cp -- "$WORK_ROOT/upstream/desktop-artifact-manifest.json" "$WORK_ROOT/source/upstream/desktop-artifact-manifest.json"
           cp -- "$WORK_ROOT/upstream/desktop-artifact-manifest.json.sig" "$WORK_ROOT/source/upstream/desktop-artifact-manifest.json.sig"
@@ -201,6 +210,9 @@ jobs:
           diff --no-dereference --recursive --brief \
             "$WORK_ROOT/source/payload" "$extracted/usr/lib/elizaos"
           readelf -h "$extracted/usr/lib/elizaos/bin/eliza-desktop" >/dev/null
+          desktop-file-validate "$extracted/usr/share/applications/ai.elizaos.app.desktop"
+          appstreamcli validate --no-net "$extracted/usr/share/metainfo/ai.elizaos.app.metainfo.xml"
+          test -s "$extracted/usr/share/icons/hicolor/scalable/apps/ai.elizaos.app.svg"
           sha256sum "$package" > "$package.sha256"
           echo "path=$package" >> "$GITHUB_OUTPUT"
       - name: Lint package with no policy errors

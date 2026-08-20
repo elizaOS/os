@@ -711,6 +711,20 @@ describe("OS release workflow authority", () => {
       join(repositoryRoot, "packages/os/linux/packaging/debian/rules"),
       "utf8",
     );
+    const desktopEntry = readFileSync(
+      join(
+        repositoryRoot,
+        "packages/os/linux/packaging/debian/ai.elizaos.app.desktop",
+      ),
+      "utf8",
+    );
+    const appstreamMetadata = readFileSync(
+      join(
+        repositoryRoot,
+        "packages/os/linux/packaging/debian/ai.elizaos.app.metainfo.xml",
+      ),
+      "utf8",
+    );
 
     expect(source).toContain("repository: elizaOS/eliza");
     expect(source).toContain("verify-desktop-artifact.py");
@@ -722,6 +736,21 @@ describe("OS release workflow authority", () => {
     expect(control).toContain("${shlibs:Depends}");
     expect(rules).toContain("cp -a payload/.");
     expect(rules).toContain("usr/lib/elizaos");
+    expect(rules).toContain("ai.elizaos.app.desktop");
+    expect(rules).toContain("ai.elizaos.app.metainfo.xml");
+    expect(rules).toContain("ai.elizaos.app.svg");
+    expect(source).toContain("logo_blue_nobg.svg");
+    expect(source).toContain("desktop-file-validate");
+    expect(source).toContain("appstreamcli validate --no-net");
+    expect(control).toContain("xdg-desktop-portal");
+    expect(control).toContain("gnome-keyring");
+    expect(desktopEntry).toContain("Exec=eliza-desktop %u");
+    expect(desktopEntry).toContain("MimeType=x-scheme-handler/elizaos;");
+    expect(desktopEntry).toContain("Icon=ai.elizaos.app");
+    expect(appstreamMetadata).toContain("<id>ai.elizaos.app</id>");
+    expect(appstreamMetadata).toContain(
+      '<launchable type="desktop-id">ai.elizaos.app.desktop</launchable>',
+    );
     expect(rules).not.toContain("/opt/elizaos");
     expect(rules).not.toContain("elizaos-app.mjs");
     expect(rules).not.toContain("node_modules");
