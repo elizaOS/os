@@ -31,12 +31,15 @@ the journal before execution can continue.
 `LinuxInstallInventoryProvider` is the read-only Linux whole-disk probe. It
 accepts only a whole-disk stable ID, resolves it through `/dev/disk/by-id`,
 requires the result to be a block device, and invokes absolute-path `lsblk`,
-`udevadm`, and `sfdisk --verify` commands with fixed argv, a sanitized
-environment, and no shell. Its parser binds serial, WWN,
-firmware path, sector size, GPT and partition UUIDs, exact byte boundaries,
+`udevadm`, `sfdisk --verify`, and `sgdisk --verify` commands with fixed argv, a
+sanitized environment, and no shell. Its parser binds serial, WWN,
+firmware path, sector size, GPT and partition UUIDs, redundant GPT main/backup
+integrity, exact byte boundaries,
 reported mountpoints, read-only/removable state, and conservative filesystem
 and encryption classifications. It emits no resize evidence; dedicated
 filesystem-native health and minimum-size probes must add that later.
+The GPT verifier parses diagnostics as well as exit status because `sgdisk`
+may report exit zero after reconstructing a corrupt backup header in memory.
 
 The package intentionally does not yet provide the root service, OS-native
 inventory probes, filesystem tools, GPT writer, image extractor, or bootloader

@@ -18,6 +18,7 @@ export type {
   LinuxInventoryCommandRunner,
 } from "./linux-inventory";
 export {
+  isSgdiskRedundancyVerified,
   LinuxInstallInventoryProvider,
   parseLinuxLsblkInventory,
 } from "./linux-inventory";

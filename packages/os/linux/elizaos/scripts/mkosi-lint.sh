@@ -42,6 +42,7 @@ fi
 require_text 'BuildSources=../..' "${MKOSI_DIR}/mkosi.conf"
 require_text 'Checksum=yes' "${MKOSI_DIR}/mkosi.conf"
 require_text '    python3-cryptography' "${MKOSI_DIR}/mkosi.conf"
+require_text '    gdisk' "${MKOSI_DIR}/mkosi.conf"
 require_text '    zstd' "${MKOSI_DIR}/mkosi.conf"
 for package in gdm3 gnome-core gnome-initial-setup speech-dispatcher-espeak-ng xdg-desktop-portal-gnome; do
     require_text "    ${package}" "${MKOSI_DIR}/mkosi.conf"
