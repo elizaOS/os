@@ -99,3 +99,52 @@ export interface InstallPlan {
   };
   executable: false;
 }
+
+export interface InstallAuthorization {
+  planId: string;
+  inventoryFingerprint: string;
+  ownerId: string;
+  issuedAt: string;
+  expiresAt: string;
+  nonce: string;
+  credential: string;
+}
+
+export interface AuthorizedInstallPlan extends Omit<InstallPlan, "executable"> {
+  executable: true;
+  authorization: InstallAuthorization;
+}
+
+export interface PartitionTableBackup {
+  stableId: string;
+  storageStableId: string;
+  location: string;
+  sha256: string;
+}
+
+export interface InstallerActionReceipt {
+  receiptId: string;
+  actionDigest: string;
+}
+
+export type InstallJournalEvent =
+  | "authorized"
+  | "partition-table-backup-verified"
+  | "action-started"
+  | "action-completed"
+  | "execution-completed"
+  | "execution-failed";
+
+export interface InstallJournalEntry {
+  schemaVersion: 1;
+  planId: string;
+  sequence: number;
+  event: InstallJournalEvent;
+  timestamp: string;
+  inventoryFingerprint: string;
+  actionIndex?: number;
+  actionDigest?: string;
+  receiptId?: string;
+  previousDigest: string | null;
+  digest: string;
+}

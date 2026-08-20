@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "lint:check": "bunx @biomejs/biome check .",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },

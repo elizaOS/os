@@ -1,3 +1,16 @@
+export type {
+  InstallExecutionDependencies,
+  InstallExecutionResult,
+  InstallInventoryProvider,
+  InstallJournal,
+  OwnerAuthorizationVerifier,
+  PrivilegedInstallOperations,
+} from "./executor";
+export {
+  authorizeInstallPlan,
+  executeAuthorizedInstallPlan,
+  InstallRecoveryRequiredError,
+} from "./executor";
 export {
   createDiskConfirmationToken,
   createDiskInventoryFingerprint,
