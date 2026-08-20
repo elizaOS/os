@@ -54,6 +54,7 @@ RUN test -n "${DEBIAN_SNAPSHOT_SERIAL}" \
         librsvg2-bin \
         mtools \
         dosfstools \
+        mkosi \
         qemu-user-static \
         qemu-system-arm \
         qemu-system-misc \

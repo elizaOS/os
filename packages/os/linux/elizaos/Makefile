@@ -42,6 +42,9 @@ ARM64_GUI_KIOSK_REPORT ?= $(HERE)/evidence/arm64_gui_kiosk_iso_check.json
 ARM64_QEMU_EVIDENCE ?= $(HERE)/evidence/arm64_qemu_virt_boot.json
 ARM64_QEMU_TRANSCRIPT ?= $(HERE)/evidence/arm64_qemu_virt_boot.transcript.log
 REMOVE_PATH_RECURSIVE ?= node ../../../scripts/rm-path-recursive.mjs
+DEBIAN_SNAPSHOT_LOCK := $(HERE)/debian-snapshot.lock.json
+DEBIAN_SNAPSHOT_SERIAL := $(shell python3 -c 'import json; print(json.load(open("$(DEBIAN_SNAPSHOT_LOCK)"))["serial"])')
+DEBIAN_BASE_IMAGE := $(shell python3 -c 'import json; print(json.load(open("$(DEBIAN_SNAPSHOT_LOCK)"))["baseImage"])')
 
 SUPPORTED_ARCHES := amd64 arm64 riscv64
 SUPPORTED_PROFILES := default gui secure secure-gui
@@ -108,6 +111,14 @@ check-arch:
 	    *" $(ARCH) "*) ;; \
 	    *) echo "ERROR: ARCH=$(ARCH) not in: $(SUPPORTED_ARCHES)" >&2; exit 64 ;; \
 	esac
+
+builder:
+	docker build --pull \
+		--build-arg "DEBIAN_SNAPSHOT_SERIAL=$(DEBIAN_SNAPSHOT_SERIAL)" \
+		--build-arg "DEBIAN_BASE_IMAGE=$(DEBIAN_BASE_IMAGE)" \
+		--file "$(HERE)/Dockerfile" \
+		--tag elizaos-linux-builder \
+		"$(HERE)"
 
 # -----------------------------------------------------------------------------
 # Canonical mkosi build path. The Linux root is copied as one source tree so
