@@ -23,6 +23,14 @@ for forbidden in \
 done
 
 source_root="${SRCDIR:-/work/src}"
+build_mode="${ELIZAOS_BUILD_MODE:-development}"
+case "$build_mode" in
+    development|fixture|release) ;;
+    *)
+        echo "[mkosi.postinst] invalid ELIZAOS_BUILD_MODE=${build_mode}" >&2
+        exit 1
+        ;;
+esac
 brand_source="${source_root}/elizaos/assets/logo_white_bluebg.svg"
 if [ ! -f "$brand_source" ]; then
     echo "[mkosi.postinst] required branding input is missing: $brand_source" >&2
@@ -65,32 +73,46 @@ control_inputs=(
     protocol/remote-envelope.schema.json
     protocol/root-exec.schema.json
 )
+control_input_count=0
 for input in "${control_inputs[@]}"; do
-    if [ ! -f "${control_source}/${input}" ] || [ -L "${control_source}/${input}" ]; then
-        echo "[mkosi.postinst] required control input is missing or a symlink: $input" >&2
+    if [ -L "${control_source}/${input}" ]; then
+        echo "[mkosi.postinst] control input must not be a symlink: $input" >&2
         exit 1
     fi
+    [ ! -f "${control_source}/${input}" ] || control_input_count=$((control_input_count + 1))
 done
 
-install -d -m 0755 /usr/lib/python3/dist-packages/eliza_control
-install -m 0644 "${control_source}"/eliza_control/{__init__,__main__,audit,auth,broker,installer,policy,provision,protocol,remote}.py \
-    /usr/lib/python3/dist-packages/eliza_control/
-install -m 0644 "${control_source}"/systemd/eliza-control-broker.service /usr/lib/systemd/system/
-install -m 0644 "${control_source}"/systemd/eliza-control-broker.socket /usr/lib/systemd/system/
-install -m 0644 "${control_source}"/systemd/eliza-control-provision.service /usr/lib/systemd/system/
-install -m 0644 "${control_source}"/systemd/eliza-control-emergency-disable.service /usr/lib/systemd/system/
-install -D -m 0644 "${control_source}"/sysusers.d/eliza-control.conf /usr/lib/sysusers.d/eliza-control.conf
-install -D -m 0644 "${control_source}"/tmpfiles.d/eliza-control.conf /usr/lib/tmpfiles.d/eliza-control.conf
-install -D -m 0644 "${control_source}"/polkit/49-eliza-control.rules /usr/share/polkit-1/rules.d/49-eliza-control.rules
-install -D -m 0644 "${control_source}"/polkit/ai.elizaos.control.policy /usr/share/polkit-1/actions/ai.elizaos.control.policy
-install -D -m 0644 "${control_source}"/THREAT_MODEL.md /usr/share/doc/eliza-control/THREAT_MODEL.md
-install -d -m 0755 /usr/share/eliza-control/protocol
-install -m 0644 "${control_source}"/protocol/*.json /usr/share/eliza-control/protocol/
+control_installed=0
+if [ "$control_input_count" -eq "${#control_inputs[@]}" ]; then
+    install -d -m 0755 /usr/lib/python3/dist-packages/eliza_control
+    install -m 0644 "${control_source}"/eliza_control/{__init__,__main__,audit,auth,broker,installer,policy,provision,protocol,remote}.py \
+        /usr/lib/python3/dist-packages/eliza_control/
+    install -m 0644 "${control_source}"/systemd/eliza-control-broker.service /usr/lib/systemd/system/
+    install -m 0644 "${control_source}"/systemd/eliza-control-broker.socket /usr/lib/systemd/system/
+    install -m 0644 "${control_source}"/systemd/eliza-control-provision.service /usr/lib/systemd/system/
+    install -m 0644 "${control_source}"/systemd/eliza-control-emergency-disable.service /usr/lib/systemd/system/
+    install -D -m 0644 "${control_source}"/sysusers.d/eliza-control.conf /usr/lib/sysusers.d/eliza-control.conf
+    install -D -m 0644 "${control_source}"/tmpfiles.d/eliza-control.conf /usr/lib/tmpfiles.d/eliza-control.conf
+    install -D -m 0644 "${control_source}"/polkit/49-eliza-control.rules /usr/share/polkit-1/rules.d/49-eliza-control.rules
+    install -D -m 0644 "${control_source}"/polkit/ai.elizaos.control.policy /usr/share/polkit-1/actions/ai.elizaos.control.policy
+    install -D -m 0644 "${control_source}"/THREAT_MODEL.md /usr/share/doc/eliza-control/THREAT_MODEL.md
+    install -d -m 0755 /usr/share/eliza-control/protocol
+    install -m 0644 "${control_source}"/protocol/*.json /usr/share/eliza-control/protocol/
+    control_installed=1
+elif [ "$control_input_count" -ne 0 ]; then
+    echo "[mkosi.postinst] partial control input topology: ${control_input_count}/${#control_inputs[@]}" >&2
+    exit 1
+elif [ "$build_mode" = release ]; then
+    echo "[mkosi.postinst] release control input topology is missing: $control_source" >&2
+    exit 1
+else
+    echo "[mkosi.postinst] control input topology absent in explicit ${build_mode} build; broker disabled"
+fi
 
 desktop=/opt/elizaos/bin/eliza-desktop
 agent=/opt/elizaos/bin/eliza-agent
 manifest=/opt/elizaos/share/desktop-artifact-manifest.json
-case "${ELIZAOS_BUILD_MODE:-development}" in
+case "$build_mode" in
     development|fixture)
         # An explicit developer/fixture image may exercise the base desktop
         # without a cross-repository application artifact.
@@ -133,14 +155,12 @@ case "${ELIZAOS_BUILD_MODE:-development}" in
             fi
         done
         ;;
-    *)
-        echo "[mkosi.postinst] invalid ELIZAOS_BUILD_MODE=${ELIZAOS_BUILD_MODE}" >&2
-        exit 1
-        ;;
 esac
 
 systemctl enable gdm3.service NetworkManager.service systemd-resolved.service
-systemctl enable eliza-control-broker.socket
+if [ "$control_installed" -eq 1 ]; then
+    systemctl enable eliza-control-broker.socket
+fi
 systemctl enable elizaos-grow-persistent.service
 systemctl set-default graphical.target
 systemctl --global enable elizaos-session.target

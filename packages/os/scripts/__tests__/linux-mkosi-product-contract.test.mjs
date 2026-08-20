@@ -36,6 +36,36 @@ test("canonical Linux documentation declares the mkosi persistent workstation", 
   );
 });
 
+test("local mkosi front door builds a pinned tool container", async () => {
+  const [makefile, dockerfile, snapshot] = await Promise.all([
+    read("packages/os/linux/elizaos/Makefile"),
+    read("packages/os/linux/elizaos/Dockerfile"),
+    read("packages/os/linux/elizaos/debian-snapshot.lock.json").then(JSON.parse),
+  ]);
+
+  assert.match(dockerfile, /^FROM \$\{DEBIAN_BASE_IMAGE\}$/m);
+  assert.match(dockerfile, /^        mkosi \\/m);
+  assert.match(makefile, /^builder:\n\tdocker build --pull/m);
+  assert.match(makefile, /DEBIAN_SNAPSHOT_SERIAL=\$\(DEBIAN_SNAPSHOT_SERIAL\)/);
+  assert.match(makefile, /DEBIAN_BASE_IMAGE=\$\(DEBIAN_BASE_IMAGE\)/);
+  assert.match(snapshot.baseImage, /^debian:trixie@sha256:[a-f0-9]{64}$/);
+  assert.match(snapshot.serial, /^[0-9]{8}T[0-9]{6}Z$/);
+});
+
+test("development images may omit the future control broker but releases fail closed", async () => {
+  const postinstall = await read(
+    "packages/os/linux/elizaos/mkosi/mkosi.postinst.chroot",
+  );
+
+  assert.match(postinstall, /partial control input topology/);
+  assert.match(postinstall, /release control input topology is missing/);
+  assert.match(
+    postinstall,
+    /control input topology absent in explicit \$\{build_mode\} build; broker disabled/,
+  );
+  assert.match(postinstall, /if \[ "\$control_installed" -eq 1 \]; then\n    systemctl enable eliza-control-broker\.socket/);
+});
+
 test("release image schema accepts only raw zstd images for supported architectures", async () => {
   const schema = JSON.parse(
     await read("packages/os/release/schema/elizaos-image-manifest.schema.json"),
