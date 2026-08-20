@@ -65,10 +65,23 @@ jobs:
           test -s packages/os/linux/elizaos/assets/logo_blue_nobg.svg
           desktop-file-validate "$packaging/ai.elizaos.app.desktop"
           appstreamcli validate --no-net "$packaging/ai.elizaos.app.metainfo.xml"
-          for executable in eliza-agent eliza-desktop eliza-doctor; do
+          for executable in eliza-agent eliza-desktop eliza-doctor eliza-autostart; do
             test -x "$packaging/$executable"
             sh -n "$packaging/$executable"
           done
+          grep -qx 'disable elizaos-session.target' "$packaging/80-elizaos.preset"
+          grep -Fq 'WantedBy=graphical-session.target' "$packaging/elizaos-session.target"
+          grep -Fq 'ConditionFileIsExecutable=' "$packaging/elizaos-agent.service"
+          grep -Fq 'ConditionFileIsExecutable=' "$packaging/elizaos-desktop.service"
+          grep -Fq 'PartOf=graphical-session.target elizaos-session.target' "$packaging/elizaos-agent.service"
+          grep -Fq 'PartOf=graphical-session.target elizaos-session.target' "$packaging/elizaos-desktop.service"
+          if grep -R -F 'ConditionPathIsExecutable=' "$packaging"; then
+            echo "::error::ConditionPathIsExecutable is not a systemd directive"
+            exit 1
+          fi
+          grep -Fq 'ELIZAOS_AUTOSTART_OWNER_REQUIRED' "$packaging/eliza-autostart"
+          grep -Fq 'ELIZAOS_AUTOSTART_SESSION_UNAVAILABLE' "$packaging/eliza-autostart"
+          grep -Fq 'dh_installsystemduser --no-enable' "$packaging/rules"
 
   build-deb:
     name: Build authenticated ${{ matrix.debian-architecture }} package
@@ -213,6 +226,16 @@ jobs:
           desktop-file-validate "$extracted/usr/share/applications/ai.elizaos.app.desktop"
           appstreamcli validate --no-net "$extracted/usr/share/metainfo/ai.elizaos.app.metainfo.xml"
           test -s "$extracted/usr/share/icons/hicolor/scalable/apps/ai.elizaos.app.svg"
+          test -x "$extracted/usr/bin/eliza-autostart"
+          grep -qx 'disable elizaos-session.target' \
+            "$extracted/usr/lib/systemd/user-preset/80-elizaos.preset"
+          control="$WORK_ROOT/control"
+          dpkg-deb --control "$package" "$control"
+          if grep -R -E 'systemctl[[:space:]]+--user|was-enabled defaults to true' "$control"; then
+            echo "::error::package maintainer scripts must not default-enable user units or contact a user session"
+            exit 1
+          fi
+          grep -Fq "debian-installed 'elizaos-session.target'" "$control/postinst"
           sha256sum "$package" > "$package.sha256"
           echo "path=$package" >> "$GITHUB_OUTPUT"
       - name: Lint package with no policy errors

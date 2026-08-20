@@ -15,6 +15,8 @@ Depends: ${shlibs:Depends}, ${misc:Depends}, ca-certificates, xdg-desktop-portal
 Recommends: gnome-keyring, systemd, xdg-desktop-portal-gtk | xdg-desktop-portal-gnome
 Description: Native elizaOS desktop shell and local Eliza agent
  This package installs the signed native GTK/WebKitGTK elizaOS shell, local
- Eliza agent, diagnostic command, and hardened systemd user services. Package
- architecture is explicit because the authenticated upstream payload contains
- native ELF executables and may include architecture-specific libraries.
+ Eliza agent, diagnostic and owner-controlled autostart commands, and hardened
+ systemd user services. Autostart is disabled until the desktop owner opts in;
+ package scripts never assume a live user D-Bus session. Package architecture
+ is explicit because the authenticated upstream payload contains native ELF
+ executables and may include architecture-specific libraries.

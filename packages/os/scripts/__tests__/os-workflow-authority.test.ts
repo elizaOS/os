@@ -743,6 +743,41 @@ describe("OS release workflow authority", () => {
       ),
       "utf8",
     );
+    const autostart = readFileSync(
+      join(
+        repositoryRoot,
+        "packages/os/linux/packaging/debian/eliza-autostart",
+      ),
+      "utf8",
+    );
+    const autostartPreset = readFileSync(
+      join(
+        repositoryRoot,
+        "packages/os/linux/packaging/debian/80-elizaos.preset",
+      ),
+      "utf8",
+    );
+    const sessionTarget = readFileSync(
+      join(
+        repositoryRoot,
+        "packages/os/linux/packaging/debian/elizaos-session.target",
+      ),
+      "utf8",
+    );
+    const agentUnit = readFileSync(
+      join(
+        repositoryRoot,
+        "packages/os/linux/packaging/debian/elizaos-agent.service",
+      ),
+      "utf8",
+    );
+    const desktopUnit = readFileSync(
+      join(
+        repositoryRoot,
+        "packages/os/linux/packaging/debian/elizaos-desktop.service",
+      ),
+      "utf8",
+    );
 
     expect(source).toContain("repository: elizaOS/eliza");
     expect(source).toContain("verify-desktop-artifact.py");
@@ -757,6 +792,7 @@ describe("OS release workflow authority", () => {
     expect(rules).toContain("ai.elizaos.app.desktop");
     expect(rules).toContain("ai.elizaos.app.metainfo.xml");
     expect(rules).toContain("ai.elizaos.app.svg");
+    expect(rules).toContain("dh_installsystemduser --no-enable");
     expect(source).toContain("logo_blue_nobg.svg");
     expect(source).toContain("desktop-file-validate");
     expect(source).toContain("appstreamcli validate --no-net");
@@ -768,6 +804,23 @@ describe("OS release workflow authority", () => {
     expect(appstreamMetadata).toContain("<id>ai.elizaos.app</id>");
     expect(appstreamMetadata).toContain(
       '<launchable type="desktop-id">ai.elizaos.app.desktop</launchable>',
+    );
+    expect(autostart).toContain("ELIZAOS_AUTOSTART_OWNER_REQUIRED");
+    expect(autostart).toContain("ELIZAOS_AUTOSTART_SESSION_UNAVAILABLE");
+    expect(autostart).toContain(
+      "/usr/bin/systemctl --user enable --now elizaos-session.target",
+    );
+    expect(autostartPreset.trim()).toBe("disable elizaos-session.target");
+    expect(sessionTarget).toContain("WantedBy=graphical-session.target");
+    expect(agentUnit).toContain("ConditionFileIsExecutable=");
+    expect(desktopUnit).toContain("ConditionFileIsExecutable=");
+    expect(agentUnit).not.toContain("ConditionPathIsExecutable=");
+    expect(desktopUnit).not.toContain("ConditionPathIsExecutable=");
+    expect(agentUnit).toContain(
+      "PartOf=graphical-session.target elizaos-session.target",
+    );
+    expect(desktopUnit).toContain(
+      "PartOf=graphical-session.target elizaos-session.target",
     );
     expect(rules).not.toContain("/opt/elizaos");
     expect(rules).not.toContain("elizaos-app.mjs");
@@ -790,6 +843,7 @@ describe("OS release workflow authority", () => {
       "packages/os/linux/packaging/debian",
     );
     const packagingSource = readdirSync(packagingDirectory)
+      .filter((name) => name !== "eliza-autostart")
       .map((name) => join(packagingDirectory, name))
       .filter((path) => statSync(path).isFile())
       .map((path) => readFileSync(path, "utf8"))

@@ -1,10 +1,10 @@
 [Unit]
 Description=elizaOS GNOME tray and overlay shell
 Documentation=https://elizaos.ai/
-ConditionPathIsExecutable=/usr/lib/elizaos/bin/eliza-desktop
+ConditionFileIsExecutable=/usr/lib/elizaos/bin/eliza-desktop
 After=graphical-session.target elizaos-agent.service
 Wants=elizaos-agent.service
-PartOf=graphical-session.target
+PartOf=graphical-session.target elizaos-session.target
 
 [Service]
 Type=simple
