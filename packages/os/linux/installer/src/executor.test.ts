@@ -39,6 +39,7 @@ function disk(overrides: Partial<DiskInventory> = {}): DiskInventory {
     logicalSectorBytes: 4096,
     partitionTable: "gpt",
     gptRedundancyVerified: true,
+    bootAncestryResolved: true,
     currentBootSource: false,
     firmware: "uefi",
     partitions: [
@@ -221,6 +222,20 @@ describe("privileged installer execution boundary", () => {
         plan,
         authorization(target, plan.planId),
         dependencies(disk({ gptRedundancyVerified: false })),
+      ),
+    ).rejects.toThrow(/identity changed|stale/);
+  });
+
+  it("rejects boot ancestry drift before authorization", async () => {
+    const target = disk();
+    const { request, plan } = reviewedPlan(target);
+
+    await expect(
+      authorizeInstallPlan(
+        request,
+        plan,
+        authorization(target, plan.planId),
+        dependencies(disk({ bootAncestryResolved: false })),
       ),
     ).rejects.toThrow(/identity changed|stale/);
   });

@@ -40,6 +40,11 @@ and encryption classifications. It emits no resize evidence; dedicated
 filesystem-native health and minimum-size probes must add that later.
 The GPT verifier parses diagnostics as well as exit status because `sgdisk`
 may report exit zero after reconstructing a corrupt backup header in memory.
+The provider also resolves `/` with `findmnt` and walks its complete inverse
+`lsblk` dependency list, so a target backing dm-crypt, LVM, MD RAID, or another
+stacked root is protected even when `/` is not mounted directly on a partition.
+An overlay, network root, failed ancestry command, or incomplete chain remains
+explicitly unresolved and protects every otherwise ambiguous target.
 
 The package intentionally does not yet provide the root service, OS-native
 inventory probes, filesystem tools, GPT writer, image extractor, or bootloader

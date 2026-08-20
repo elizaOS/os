@@ -17,8 +17,9 @@ package never changes a partition table.
   itself and populates those fields plus exact partition boundaries from fixed
   read-only `lsblk`, `udevadm`, `sfdisk --verify`, and `sgdisk --verify` calls.
   Redundant GPT main/backup integrity is now report-parsed, required, and
-  plan-bound; an exit-zero in-memory recovery is rejected. Add boot ancestry
-  through stacked devices and the
+  plan-bound; an exit-zero in-memory recovery is rejected. Root-device ancestry
+  is now resolved through `findmnt` plus inverse `lsblk` dependencies and is
+  also plan-bound; unresolved or stacked boot targets fail closed. Add the
   filesystem/encryption/hibernation/shrink probes before connecting it to the
   root service.
 - **Connect plan revalidation and authorization to the root service.** The
