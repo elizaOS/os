@@ -17,8 +17,8 @@ override_dh_auto_build:
 
 override_dh_auto_install:
 	set -eu; \
-	install -d -m 0755 debian/elizaos-app/opt/elizaos; \
-	cp -a payload/. debian/elizaos-app/opt/elizaos/; \
+	install -d -m 0755 debian/elizaos-app/usr/lib/elizaos; \
+	cp -a payload/. debian/elizaos-app/usr/lib/elizaos/; \
 	for executable in eliza-agent eliza-desktop eliza-doctor; do \
 		install -D -m 0755 "debian/$$executable" \
 			"debian/elizaos-app/usr/bin/$$executable"; \
