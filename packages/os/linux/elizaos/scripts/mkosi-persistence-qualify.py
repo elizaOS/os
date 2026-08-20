@@ -8,7 +8,9 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -29,10 +31,12 @@ MACHINES = {
     "arm64": "virt,accel=kvm:tcg,gic-version=max",
     "riscv64": "virt,accel=kvm:tcg",
 }
-REQUIRED_MARKERS = ("Linux version", "Reached target Graphical Interface")
+REQUIRED_MARKERS = ("Linux version", "Started gdm.service - GNOME Display Manager")
 FORBIDDEN_MARKERS = (
     "Kernel panic - not syncing",
     "Entering emergency mode",
+    "You are in emergency mode",
+    "Failed to start initrd-switch-root.service",
     "VFS: Unable to mount root fs",
     "Cannot open root device",
     "No bootable device",
@@ -40,10 +44,16 @@ FORBIDDEN_MARKERS = (
     "Dependency failed for Graphical Interface",
 )
 SCHEMA = "ai.elizaos.mkosi-persistence-evidence.v1"
+ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 
 
 class QualificationError(RuntimeError):
     pass
+
+
+def normalized_console_text(text: str) -> str:
+    """Remove terminal control sequences before evaluating boot markers."""
+    return ANSI_ESCAPE.sub("", text).replace("\r", "")
 
 
 def now() -> str:
@@ -97,52 +107,72 @@ def attached_loop(image: Path) -> Iterator[Path]:
         capture=True,
     )
     loop = Path(result.stdout.strip())
-    if not str(loop).startswith("/dev/loop"):
+    if not re.fullmatch(r"/dev/loop[0-9]+", str(loop)):
         raise QualificationError(f"losetup returned an unsafe device: {loop}")
+    created_nodes: list[Path] = []
     try:
         run(["udevadm", "settle"])
+        for device_file in sorted(Path("/sys/class/block").glob(f"{loop.name}p*/dev")):
+            partition_name = device_file.parent.name
+            if not re.fullmatch(rf"{re.escape(loop.name)}p[0-9]+", partition_name):
+                continue
+            partition = Path("/dev") / partition_name
+            if partition.exists():
+                if not partition.is_block_device():
+                    raise QualificationError(
+                        f"partition path exists but is not a block device: {partition}"
+                    )
+                continue
+            match = re.fullmatch(r"([0-9]+):([0-9]+)\n?", device_file.read_text())
+            if not match:
+                raise QualificationError(f"invalid device number for {partition}")
+            os.mknod(
+                partition,
+                stat.S_IFBLK | 0o600,
+                os.makedev(int(match.group(1)), int(match.group(2))),
+            )
+            created_nodes.append(partition)
         yield loop
     finally:
+        for partition in reversed(created_nodes):
+            partition.unlink(missing_ok=True)
         subprocess.run(["losetup", "--detach", str(loop)], check=False)
-
-
-def flatten_devices(devices: list[dict[str, object]]) -> list[dict[str, object]]:
-    flattened: list[dict[str, object]] = []
-    for device in devices:
-        flattened.append(device)
-        children = device.get("children", [])
-        if isinstance(children, list):
-            flattened.extend(
-                flatten_devices([child for child in children if isinstance(child, dict)])
-            )
-    return flattened
 
 
 def home_partition(loop: Path) -> tuple[Path, int]:
     result = run(
-        ["lsblk", "--json", "--bytes", "--output", "PATH,TYPE,PARTLABEL,SIZE", str(loop)],
+        ["sfdisk", "--json", str(loop)],
         capture=True,
     )
     try:
         data = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        raise QualificationError("lsblk returned invalid JSON") from exc
+        raise QualificationError("sfdisk returned invalid JSON") from exc
+    table = data.get("partitiontable", {})
+    if not isinstance(table, dict):
+        raise QualificationError("sfdisk returned no partition table")
+    partitions = table.get("partitions", [])
     matches = [
-        device
-        for device in flatten_devices(data.get("blockdevices", []))
-        if device.get("type") == "part" and device.get("partlabel") == "elizaos-home"
+        partition
+        for partition in partitions
+        if isinstance(partition, dict) and partition.get("name") == "elizaos-home"
     ]
     if len(matches) != 1:
         raise QualificationError(
             f"expected exactly one elizaos-home partition on {loop}; found {len(matches)}"
         )
-    path = Path(str(matches[0].get("path", "")))
+    path = Path(str(matches[0].get("node", "")))
     size_value = matches[0].get("size")
+    sector_size = table.get("sectorsize")
     try:
-        size = int(size_value)  # util-linux versions emit either JSON numbers or strings.
+        size = int(size_value) * int(sector_size)
     except (TypeError, ValueError) as exc:
         raise QualificationError("elizaos-home partition size is invalid") from exc
-    if not str(path).startswith(str(loop)) or size <= 0:
+    if (
+        not re.fullmatch(rf"{re.escape(str(loop))}p[0-9]+", str(path))
+        or not path.is_block_device()
+        or size <= 0
+    ):
         raise QualificationError("elizaos-home partition identity or size is invalid")
     filesystem = run(["blkid", "-s", "TYPE", "-o", "value", str(path)], capture=True)
     if filesystem.stdout.strip() != "ext4":
@@ -228,7 +258,9 @@ def boot(command: list[str], transcript: Path, timeout: int) -> dict[str, object
                 reason = "timeout"
                 break
             time.sleep(1)
-            text = transcript.read_text(encoding="utf-8", errors="replace")
+            text = normalized_console_text(
+                transcript.read_text(encoding="utf-8", errors="replace")
+            )
             if any(marker in text for marker in FORBIDDEN_MARKERS):
                 reason = "forbidden-marker"
                 break
@@ -242,7 +274,9 @@ def boot(command: list[str], transcript: Path, timeout: int) -> dict[str, object
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
-    text = transcript.read_text(encoding="utf-8", errors="replace")
+    text = normalized_console_text(
+        transcript.read_text(encoding="utf-8", errors="replace")
+    )
     found = [marker for marker in REQUIRED_MARKERS if marker in text]
     forbidden = [marker for marker in FORBIDDEN_MARKERS if marker in text]
     if reason != "required-markers" or len(found) != len(REQUIRED_MARKERS) or forbidden:
@@ -297,7 +331,7 @@ def main() -> int:
     }
 
     qemu = shutil.which(QEMU[args.architecture])
-    required_commands = ("losetup", "udevadm", "lsblk", "blkid", "dumpe2fs", "mount", "umount", "dd")
+    required_commands = ("losetup", "udevadm", "sfdisk", "blkid", "dumpe2fs", "mount", "umount", "dd")
     if platform.system() != "Linux":
         errors.append("persistence qualification requires Linux")
     if hasattr(os, "geteuid") and os.geteuid() != 0:
