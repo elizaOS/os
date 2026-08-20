@@ -4,6 +4,44 @@
 
 elizaos_submodule_checkout_fetched=0
 
+elizaos_run_with_timeout() {
+    local timeout_seconds="$1"
+    shift
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "ERROR: python3 is required to bound pinned Git fetches." >&2
+        return 127
+    fi
+
+    python3 - "${timeout_seconds}" "$@" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+
+timeout_seconds = int(sys.argv[1])
+command = sys.argv[2:]
+process = subprocess.Popen(command, start_new_session=True)
+
+try:
+    return_code = process.wait(timeout=timeout_seconds)
+except subprocess.TimeoutExpired:
+    print(
+        f"ERROR: command exceeded {timeout_seconds}s timeout: {' '.join(command)}",
+        file=sys.stderr,
+    )
+    os.killpg(process.pid, signal.SIGTERM)
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+    raise SystemExit(124)
+
+raise SystemExit(return_code)
+PY
+}
+
 elizaos_dir_has_entries() {
     local checkout_path="$1"
     [ -d "${checkout_path}" ] && find "${checkout_path}" -mindepth 1 -maxdepth 1 -print -quit | grep -q .
@@ -79,6 +117,9 @@ elizaos_fetch_pinned_git_ref() {
     local ref="$3"
     local attempts="${ELIZAOS_GIT_FETCH_ATTEMPTS:-4}"
     local retry_delay="${ELIZAOS_GIT_FETCH_RETRY_DELAY_SECONDS:-5}"
+    local timeout_seconds="${ELIZAOS_GIT_FETCH_TIMEOUT_SECONDS:-180}"
+    local low_speed_limit="${ELIZAOS_GIT_FETCH_LOW_SPEED_LIMIT:-1024}"
+    local low_speed_time="${ELIZAOS_GIT_FETCH_LOW_SPEED_TIME_SECONDS:-30}"
     local attempt
 
     case "${attempts}" in
@@ -93,6 +134,24 @@ elizaos_fetch_pinned_git_ref() {
             return 64
             ;;
     esac
+    case "${timeout_seconds}" in
+        ""|*[!0-9]*|0)
+            echo "ERROR: invalid pinned Git fetch timeout: ${timeout_seconds}" >&2
+            return 64
+            ;;
+    esac
+    case "${low_speed_limit}" in
+        ""|*[!0-9]*|0)
+            echo "ERROR: invalid pinned Git fetch low-speed limit: ${low_speed_limit}" >&2
+            return 64
+            ;;
+    esac
+    case "${low_speed_time}" in
+        ""|*[!0-9]*|0)
+            echo "ERROR: invalid pinned Git fetch low-speed time: ${low_speed_time}" >&2
+            return 64
+            ;;
+    esac
 
     elizaos_remove_path_recursive "${checkout_path}"
     mkdir -p "$(dirname "${checkout_path}")"
@@ -100,7 +159,12 @@ elizaos_fetch_pinned_git_ref() {
     git -C "${checkout_path}" remote add origin "${url}"
 
     for ((attempt = 1; attempt <= attempts; attempt++)); do
-        if git -C "${checkout_path}" fetch --depth 1 origin "${ref}"; then
+        if GIT_TERMINAL_PROMPT=0 \
+            GIT_HTTP_LOW_SPEED_LIMIT="${low_speed_limit}" \
+            GIT_HTTP_LOW_SPEED_TIME="${low_speed_time}" \
+            elizaos_run_with_timeout \
+                "${timeout_seconds}" \
+                git -C "${checkout_path}" fetch --depth 1 origin "${ref}"; then
             break
         fi
         if [ "${attempt}" -eq "${attempts}" ]; then

@@ -33,6 +33,9 @@ case "${3:-}" in
         fi
         count=$((count + 1))
         printf '%s\n' "${count}" >"${GIT_FETCH_COUNT}"
+        if [ "${GIT_FETCH_HANG_SECONDS:-0}" -gt 0 ]; then
+            sleep "${GIT_FETCH_HANG_SECONDS}"
+        fi
         if [ "${count}" -le "${GIT_FETCH_FAILURES}" ]; then
             echo "fatal: upstream returned HTTP 503" >&2
             exit 128
@@ -51,7 +54,9 @@ source "${ROOT}/scripts/submodule-checkout.sh"
 
 export PATH="${TMP}/bin:${PATH}"
 export ELIZAOS_GIT_FETCH_RETRY_DELAY_SECONDS=0
+export ELIZAOS_GIT_FETCH_TIMEOUT_SECONDS=5
 export GIT_FETCH_COUNT="${TMP}/fetch-count"
+export GIT_FETCH_HANG_SECONDS=0
 
 export ELIZAOS_GIT_FETCH_ATTEMPTS=3
 export GIT_FETCH_FAILURES=2
@@ -72,5 +77,25 @@ if elizaos_fetch_pinned_git_ref \
     exit 1
 fi
 test "$(cat "${GIT_FETCH_COUNT}")" = "2"
+
+: >"${GIT_FETCH_COUNT}"
+export ELIZAOS_GIT_FETCH_ATTEMPTS=1
+export ELIZAOS_GIT_FETCH_TIMEOUT_SECONDS=1
+export GIT_FETCH_FAILURES=0
+export GIT_FETCH_HANG_SECONDS=10
+started="$(date +%s)"
+if elizaos_fetch_pinned_git_ref \
+    "${TMP}/timed-out-checkout" \
+    "https://git.example/repository.git" \
+    "0011223344556677"; then
+    echo "hung pinned checkout unexpectedly succeeded" >&2
+    exit 1
+fi
+elapsed="$(( $(date +%s) - started ))"
+if [ "${elapsed}" -gt 4 ]; then
+    echo "hung pinned checkout was not terminated promptly (${elapsed}s)" >&2
+    exit 1
+fi
+test "$(cat "${GIT_FETCH_COUNT}")" = "1"
 
 echo "submodule checkout retry contract OK"
