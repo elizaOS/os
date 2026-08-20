@@ -32,6 +32,8 @@ DEFAULT_MARKERS = ("Linux version", "Started gdm.service - GNOME Display Manager
 FORBIDDEN_MARKERS = (
     "Kernel panic - not syncing",
     "Entering emergency mode",
+    "You are in emergency mode",
+    "Failed to start initrd-switch-root.service",
     "VFS: Unable to mount root fs",
     "Cannot open root device",
     "No bootable device",
