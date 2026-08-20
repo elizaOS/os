@@ -54,7 +54,10 @@ case "$*" in
   *"pidof ai.elizaos.app"*) echo 31337 ;;
   *"toybox nc -w 5 127.0.0.1 31337"*)
     if [[ "${FAKE_AGENT_HEALTH_STATUS:-200}" == 200 ]]; then
-      printf 'HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n{"status":"ready","agentId":"fixture"}\n'
+      health_body="${FAKE_AGENT_HEALTH_BODY:-}"
+      [[ -n "$health_body" ]] || health_body='{"status":"ready","agentId":"fixture"}'
+      printf 'HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n%s\n' \
+        "$health_body"
     else
       printf 'HTTP/1.0 %s Unavailable\r\nContent-Type: application/json\r\n\r\n{"status":"unhealthy"}\n' "$FAKE_AGENT_HEALTH_STATUS"
     fi
@@ -143,6 +146,16 @@ if FAKE_AGENT_HEALTH_STATUS=503 "$ROOT/scripts/validate-post-flash.sh" \
 fi
 assert_contains "$UNHEALTHY_OUT" "agent health probe did not return HTTP 200"
 pass "post-flash validator rejects unhealthy HTTP status"
+
+UNHEALTHY_BODY_OUT="$TMP_DIR/validate-unhealthy-body.out"
+if FAKE_AGENT_HEALTH_BODY='{"status":"unhealthy"}' "$ROOT/scripts/validate-post-flash.sh" \
+  --device TEST123 \
+  --manifest "$ROOT/manifests/android-release-manifest.example.json" \
+  --execute >"$UNHEALTHY_BODY_OUT" 2>&1; then
+  fail "post-flash validator accepted an unhealthy HTTP 200 agent response body"
+fi
+assert_contains "$UNHEALTHY_BODY_OUT" "agent health probe body did not return ready/ok/healthy"
+pass "post-flash validator rejects unhealthy HTTP 200 body"
 
 UNSAFE_HEALTH_OUT="$TMP_DIR/validate-unsafe-health-url.out"
 if "$ROOT/scripts/validate-post-flash.sh" \

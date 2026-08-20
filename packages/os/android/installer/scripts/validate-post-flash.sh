@@ -327,7 +327,7 @@ validate_launcher_agent_liveness() {
     || die "agent health probe transport failed: $AGENT_HEALTH_URL"
   grep -Eq '^HTTP/1\.[01] 200([[:space:]]|$)' <<<"$health_response" \
     || die "agent health probe did not return HTTP 200: $AGENT_HEALTH_URL"
-  grep -Ei '"status"[[:space:]]*:[[:space:]]*"ready"|ok|healthy' <<<"$health_response" >/dev/null \
+  grep -Ei '"status"[[:space:]]*:[[:space:]]*"(ready|ok|healthy)"' <<<"$health_response" >/dev/null \
     || die "agent health probe body did not return ready/ok/healthy: $AGENT_HEALTH_URL"
   ! "${adb_cmd[@]}" logcat -d | grep -Ei 'FATAL EXCEPTION|AndroidRuntime|crash' >/dev/null \
     || die "fatal Android runtime/crash log entries were found"
