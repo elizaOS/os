@@ -391,6 +391,17 @@ describe("AOSP build contracts", () => {
     expect(driver).not.toContain(
       "QJL_RVV_COMPILE_OPTIONS=-mcpu=sifive_x280",
     );
+
+    const checker = readFileSync(
+      join(repositoryRoot, "scripts/check-riscv64-artifacts.sh"),
+      "utf8",
+    );
+    expect(checker).toContain(
+      'verify_artifact "$artifact" "$fork_ggml"',
+    );
+    expect(checker).toContain(
+      'LD_LIBRARY_PATH="$(dirname "$fork_ggml")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"',
+    );
   });
 
   test("source-only AOSP builds do not require KVM", () => {

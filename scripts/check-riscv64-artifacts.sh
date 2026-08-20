@@ -93,7 +93,7 @@ emit_record() {
         FAIL) FAIL_N=$((FAIL_N+1));;
         SKIP) SKIP_N=$((SKIP_N+1));;
     esac
-    printf '  [%-4s] %-70s %s\n' "$status" "${path#$repo_root/}" "$detail"
+    printf '  [%-4s] %-70s %s\n' "$status" "${path#"$repo_root"/}" "$detail"
 }
 
 write_final_report() {
@@ -193,8 +193,9 @@ ar_members_are_rv64() {
 }
 
 run_executable_under_qemu() {
-    # $1 path. Echoes "status|detail|duration_ms".
-    local exe="$1"
+    # $1 path; remaining arguments are forwarded to the guest executable.
+    # Echoes "status|detail|duration_ms".
+    local exe="$1"; shift
     if [ ! -x "$exe" ]; then chmod +x "$exe" 2>/dev/null || true; fi
     if [ "$RUN_QEMU" != "1" ] || [ -z "$QEMU_BIN" ]; then
         echo "SKIP|qemu disabled (elf-tag only)|0"
@@ -203,7 +204,7 @@ run_executable_under_qemu() {
     local log; log="$(mktemp -t riscv64-smoke-XXXXXX.log)"
     local start end dur ec
     start="$(now_epoch_ms)"
-    if timeout "$QEMU_TIMEOUT" "$QEMU_BIN" "$exe" >"$log" 2>&1; then
+    if timeout "$QEMU_TIMEOUT" "$QEMU_BIN" "$exe" "$@" >"$log" 2>&1; then
         end="$(now_epoch_ms)"; dur=$((end - start))
         rm -f "$log"
         echo "PASS|qemu exit=0|$dur"
@@ -276,8 +277,9 @@ verify_static_archive() {
 }
 
 verify_artifact() {
-    # $1 = path. Determines kind by extension / executable bit.
-    local p="$1"
+    # $1 = path; remaining arguments are forwarded to executable smokes.
+    # Determines kind by extension / executable bit.
+    local p="$1"; shift
     if [ ! -e "$p" ]; then
         emit_record "$p" "missing" "SKIP" "artifact not built yet" "0"
         return
@@ -296,7 +298,7 @@ verify_artifact() {
         *)
             if [ -f "$p" ] && is_riscv64_elf "$p"; then
                 if [ -x "$p" ] || head -c 4 "$p" | od -An -c 2>/dev/null | grep -q "\\\\177   E   L   F"; then
-                    local result; result="$(run_executable_under_qemu "$p")"
+                    local result; result="$(run_executable_under_qemu "$p" "$@")"
                     local status detail dur
                     status="${result%%|*}"; rest="${result#*|}"; detail="${rest%|*}"; dur="${rest##*|}"
                     emit_record "$p" "executable" "$status" "$detail" "$dur"
@@ -408,8 +410,31 @@ echo "── Native plugins ──"
 for entry in "${NATIVE_PLUGINS[@]}"; do
     # shellcheck disable=SC2086
     set -- $entry
-    pkg="$1"; path="$2"
-    verify_artifact "$eliza_root/$path"
+    path="$2"
+    artifact="$eliza_root/$path"
+    if [ "$(basename "$artifact")" = "qjl_fork_parity" ]; then
+        # This executable is not a fixture-free smoke: it requires the exact
+        # forked libggml-cpu.so produced by the libllama build. Exercise the
+        # real cross-artifact parity boundary instead of invoking it with no
+        # argument and mistaking its usage exit for a RISC-V failure.
+        fork_ggml=""
+        for dir in "${LLAMA_FAMILY_SEARCH_DIRS[@]}"; do
+            candidate="$eliza_root/$dir/libggml-cpu.so"
+            if [ -e "$candidate" ]; then
+                fork_ggml="$candidate"
+                break
+            fi
+        done
+        if [ -n "$fork_ggml" ]; then
+            LD_LIBRARY_PATH="$(dirname "$fork_ggml")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+                verify_artifact "$artifact" "$fork_ggml"
+        else
+            emit_record "$artifact" "executable" "SKIP" \
+                "fork libggml-cpu.so not built; parity argument unavailable" "0"
+        fi
+    else
+        verify_artifact "$artifact"
+    fi
 done
 
 echo
