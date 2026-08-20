@@ -1,6 +1,8 @@
 // Exercises USB installer backend safety and platform behavior.
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { PassThrough, Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { describe, expect, it } from "vitest";
 import {
   NoPrivilegeEscalatorError,
@@ -12,6 +14,7 @@ import {
   findPrivilegeEscalator,
   LinuxUsbInstallerBackend,
   type PrivilegeEscalator,
+  writeCanonicalRawImageToLinuxDevice,
 } from "../linux-backend";
 import type {
   ElizaOsImage,
@@ -161,6 +164,127 @@ function makeExecMock(opts: ExecMockOptions) {
 // --- tests -----------------------------------------------------------------
 
 describe("LinuxUsbInstallerBackend.executeWritePlan", () => {
+  it("streams privileged raw bytes and reads back the exact expanded length", async () => {
+    const expanded = Buffer.from("expanded raw disk bytes");
+    const written: Buffer[] = [];
+    const spawnCalls: Array<{ command: string; args: readonly string[] }> = [];
+    const spawn = (command: string, args: readonly string[]): ChildProcess => {
+      spawnCalls.push({ command, args });
+      const process = new EventEmitter() as ChildProcess;
+      const stdin = new PassThrough();
+      const stdout = new PassThrough();
+      const stderr = new PassThrough();
+      Object.assign(process, {
+        stdin,
+        stdout,
+        stderr,
+        kill: () => true,
+      });
+      if (args.some((argument) => argument.startsWith("of="))) {
+        stdin.on("data", (chunk: Buffer) => written.push(Buffer.from(chunk)));
+        stdin.on("finish", () =>
+          queueMicrotask(() => process.emit("close", 0)),
+        );
+      } else {
+        queueMicrotask(() => {
+          stdout.end(Buffer.concat(written));
+          process.emit("close", 0);
+        });
+      }
+      return process;
+    };
+    const execCalls: MockExecCall[] = [];
+    const rawWriter = async (
+      _image: ElizaOsImage,
+      target: import("../raw-image-pipeline").RawImageTarget,
+    ) => {
+      await pipeline(Readable.from(expanded), target.openWriteStream());
+      await target.sync();
+      const readback: Buffer[] = [];
+      for await (const chunk of target.openReadbackStream(expanded.length)) {
+        readback.push(Buffer.from(chunk));
+      }
+      expect(Buffer.concat(readback)).toEqual(expanded);
+      return {
+        targetStableId: target.stableId,
+        compressedBytes: 1,
+        expandedBytes: expanded.length,
+        sha256Compressed: image.checksumSha256,
+        sha256Expanded: image.checksumSha256,
+        sha256Readback: image.checksumSha256,
+        releaseKeyFingerprint: image.checksumSha256,
+      };
+    };
+
+    await writeCanonicalRawImageToLinuxDevice(
+      image,
+      drive,
+      escalator,
+      spawn,
+      makeExecMock({ calls: execCalls }),
+      () => {},
+      rawWriter,
+    );
+
+    expect(spawnCalls).toHaveLength(2);
+    expect(spawnCalls[0]?.args).toContain("of=/dev/sdb");
+    expect(spawnCalls[1]?.args).toContain(`count=${expanded.length}`);
+    expect(spawnCalls[1]?.args).toContain("iflag=count_bytes");
+    expect(execCalls).toContainEqual({
+      command: "pkexec",
+      args: ["sync", "/dev/sdb"],
+    });
+  });
+
+  it("routes canonical raw.zst only through the verified streaming writer", async () => {
+    const execCalls: MockExecCall[] = [];
+    let streamed = false;
+    const compressed = image.checksumSha256;
+    const rawImage: ElizaOsImage = {
+      ...image,
+      url: "https://example.com/elizaos.raw.zst",
+      signatureUrl: "https://example.com/elizaos.raw.zst.sig",
+      format: "raw.zst",
+      checksumSha256: compressed,
+      sha256Compressed: compressed,
+      sha256Expanded: "fedcba9876543210".repeat(4),
+      compressedSize: IMAGE_SIZE,
+      expandedSize: IMAGE_SIZE + 1,
+      sizeBytes: IMAGE_SIZE,
+      minDeviceBytes: IMAGE_SIZE + 1,
+      minUsbSizeBytes: IMAGE_SIZE + 1,
+    };
+    const backend = new LinuxUsbInstallerBackend({
+      execFile: makeExecMock({
+        calls: execCalls,
+        handlers: {
+          lsblk: async () => ({ stdout: lsblkChildJson(false), stderr: "" }),
+        },
+      }),
+      findEscalator: async () => escalator,
+      resolveImage: async () => {
+        throw new Error("legacy resolver must not run");
+      },
+      verifyChecksum: async () => {
+        throw new Error("legacy checksum path must not run");
+      },
+      spawn: () => {
+        throw new Error("legacy direct-dd path must not run");
+      },
+      writeCanonicalRawImage: async (selectedImage, selectedDrive) => {
+        expect(selectedImage).toBe(rawImage);
+        expect(selectedDrive).toBe(drive);
+        streamed = true;
+      },
+    });
+    const plan = { ...makePlan(), image: rawImage };
+
+    await backend.executeWritePlan(plan, () => {});
+
+    expect(streamed).toBe(true);
+    expect(backend.canonicalRawZstdSupported).toBe(true);
+  });
+
   it("Test 1: UnmountFailedError propagates and dd is never spawned", async () => {
     const execCalls: MockExecCall[] = [];
     let spawnCalled = false;

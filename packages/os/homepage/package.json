@@ -46,6 +46,7 @@
     "@typescript/native": "npm:typescript@^7.0.2",
     "typescript": "^6.0.3",
     "vitest": "^4.0.18",
-    "viem": "^2.48.8"
+    "viem": "^2.48.8",
+    "wrangler": "4.123.0"
   }
 }

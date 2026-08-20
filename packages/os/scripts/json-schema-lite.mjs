@@ -44,6 +44,25 @@ function isValidDate(value) {
   return Number.isFinite(Date.parse(`${value}T00:00:00Z`));
 }
 
+function isValidDateTime(value) {
+  return (
+    typeof value === "string" &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(
+      value,
+    ) &&
+    Number.isFinite(Date.parse(value))
+  );
+}
+
+function isValidUri(value) {
+  if (typeof value !== "string") return false;
+  try {
+    return Boolean(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
+
 function validateNode(value, schema, root, instancePath, errors) {
   if (schema.$ref !== undefined) {
     validateNode(
@@ -101,8 +120,18 @@ function validateNode(value, schema, root, instancePath, errors) {
     ) {
       errors.push(`${instancePath}: must match pattern ${schema.pattern}`);
     }
-    if (schema.format === "date" && !isValidDate(value)) {
-      errors.push(`${instancePath}: must be a valid date (YYYY-MM-DD)`);
+    if (schema.format !== undefined) {
+      if (schema.format === "date" && !isValidDate(value)) {
+        errors.push(`${instancePath}: must be a valid date (YYYY-MM-DD)`);
+      } else if (schema.format === "date-time" && !isValidDateTime(value)) {
+        errors.push(`${instancePath}: must be a valid RFC 3339 date-time`);
+      } else if (schema.format === "uri" && !isValidUri(value)) {
+        errors.push(`${instancePath}: must be an absolute URI`);
+      } else if (!["date", "date-time", "uri"].includes(schema.format)) {
+        errors.push(
+          `${instancePath}: schema uses unsupported format ${schema.format}`,
+        );
+      }
     }
   }
 

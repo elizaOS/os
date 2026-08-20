@@ -1,5 +1,11 @@
 # Verify an elizaOS Live ISO download
 
+> **Archived format.** Live ISO publication has been retired. The canonical
+> release format is the signed, persistent `raw.zst` image set described in
+> [ci-cd-production-plan.md](./ci-cd-production-plan.md). The old workflow and
+> its trust path no longer exist; this document is retained only to interpret
+> historical ISO assets and must not be used for a new release.
+
 When you download an elizaOS Live ISO from a GitHub Release, you should
 verify that the file you received is the file elizaOS actually built
 and signed — before you flash it to a USB stick and boot from it. This

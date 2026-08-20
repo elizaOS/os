@@ -1,7 +1,5 @@
 // Exercises the AOSP setup flasher backend and dependency gates.
-import { createServer as createHttpServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
-import { afterAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { createFetchHandler, type FetchHandler } from "../../server";
 import { DependencyManager } from "../dependencies/dep-manager";
 import type {
@@ -9,16 +7,11 @@ import type {
   DependencyId,
 } from "../dependencies/types";
 
-// End-to-end test for the /dependencies routes. Boots a real `node:http`
-// server on an ephemeral port, adapts each incoming request to a WHATWG
-// `Request`, runs it through the exact handler that production uses, then
-// returns the resulting `Response` over the wire. Tests speak real HTTP via
-// `fetch`. Probes are injected so the test never touches the host's real
-// `which`/`brew`/`apt`.
-//
-// We adapt to node:http instead of calling `Bun.serve` because vitest runs
-// under node, where `globalThis.Bun` is absent. The handler under test is
-// byte-for-byte the same function `Bun.serve` invokes in production.
+// Integration test for the /dependencies routes. It sends WHATWG Requests to
+// the exact fetch handler that Bun.serve invokes in production. Avoiding a
+// test-only node:http adapter keeps the suite deterministic in restricted CI
+// sandboxes where binding even an ephemeral loopback socket is prohibited.
+// Probes are injected so the test never touches real which/brew/apt state.
 
 interface HostState {
   /** Binaries currently "installed" on the simulated host. */
@@ -46,80 +39,28 @@ function buildManager(host: HostState): DependencyManager {
       }
       return host.installResult;
     },
+    isWingetAvailable: async () => true,
+    downloadPlatformTools: async () => false,
+    downloadSideloader: async () => false,
   });
 }
 
-interface Booted {
-  server: Server;
-  url: string;
-}
-
-async function bootServer(host: HostState): Promise<Booted> {
-  const handler: FetchHandler = createFetchHandler({
+function bootHandler(host: HostState): FetchHandler {
+  return createFetchHandler({
     depManager: buildManager(host),
   });
-
-  const server = createHttpServer((nodeReq, nodeRes) => {
-    const chunks: Buffer[] = [];
-    nodeReq.on("data", (chunk: Buffer) => chunks.push(chunk));
-    nodeReq.on("end", async () => {
-      const method = nodeReq.method ?? "GET";
-      const host = nodeReq.headers.host ?? "127.0.0.1";
-      const url = `http://${host}${nodeReq.url ?? "/"}`;
-      const headers = new Headers();
-      for (const [k, v] of Object.entries(nodeReq.headers)) {
-        if (Array.isArray(v)) {
-          for (const item of v) headers.append(k, item);
-        } else if (typeof v === "string") {
-          headers.set(k, v);
-        }
-      }
-      const init: RequestInit = { method, headers };
-      if (method !== "GET" && method !== "HEAD" && chunks.length > 0) {
-        init.body = Buffer.concat(chunks);
-      }
-      const req = new Request(url, init);
-      const res = await handler(req);
-      nodeRes.statusCode = res.status;
-      res.headers.forEach((value, key) => {
-        nodeRes.setHeader(key, value);
-      });
-      const buf = Buffer.from(await res.arrayBuffer());
-      nodeRes.end(buf);
-    });
-  });
-
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const addr = server.address() as AddressInfo;
-  return { server, url: `http://127.0.0.1:${addr.port}` };
 }
 
-describe("dependencies HTTP e2e", () => {
-  // Each scenario boots its own server so probe state is isolated. We collect
-  // them for teardown.
-  const booted: Booted[] = [];
-
-  afterAll(async () => {
-    await Promise.all(
-      booted.map(
-        (b) =>
-          new Promise<void>((resolve, reject) =>
-            b.server.close((err) => (err ? reject(err) : resolve())),
-          ),
-      ),
-    );
-  });
-
+describe("dependencies HTTP handler integration", () => {
   it("GET /dependencies returns an array of statuses for all known deps", async () => {
     const host: HostState = {
       installed: new Set(["adb", "fastboot"]),
       installCalls: [],
       installResult: false,
     };
-    const b = await bootServer(host);
-    booted.push(b);
-
-    const res = await fetch(`${b.url}/dependencies`);
+    const res = await bootHandler(host)(
+      new Request("http://setup.test/dependencies"),
+    );
     expect(res.status).toBe(200);
     const body = (await res.json()) as DependencyCheckResult[];
     expect(Array.isArray(body)).toBe(true);
@@ -144,10 +85,9 @@ describe("dependencies HTTP e2e", () => {
       installCalls: [],
       installResult: false,
     };
-    const b = await bootServer(host);
-    booted.push(b);
-
-    const res = await fetch(`${b.url}/dependencies/adb`);
+    const res = await bootHandler(host)(
+      new Request("http://setup.test/dependencies/adb"),
+    );
     expect(res.status).toBe(200);
     const body = (await res.json()) as DependencyCheckResult;
     expect(body.id).toBe("adb");
@@ -162,12 +102,11 @@ describe("dependencies HTTP e2e", () => {
       installResult: true,
       installPlaces: "adb",
     };
-    const b = await bootServer(host);
-    booted.push(b);
-
-    const res = await fetch(`${b.url}/dependencies/adb/install`, {
-      method: "POST",
-    });
+    const res = await bootHandler(host)(
+      new Request("http://setup.test/dependencies/adb/install", {
+        method: "POST",
+      }),
+    );
     expect(res.status).toBe(200);
     const body = (await res.json()) as DependencyCheckResult;
     expect(body.id).toBe("adb");
@@ -185,12 +124,11 @@ describe("dependencies HTTP e2e", () => {
       // post-install re-probe was added to catch.
       installResult: true,
     };
-    const b = await bootServer(host);
-    booted.push(b);
-
-    const res = await fetch(`${b.url}/dependencies/adb/install`, {
-      method: "POST",
-    });
+    const res = await bootHandler(host)(
+      new Request("http://setup.test/dependencies/adb/install", {
+        method: "POST",
+      }),
+    );
     expect(res.status).toBe(200);
     const body = (await res.json()) as DependencyCheckResult;
     expect(body.id).toBe("adb");
@@ -207,12 +145,11 @@ describe("dependencies HTTP e2e", () => {
       installCalls: [],
       installResult: false,
     };
-    const b = await bootServer(host);
-    booted.push(b);
-
-    const res = await fetch(`${b.url}/dependencies/adb/install`, {
-      method: "POST",
-    });
+    const res = await bootHandler(host)(
+      new Request("http://setup.test/dependencies/adb/install", {
+        method: "POST",
+      }),
+    );
     expect(res.status).toBe(200);
     const body = (await res.json()) as DependencyCheckResult;
     expect(body.id).toBe("adb");

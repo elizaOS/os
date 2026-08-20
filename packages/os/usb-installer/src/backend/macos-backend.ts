@@ -14,7 +14,7 @@ import {
   PlistParseError,
   UserCancelledAuthError,
 } from "./errors";
-import { fetchPublishedIsoImages } from "./release-discovery";
+import { fetchReleaseImages } from "./release-manifest";
 import type {
   ElizaOsImage,
   InstallerStep,
@@ -73,6 +73,7 @@ interface DiskUtilInfoPlist {
   Internal?: boolean;
   OSInternalMedia?: boolean;
   VirtualOrPhysical?: string;
+  DeviceTreePath?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -274,10 +275,6 @@ async function getDiskUtilInfo(
 // Network helpers
 // ---------------------------------------------------------------------------
 
-async function fetchGitHubIsoImages(): Promise<ElizaOsImage[]> {
-  return fetchPublishedIsoImages();
-}
-
 async function downloadFile(
   url: string,
   destPath: string,
@@ -472,7 +469,7 @@ export class MacOsUsbInstallerBackend implements UsbInstallerBackend {
           ? "sd"
           : "unknown";
 
-      drives.push({
+      const drive: RemovableDrive = {
         id: deviceId,
         name,
         devicePath: `/dev/${deviceId}`,
@@ -481,14 +478,17 @@ export class MacOsUsbInstallerBackend implements UsbInstallerBackend {
         platform: "darwin",
         safety,
         description: `${busProtocol || "unknown bus"} - ${content || "no partition table"}`,
-      });
+      };
+      const deviceTreePath = info.DeviceTreePath?.trim();
+      if (deviceTreePath) drive.stableId = `darwin:${deviceTreePath}`;
+      drives.push(drive);
     }
 
     return drives;
   }
 
   async listImages(): Promise<ElizaOsImage[]> {
-    return fetchGitHubIsoImages();
+    return fetchReleaseImages();
   }
 
   async createWritePlan(request: WriteRequest): Promise<WritePlan> {

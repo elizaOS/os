@@ -14,16 +14,26 @@ import {
 
 const execFileAsync = promisify(execFile);
 const args = parseArgs(process.argv.slice(2));
-const manifestPath = args.manifest || defaultManifestPath;
+const manifestPath = path.resolve(args.manifest || defaultManifestPath);
 const manifest = await readJson(manifestPath);
 const manifestValidation = validateManifest(manifest, {
   requirePublishableChecksums: Boolean(args["require-publishable-checksums"]),
 });
 
-const evidenceDir = path.resolve(
-  args["evidence-dir"] ||
-    path.join(repoRoot, manifest.validation.evidenceDirectory),
-);
+const configuredEvidenceDir = manifest?.validation?.evidenceDirectory;
+if (
+  !args["evidence-dir"] &&
+  (typeof configuredEvidenceDir !== "string" ||
+    path.isAbsolute(configuredEvidenceDir) ||
+    configuredEvidenceDir.split(/[\\/]/).includes(".."))
+) {
+  throw new Error(
+    "manifest validation.evidenceDirectory must be a safe relative path",
+  );
+}
+const evidenceDir = args["evidence-dir"]
+  ? path.resolve(args["evidence-dir"])
+  : path.resolve(path.dirname(manifestPath), configuredEvidenceDir);
 await mkdir(evidenceDir, { recursive: true });
 
 async function gitValue(commandArgs) {
@@ -92,6 +102,7 @@ const report = {
 const outputPath = path.resolve(
   args.output || path.join(evidenceDir, "release-evidence.json"),
 );
+await mkdir(path.dirname(outputPath), { recursive: true });
 await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`);
 
 if (!manifestValidation.ok) {

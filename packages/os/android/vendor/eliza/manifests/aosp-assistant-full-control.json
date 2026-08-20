@@ -138,9 +138,10 @@
   ],
   "generated_utc": "2026-05-20T22:14:10Z",
   "hardwareKeyRemap": {
-    "status": "follow-up",
-    "mechanism": "none-present",
-    "notes": "A dedicated hardware key (e.g. a branded assistant button) could be routed to the assistant role via an input key-layout (.kl) file mapping the scancode to KEY_ASSIST/KEY_VOICECOMMAND, copied through PRODUCT_COPY_FILES. The vendor tree has no .kl / key-layout copy mechanism today (grep for *.kl and 'keylayout' returns nothing), so this is documented as a follow-up rather than inventing a partial one. On stock Pixel/Cuttlefish hardware the assist gesture / long-press-power already routes to the ROLE_ASSISTANT holder (the VoiceInteractionService above), so no key remap is required for those targets."
+    "status": "explicitly-unsupported-no-dedicated-key",
+    "mechanism": "framework-role-routing",
+    "applicableTargets": ["tegu", "Cuttlefish"],
+    "notes": "Pixel 9a and Cuttlefish do not expose a dedicated branded assistant scancode that needs a vendor .kl remap. elizaOS therefore does not claim support for such a key on these targets. The supported physical gesture is Pixel long-press-power through ROLE_ASSISTANT; the automated lane separately injects KEYCODE_ASSIST to verify framework routing. A future product with a dedicated key must add and physically prove its exact scan-code .kl mapping before that product is exposed."
   },
   "packageName": "ai.elizaos.app",
   "playStorePolicy": {

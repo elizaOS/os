@@ -1,22 +1,37 @@
 // Configures the USB installer build, server, and tests.
 import type { ElectrobunConfig } from "electrobun/bun";
 
+const releasePublicKey =
+  process.env.ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64;
+
 export default {
   app: {
     name: "elizaOS USB Installer",
     identifier: "ai.elizaos.usb-installer",
-    version: "1.0.0",
+    version: process.env.ELIZAOS_RELEASE_VERSION ?? "0.1.0",
     description: "Prepare bootable elizaOS USB installers",
   },
   build: {
     bun: {
-      entrypoint: "src/index.ts",
+      // Electrobun's launcher loads Resources/app/bun/index.js.
+      entrypoint: "electrobun/index.ts",
+      define: releasePublicKey
+        ? {
+            __ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64__:
+              JSON.stringify(releasePublicKey),
+          }
+        : {},
     },
+    bunVersion: "1.3.14",
     views: {},
-    copy: {},
+    copy: { dist: "dist" },
     mac: {
-      codesign: Boolean(process.env.CSC_LINK),
-      notarize: Boolean(process.env.APPLE_ID),
+      codesign: Boolean(process.env.ELECTROBUN_DEVELOPER_ID),
+      notarize: Boolean(
+        process.env.ELECTROBUN_APPLEAPIISSUER &&
+          process.env.ELECTROBUN_APPLEAPIKEY &&
+          process.env.ELECTROBUN_APPLEAPIKEYPATH,
+      ),
       entitlements: {
         "com.apple.security.cs.allow-unsigned-executable-memory": true,
         "com.apple.security.network.client": true,
@@ -25,5 +40,8 @@ export default {
     },
     linux: {},
     win: {},
+  },
+  scripts: {
+    preBuild: "scripts/build-renderer.ts",
   },
 } satisfies ElectrobunConfig;

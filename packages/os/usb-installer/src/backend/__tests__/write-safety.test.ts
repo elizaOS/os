@@ -147,4 +147,51 @@ describe("USB write safety", () => {
       ),
     ).toThrow("size changed");
   });
+
+  it("blocks raw.zst execution until decompression and expanded readback exist", () => {
+    const compressed = trustedChecksum;
+    const expanded = "fedcba9876543210".repeat(4);
+    const canonicalPlan = makePlan({
+      image: {
+        ...image,
+        format: "raw.zst",
+        signatureUrl: "https://download.elizaos.ai/image.raw.zst.sig",
+        checksumSha256: compressed,
+        sha256Compressed: compressed,
+        sha256Expanded: expanded,
+        compressedSize: 1_000_000,
+        expandedSize: 2_000_000,
+        sizeBytes: 1_000_000,
+        minDeviceBytes: 2_000_000,
+        minUsbSizeBytes: 2_000_000,
+      },
+    });
+    expect(() => assertWritePlanAllowed(canonicalPlan)).toThrow(
+      "streaming decompression",
+    );
+    expect(() =>
+      assertWritePlanAllowed(canonicalPlan, {
+        canonicalRawZstdSupported: true,
+      }),
+    ).not.toThrow();
+  });
+
+  it("catches stable hardware identity changes", () => {
+    expect(() =>
+      assertDriveMatchesExpected(
+        {
+          driveId: drive.id,
+          imageId: image.id,
+          dryRun: false,
+          acknowledgeDataLoss: true,
+          expectedDrive: {
+            devicePath: drive.devicePath,
+            sizeBytes: drive.sizeBytes,
+            stableId: "usb:serial-a",
+          },
+        },
+        { ...drive, stableId: "usb:serial-b" },
+      ),
+    ).toThrow("hardware identity changed");
+  });
 });

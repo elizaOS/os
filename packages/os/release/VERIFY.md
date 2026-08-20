@@ -1,147 +1,58 @@
 # Verifying an elizaOS release
 
-This page documents the verification stack the release pipeline ships
-and how to drive it end-to-end from a download directory.
-
-If you only want one command, run:
+Download every file from the GitHub Release into one directory, then run:
 
 ```sh
-bash scripts/verify-release.sh path/to/your/downloads
+bash packages/os/scripts/verify-release.sh path/to/downloads
 ```
 
-That script walks every layer below in order and exits non-zero on the
-first hard failure.
-
----
-
-## What the release ships
-
-For a published release, the GitHub Release page contains:
-
-| File | What it is | Required? |
-| --- | --- | --- |
-| `*.raw.img.zst`, `*.qcow2.zst`, `*.utm.zip`, `*-android-*.zip` | Release artifacts | yes |
-| `SHA256SUMS` | Canonical aggregated checksums file | yes |
-| `*.spdx.json` | SPDX SBOM (Linux image only, today) | once landed |
-| `SHA256SUMS.asc` _(future)_ | Detached GPG signature on `SHA256SUMS` | once the signing-key RFC lands |
-
-Artifact filenames follow the pattern:
-
-```
-elizaos-{channel}-{date}-{platform}-{arch}.{ext}
-```
-
-For example: `elizaos-beta-2026.05.16-linux-x86_64.raw.img.zst`
-
-Per-artifact GitHub artifact attestations (SLSA build provenance via
-Sigstore) live in GitHub, not the release tarball. Verify them with the
-`gh` CLI as shown below.
-
-## Layer 1 — `SHA256SUMS` roundtrip (REQUIRED)
-
-The cheapest, most universal check. Available on any Unix.
+For release-engineering approval, also require exact agreement with the
+populated manifest (replace the manifest filename with the downloaded one):
 
 ```sh
-cd path/to/your/downloads
-
-# Linux (coreutils):
-sha256sum -c SHA256SUMS --ignore-missing
-
-# macOS:
-shasum -a 256 -c SHA256SUMS --ignore-missing
+node packages/os/scripts/verify-release-checksums.mjs \
+  --manifest path/to/downloads/elizaos-os-v0.1.0-beta.1-manifest.json \
+  --artifact-root path/to/downloads \
+  --checksums path/to/downloads/SHA256SUMS
 ```
 
-Expected output (one line per artifact present in the directory):
+This second check rejects missing, extra, or duplicate checksum entries and
+requires manifest digest, byte size, checksum record, and actual file bytes to
+agree.
 
-```
-elizaos-beta-2026.05.16-linux-x86_64.raw.img.zst: OK
-elizaos-beta-2026.05.16-vm-linux-x86_64.qcow2.zst: OK
-elizaos-beta-2026.05.16-vm-macos-silicon.utm.zip: OK
-```
+The `v0.1.0-beta.1` bundle contains three signed persistent mkosi `raw.zst`
+images and their SPDX SBOMs, three architecture-specific Debian packages,
+three Setup bundles, the Linux USB Installer, the signed image-discovery
+manifest, the populated release manifest, and `SHA256SUMS`. The downloaded
+populated manifest is authoritative; do not infer release contents from this
+summary.
 
-If any line says `FAILED`, the artifact has been modified in transit
-(or corrupted). Re-download.
+The verifier fails if `SHA256SUMS` is absent or malformed, contains no files,
+names an unsafe path, or names any payload that is missing, empty, symlinked,
+or checksum-invalid. It does not use checksum tools' `--ignore-missing` mode.
 
-## Layer 2 — GitHub artifact attestations (RECOMMENDED)
-
-Each release artifact carries a Sigstore-signed SLSA build provenance
-attestation, minted at build time via GitHub OIDC. Verify with the
-[`gh` CLI](https://cli.github.com/):
+When the GitHub CLI is installed, the verifier also requires every payload,
+`SHA256SUMS`, and the release manifest to have a valid GitHub artifact
+attestation from the `elizaOS` owner:
 
 ```sh
-gh attestation verify elizaos-beta-2026.05.16-linux-x86_64.raw.img.zst --owner elizaOS
-gh attestation verify elizaos-beta-2026.05.16-vm-linux-x86_64.qcow2.zst --owner elizaOS
-gh attestation verify SHA256SUMS                                           --owner elizaOS
+gh attestation verify elizaos-0.1.0-beta.1-x86_64.raw.zst --owner elizaOS
+gh attestation verify SHA256SUMS --owner elizaOS
 ```
 
-Replace the date and channel with the actual release values. Each command
-will report the signing identity, the workflow that produced the artifact,
-the source commit, and the Sigstore Rekor entry. A passing verification
-means:
+The release manifest supplies the authoritative filename, platform,
+architecture, byte size, SHA-256, download URL, and completed evidence for each
+payload. Treat any disagreement between the manifest, `SHA256SUMS`, downloaded
+files, or attestations as a failed verification.
 
-- the artifact was built by the elizaOS GitHub repository
-- the build used the workflow source code at the recorded commit
-- the in-toto provenance has not been tampered with since signing
-
-If verification fails or returns "no attestations found", treat the
-download as unverified.
-
-## Layer 3 — GPG signature on `SHA256SUMS` (FUTURE)
-
-Once the [signing-key RFC](https://github.com/elizaOS/eliza) lands,
-each release will additionally ship a detached GPG signature:
-
-```sh
-# Import the elizaOS release key (one-time setup; fingerprint will be
-# published alongside the key once the RFC lands):
-gpg --import release/keys/elizaos-release.asc
-
-# Per release:
-gpg --verify SHA256SUMS.asc SHA256SUMS
-```
-
-Until the RFC is resolved, this layer is N/A and the verification
-helper will print a `[--]` notice and skip it.
-
-## Layer 4 — SBOM inspection (OPTIONAL)
-
-Each Linux image release ships an SPDX-JSON SBOM enumerating every
-package in the image. Get a quick package count with:
-
-```sh
-jq '.packages | length' elizaos-beta-2026.05.16-linux-x86_64.spdx.json
-```
-
-For vulnerability scanning, feed the SBOM into [Grype](https://github.com/anchore/grype):
-
-```sh
-grype sbom:elizaos-beta-2026.05.16-linux-x86_64.spdx.json
-```
-
-## The one-command runner
-
-`scripts/verify-release.sh` walks all four layers in order.
-It exits:
+Exit codes are:
 
 | Code | Meaning |
 | --- | --- |
-| `0` | every required check passed (optional layers may have been skipped) |
-| `1` | `SHA256SUMS` missing or roundtrip failed |
-| `2` | an optional layer ran and failed (invalid attestation, bad GPG sig) |
+| `0` | Every available required verification passed. |
+| `1` | Required payload or checksum verification failed. |
+| `2` | An attestation or optional cryptographic verification failed. |
 
-It depends only on `sha256sum` (Linux) or `shasum` (macOS) for the
-required layer. `gh`, `gpg`, and `jq` enable the optional layers and
-produce notices when missing rather than failing.
-
-## Reporting verification problems
-
-If you hit a verification failure on a fresh download from an official
-release page, open an issue with:
-
-- the release tag (e.g. `v2.0.1`)
-- the failing layer (1 / 2 / 3 / 4)
-- the exact command output (truncate large logs)
-- whether you mirror-downloaded or pulled directly from GitHub
-
-False positives matter: a confirmed verification failure would be a
-serious supply-chain alert.
+The verifier reports when `gh` or GPG tooling is unavailable. For release
+engineering approval, run it with `gh` authenticated so provenance is actually
+verified.

@@ -29,7 +29,7 @@ interface ImageManifestValidationIssue {
 }
 
 // Production discovery is authoritative. Never fabricate downloadable images
-// when GitHub release metadata is unavailable; tests inject their own fixtures.
+// when signed release metadata is unavailable; tests inject their own fixtures.
 export const DEFAULT_ELIZAOS_IMAGES: ElizaOsImage[] = [];
 
 export const MOCK_REMOVABLE_DRIVES: RemovableDrive[] = [

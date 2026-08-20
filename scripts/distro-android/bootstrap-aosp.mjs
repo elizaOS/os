@@ -21,7 +21,17 @@ function fail(message) {
 }
 
 export function loadAospLock(filePath = aospLockPath) {
-  const lock = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  const document = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  const cuttlefishProfile = document?.profiles?.cuttlefish;
+  const lock = cuttlefishProfile
+    ? {
+        schemaVersion: document.schemaVersion,
+        manifestUrl: cuttlefishProfile.manifest?.url,
+        manifestRevision: cuttlefishProfile.manifest?.tag,
+        manifestTagObject: cuttlefishProfile.manifest?.tagObject,
+        manifestCommit: cuttlefishProfile.manifest?.commit,
+      }
+    : document;
   if (
     lock.schemaVersion !== 1 ||
     typeof lock.manifestUrl !== "string" ||

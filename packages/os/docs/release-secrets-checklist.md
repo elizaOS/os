@@ -10,6 +10,12 @@ Each channel has a dedicated maintainer playbook (credential generation → repo
 secret → sanity `workflow_dispatch` → rotation/revocation). This page is the
 map; the playbooks are the procedure.
 
+The operating-system release boundary uses the repository-specific checklist
+in [os-release-admin-checklist.md](./os-release-admin-checklist.md). Its
+Developer ID, App Store Connect, Authenticode, and APT credentials belong in
+`elizaOS/os`; application-store credentials described below belong in
+`elizaOS/eliza` unless a workflow explicitly states otherwise.
+
 | Channel | Playbook |
 | --- | --- |
 | Android (keystore + Play Store) | [release-secrets-android.md](./release-secrets-android.md) |
@@ -147,7 +153,7 @@ Workflow: `publish-apt-repo.yml`
 | Secret | Consumed by | Origin |
 | --- | --- | --- |
 | `DEBIAN_GPG_PRIVATE_KEY` | Armored GPG private key reprepro signs the `Release` file with | generate fresh (dedicated GPG key) |
-| `DEBIAN_GPG_KEY_ID` | 16-char hex key id passed to reprepro | re-enter from source (the generated key's id) |
+| `DEBIAN_GPG_KEY_ID` | Full primary-key fingerprint passed to reprepro and verified after import | re-enter from source (40 or 64 hex characters) |
 | `DEBIAN_GPG_PASSPHRASE` | Passphrase for the GPG key (optional) | re-enter from source (chosen at key creation; omit if none) |
 
 ## OTA release host (optional)

@@ -6,6 +6,7 @@ import { promises as fs } from "node:fs";
 import * as http from "node:http";
 import * as https from "node:https";
 import * as path from "node:path";
+import { Readable } from "node:stream";
 import { promisify } from "node:util";
 import {
   LsblkParseError,
@@ -13,7 +14,11 @@ import {
   UnmountFailedError,
   WriteIncompleteError,
 } from "./errors";
-import { fetchPublishedIsoImages } from "./release-discovery";
+import {
+  type RawImageTarget,
+  writeVerifiedRawImage,
+} from "./raw-image-pipeline";
+import { fetchReleaseImages } from "./release-manifest";
 import type {
   ElizaOsImage,
   InstallerStep,
@@ -54,6 +59,8 @@ interface LsblkDevice {
   type: string;
   rm: boolean | string;
   model: string | null;
+  serial?: string | null;
+  wwn?: string | null;
   tran: string | null;
   hotplug: boolean | string;
   mountpoint?: string | null;
@@ -278,11 +285,9 @@ function removableDriveFromLsblkDevice(
   if (description.length > 0) {
     entry.description = description.join("; ");
   }
+  const hardwareIdentity = device.wwn?.trim() || device.serial?.trim();
+  if (hardwareIdentity) entry.stableId = `linux:${hardwareIdentity}`;
   return entry;
-}
-
-async function fetchGitHubIsoImages(): Promise<ElizaOsImage[]> {
-  return fetchPublishedIsoImages();
 }
 
 async function downloadFile(
@@ -482,9 +487,144 @@ export interface LinuxBackendDeps {
   heartbeatStallMs?: number;
   /** Override current root/live disk detection for tests. */
   currentSystemDiskNames?: () => Promise<Set<string>>;
+  /** Override the canonical raw.zst streaming writer for boundary tests. */
+  writeCanonicalRawImage?: (
+    image: ElizaOsImage,
+    drive: RemovableDrive,
+    onProgress: (step: InstallerStepId, progress: number) => void,
+  ) => Promise<void>;
+}
+
+function childCompletion(process: ChildProcess, label: string): Promise<void> {
+  let stderr = "";
+  process.stderr?.on("data", (chunk: Buffer) => {
+    const remaining = 16_384 - stderr.length;
+    if (remaining > 0) stderr += chunk.toString().slice(0, remaining);
+  });
+  return new Promise((resolve, reject) => {
+    process.once("error", reject);
+    process.once("close", (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(
+          new Error(
+            `${label} exited with code ${code ?? "?"}: ${stderr.trim().slice(0, 16_384)}`,
+          ),
+        );
+      }
+    });
+  });
+}
+
+export async function writeCanonicalRawImageToLinuxDevice(
+  image: ElizaOsImage,
+  drive: RemovableDrive,
+  escalator: PrivilegeEscalator,
+  spawnFn: (command: string, args: readonly string[]) => ChildProcess,
+  execFileFn: (
+    command: string,
+    args: readonly string[],
+  ) => Promise<ExecFileResult>,
+  onProgress: (step: InstallerStepId, progress: number) => void,
+  rawWriter: typeof writeVerifiedRawImage = writeVerifiedRawImage,
+): Promise<void> {
+  if (escalator.command === "kdesu") {
+    throw new Error(
+      "Canonical raw.zst streaming requires pkexec, sudo, or doas; kdesu cannot safely preserve the binary stream.",
+    );
+  }
+
+  let writeCompletion: Promise<void> | undefined;
+  const target: RawImageTarget = {
+    stableId: drive.stableId ?? drive.devicePath,
+    capacityBytes: drive.sizeBytes,
+    openWriteStream() {
+      if (writeCompletion)
+        throw new Error("Raw image write stream was opened twice.");
+      const process = spawnFn(escalator.command, [
+        ...escalator.argsPrefix,
+        "dd",
+        `of=${drive.devicePath}`,
+        "bs=4M",
+        "status=none",
+        "conv=fsync",
+      ]);
+      if (!process.stdin) {
+        process.kill();
+        throw new Error("Privileged raw image writer did not expose stdin.");
+      }
+      process.stdin.once("close", () => {
+        if (!process.stdin?.writableFinished) process.kill();
+      });
+      writeCompletion = childCompletion(process, "privileged raw image write");
+      return process.stdin;
+    },
+    openReadbackStream(byteLength: number) {
+      const process = spawnFn(escalator.command, [
+        ...escalator.argsPrefix,
+        "dd",
+        `if=${drive.devicePath}`,
+        "bs=4M",
+        "iflag=count_bytes",
+        `count=${byteLength}`,
+        "status=none",
+      ]);
+      const stdout = process.stdout;
+      if (!stdout) {
+        process.kill();
+        throw new Error("Privileged raw image readback did not expose stdout.");
+      }
+      stdout.once("close", () => {
+        if (!stdout.readableEnded) process.kill();
+      });
+      const completion = childCompletion(
+        process,
+        "privileged raw image readback",
+      );
+      return Readable.from(
+        (async function* verifiedReadback() {
+          for await (const chunk of stdout) yield chunk;
+          await completion;
+        })(),
+      );
+    },
+    async sync() {
+      if (!writeCompletion) throw new Error("Raw image write never started.");
+      await writeCompletion;
+      await execFileFn(escalator.command, [
+        ...escalator.argsPrefix,
+        "sync",
+        drive.devicePath,
+      ]);
+    },
+  };
+
+  onProgress("resolve-image", 0);
+  onProgress("checksum", 0);
+  onProgress("write", 0);
+  onProgress("verify", 0);
+  await rawWriter(image, target, {
+    onProgress(phase, completed, total) {
+      const progress = total > 0 ? Math.min(completed / total, 1) : 0;
+      if (phase === "download") {
+        onProgress("resolve-image", progress);
+        if (progress === 1) onProgress("checksum", 1);
+      } else if (phase === "decompress-write") {
+        onProgress("write", progress);
+      } else {
+        onProgress("verify", progress);
+      }
+    },
+  });
+  onProgress("resolve-image", 1);
+  onProgress("checksum", 1);
+  onProgress("write", 1);
+  onProgress("verify", 1);
 }
 
 export class LinuxUsbInstallerBackend implements UsbInstallerBackend {
+  readonly canonicalRawZstdSupported = true;
   private readonly deps: LinuxBackendDeps;
 
   constructor(deps: LinuxBackendDeps = {}) {
@@ -502,7 +642,7 @@ export class LinuxUsbInstallerBackend implements UsbInstallerBackend {
     const { stdout } = await execFileFn("lsblk", [
       "--json",
       "--output",
-      "NAME,SIZE,TYPE,RM,MODEL,TRAN,HOTPLUG,MOUNTPOINTS",
+      "NAME,SIZE,TYPE,RM,MODEL,SERIAL,WWN,TRAN,HOTPLUG,MOUNTPOINTS",
       "--bytes",
     ]);
 
@@ -517,7 +657,7 @@ export class LinuxUsbInstallerBackend implements UsbInstallerBackend {
   }
 
   async listImages(): Promise<ElizaOsImage[]> {
-    return fetchGitHubIsoImages();
+    return fetchReleaseImages();
   }
 
   async createWritePlan(request: WriteRequest): Promise<WritePlan> {
@@ -575,9 +715,10 @@ export class LinuxUsbInstallerBackend implements UsbInstallerBackend {
     plan: WritePlan,
     onProgress: (step: InstallerStepId, progress: number) => void,
   ): Promise<void> {
-    assertWritePlanAllowed(plan);
+    assertWritePlanAllowed(plan, { canonicalRawZstdSupported: true });
 
     const { image, drive } = plan;
+    const isCanonicalRawImage = image.format === "raw.zst";
     const imagePath = path.join(INSTALLER_TMP_DIR, `${image.id}.iso`);
 
     const execFileFn =
@@ -596,45 +737,47 @@ export class LinuxUsbInstallerBackend implements UsbInstallerBackend {
     // unmounted state with no path to recover.
     const escalator = await findEscalatorFn();
 
-    // Step: resolve-image
-    onProgress("resolve-image", 0);
-    if (this.deps.resolveImage) {
-      await this.deps.resolveImage(image, imagePath, (pct) =>
-        onProgress("resolve-image", pct),
-      );
-    } else {
-      let needsDownload = false;
-      try {
-        await fs.access(imagePath);
-      } catch {
-        needsDownload = true;
-      }
+    if (!isCanonicalRawImage) {
+      // Legacy ISO path. Canonical raw.zst inputs are never materialized under
+      // an .iso name or passed to the unverified direct-dd path below.
+      onProgress("resolve-image", 0);
+      if (this.deps.resolveImage) {
+        await this.deps.resolveImage(image, imagePath, (pct) =>
+          onProgress("resolve-image", pct),
+        );
+      } else {
+        let needsDownload = false;
+        try {
+          await fs.access(imagePath);
+        } catch {
+          needsDownload = true;
+        }
 
-      if (needsDownload) {
-        await downloadFile(image.url, imagePath, (received, total) => {
-          const pct = total > 0 ? received / total : 0;
-          onProgress("resolve-image", pct);
-        });
-      }
-    }
-    onProgress("resolve-image", 1);
-
-    // Step: checksum
-    onProgress("checksum", 0);
-    if (this.deps.verifyChecksum) {
-      await this.deps.verifyChecksum(image, imagePath);
-    } else {
-      const ZEROED_CHECKSUM = "0".repeat(64);
-      if (image.checksumSha256 !== ZEROED_CHECKSUM) {
-        const actual = await sha256File(imagePath);
-        if (actual !== image.checksumSha256) {
-          throw new Error(
-            `Checksum mismatch: expected ${image.checksumSha256}, got ${actual}`,
-          );
+        if (needsDownload) {
+          await downloadFile(image.url, imagePath, (received, total) => {
+            const pct = total > 0 ? received / total : 0;
+            onProgress("resolve-image", pct);
+          });
         }
       }
+      onProgress("resolve-image", 1);
+
+      onProgress("checksum", 0);
+      if (this.deps.verifyChecksum) {
+        await this.deps.verifyChecksum(image, imagePath);
+      } else {
+        const ZEROED_CHECKSUM = "0".repeat(64);
+        if (image.checksumSha256 !== ZEROED_CHECKSUM) {
+          const actual = await sha256File(imagePath);
+          if (actual !== image.checksumSha256) {
+            throw new Error(
+              `Checksum mismatch: expected ${image.checksumSha256}, got ${actual}`,
+            );
+          }
+        }
+      }
+      onProgress("checksum", 1);
     }
-    onProgress("checksum", 1);
 
     // Unmount all mounted partitions of the target disk. A busy/failed
     // unmount must abort the write — dd into a mounted FS corrupts data.
@@ -677,6 +820,24 @@ export class LinuxUsbInstallerBackend implements UsbInstallerBackend {
           }
         }
       }
+    }
+
+    if (isCanonicalRawImage) {
+      const writer = this.deps.writeCanonicalRawImage;
+      if (writer) {
+        await writer(image, drive, onProgress);
+      } else {
+        await writeCanonicalRawImageToLinuxDevice(
+          image,
+          drive,
+          escalator,
+          spawnFn,
+          execFileFn,
+          onProgress,
+        );
+      }
+      onProgress("complete", 1);
+      return;
     }
 
     // Step: write using a privilege escalator + dd with progress

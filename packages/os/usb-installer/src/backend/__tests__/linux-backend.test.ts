@@ -92,7 +92,7 @@ describe("LinuxUsbInstallerBackend.listRemovableDrives", () => {
       ): Promise<ExecFileResult> => {
         expect(command).toBe("lsblk");
         expect(args).toContain(
-          "NAME,SIZE,TYPE,RM,MODEL,TRAN,HOTPLUG,MOUNTPOINTS",
+          "NAME,SIZE,TYPE,RM,MODEL,SERIAL,WWN,TRAN,HOTPLUG,MOUNTPOINTS",
         );
         return { stdout, stderr: "" };
       },
@@ -110,7 +110,7 @@ describe("LinuxUsbInstallerBackend.listRemovableDrives", () => {
       ): Promise<ExecFileResult> => {
         expect(command).toBe("lsblk");
         expect(args).toContain(
-          "NAME,SIZE,TYPE,RM,MODEL,TRAN,HOTPLUG,MOUNTPOINTS",
+          "NAME,SIZE,TYPE,RM,MODEL,SERIAL,WWN,TRAN,HOTPLUG,MOUNTPOINTS",
         );
         return { stdout, stderr: "" };
       },
@@ -197,6 +197,7 @@ describe("LinuxUsbInstallerBackend.listRemovableDrives", () => {
             type: "disk",
             rm: true,
             model: "Target USB",
+            serial: "USB-SERIAL-123",
             tran: "usb",
             hotplug: true,
             children: [
@@ -216,6 +217,7 @@ describe("LinuxUsbInstallerBackend.listRemovableDrives", () => {
     expect(drive).toMatchObject({
       id: "sdc",
       safety: "safe-removable",
+      stableId: "linux:USB-SERIAL-123",
     });
   });
 });

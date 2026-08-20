@@ -40,12 +40,19 @@ const requiredPrefixes = [
   "packages/os/linux/",
   "packages/os/toolchains/bun-riscv64/",
   ".github/workflows/elizaos-cuttlefish.yml",
-  ".github/workflows/build-linux-iso.yml",
   ".github/workflows/build-debian-package.yml",
 ];
 for (const prefix of requiredPrefixes) {
   if (!tracked.some((entry) => entry.startsWith(prefix))) {
     throw new Error(`Required OS ownership path is missing: ${prefix}`);
+  }
+}
+
+const requiredWorktreePaths = [".github/workflows/build-linux-mkosi.yml"];
+for (const entry of requiredWorktreePaths) {
+  const absolute = path.join(repositoryRoot, entry);
+  if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) {
+    throw new Error(`Required OS ownership path is missing: ${entry}`);
   }
 }
 

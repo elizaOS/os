@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Supports OS release manifests, checksums, and TEE evidence automation.
-import { readFile } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import path from "node:path";
 import {
   artifactPath,
@@ -34,23 +34,42 @@ if (!validation.ok) {
 const checksumRecords = parseChecksumFile(
   await readFile(checksumsPath, "utf8"),
 );
-const checksumByFilename = new Map(
-  checksumRecords.map((record) => [record.filename, record.sha256]),
-);
-
 const failures = [];
-let verified = 0;
-for (const artifact of manifest.artifacts) {
-  if (
-    artifact.kind === "checksum-manifest" ||
-    artifact.status === "withdrawn"
-  ) {
+const checksumByFilename = new Map();
+for (const record of checksumRecords) {
+  if (checksumByFilename.has(record.filename)) {
+    failures.push(`${record.filename}: duplicate checksum entry`);
     continue;
   }
+  checksumByFilename.set(record.filename, record.sha256);
+}
 
-  const expected = checksumByFilename.get(artifact.filename) || artifact.sha256;
-  if (!expected) {
-    failures.push(`${artifact.filename}: missing expected checksum`);
+const activeArtifacts = manifest.artifacts.filter(
+  (artifact) =>
+    artifact.kind !== "checksum-manifest" && artifact.status !== "withdrawn",
+);
+const activeFilenames = new Set(
+  activeArtifacts.map((artifact) => artifact.filename),
+);
+for (const filename of checksumByFilename.keys()) {
+  if (!activeFilenames.has(filename)) {
+    failures.push(
+      `${filename}: checksum entry is not declared by the manifest`,
+    );
+  }
+}
+
+let verified = 0;
+for (const artifact of activeArtifacts) {
+  const checksumDigest = checksumByFilename.get(artifact.filename);
+  if (!checksumDigest) {
+    failures.push(`${artifact.filename}: missing SHA256SUMS entry`);
+    continue;
+  }
+  if (artifact.sha256 && artifact.sha256 !== checksumDigest) {
+    failures.push(
+      `${artifact.filename}: manifest checksum disagrees with SHA256SUMS`,
+    );
     continue;
   }
 
@@ -59,11 +78,25 @@ for (const artifact of manifest.artifacts) {
     failures.push(`${artifact.filename}: file not found under ${artifactRoot}`);
     continue;
   }
+  const stats = await lstat(filePath);
+  if (!stats.isFile() || stats.isSymbolicLink()) {
+    failures.push(`${artifact.filename}: expected a regular non-symlink file`);
+    continue;
+  }
+  if (
+    Number.isInteger(artifact.sizeBytes) &&
+    artifact.sizeBytes !== stats.size
+  ) {
+    failures.push(
+      `${artifact.filename}: size mismatch expected=${artifact.sizeBytes} actual=${stats.size}`,
+    );
+    continue;
+  }
 
   const actual = await sha256File(filePath);
-  if (actual !== expected) {
+  if (actual !== checksumDigest) {
     failures.push(
-      `${artifact.filename}: checksum mismatch expected=${expected} actual=${actual}`,
+      `${artifact.filename}: checksum mismatch expected=${checksumDigest} actual=${actual}`,
     );
     continue;
   }

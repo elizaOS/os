@@ -1,303 +1,125 @@
-# elizaOS USB Installer Handoff
+# elizaOS USB installer — implementation and blocker ledger
 
-Last updated: 2026-05-20
+Updated: 2026-08-17
 
-## Current Branch
+This file records current repository evidence only. Historical branch names,
+pull requests, test counts, and paths from the former `elizaOS/eliza`
+implementation were removed because this repository is now the release boundary
+for OS images and installers.
 
-- Repository: `elizaOS/eliza`
-- Worktree used for the latest proof: `/home/nubs/Git/iqlabs/elizaos-usb-prod-e2e`
-- Branch: `nubs/messylinux-cloud-e2e-hardening`
-- Previous PR #7803: https://github.com/elizaOS/eliza/pull/7803 (merged)
-- Follow-up PR #7825: https://github.com/elizaOS/eliza/pull/7825
-- Latest rebased base for PR #7825: `origin/develop@51196656219dce9e8e6a13216c7c0e994bd40651`
-- Latest fetched `origin/develop`: `51196656219dce9e8e6a13216c7c0e994bd40651`
-- Latest locally validated code head: `6ab4cf964ba2d3b24addc2e21e6c10938ab467ab`
-  (final handoff-only amend may change the commit hash without changing code)
-- Latest local USB/cloud validation: 2026-05-20 05:47 UTC
+## Implemented locally
 
-## What This Package Is
+- localhost-only renderer/backend contract with expiring, server-owned write
+  plans and execute-time target re-enumeration;
+- Linux, macOS, and Windows removable-device classification with stable hardware
+  identity where the host exposes serial/WWN/unique device-tree identity;
+- canonical HTTPS `.raw.zst` release metadata for x86_64, arm64, and riscv64;
+- mandatory build-pinned Ed25519 release key, exact-byte signed-manifest
+  verification, signed artifact descriptors, expiry, bounds, and compressed and
+  expanded hashes;
+- monotonic sequence state per channel/architecture with atomic replacement and
+  a cross-process lock; missing configuration, corrupt state, mixed-sequence
+  manifests, and rollback fail closed;
+- a target-adapter-based streaming pipeline for bounded download, signature
+  verification, zstd decompression, write, sync, exact expanded-byte readback,
+  cancellation, and private temporary cleanup;
+- a Linux whole-device adapter that is enabled only after execute-time device
+  re-enumeration and unmount, streams expanded bytes through `pkexec`, `sudo`,
+  or `doas`, flushes the device, and performs an exactly bounded privileged
+  readback; the legacy direct-ISO path cannot receive a `.raw.zst` artifact;
+- tests use in-memory targets, ordinary temporary files, or an opt-in disposable
+  Linux `scsi_debug` device. Default tests never select a real disk.
 
-`usb-installer` is the desktop installer used to prepare a bootable
-elizaOS USB drive from the normal desktop app stack. It is an Electrobun/Vite
-microapp with a browser renderer and a local backend server. The renderer must
-never open raw disks directly; all drive enumeration and destructive writes stay
-behind the backend contract and future signed/elevated helpers.
+Canonical `.raw.zst` execution is enabled only when a backend advertises the
+streaming/readback capability. Linux is the sole enabled backend. macOS and
+Windows remain rejected by `write-safety.ts`; their existing platform writers
+were designed for uncompressed ISO bytes and must not receive a compressed
+mkosi artifact.
 
-## Current Verified State
+## Release runtime inputs
 
-- The package exists under `usb-installer`.
-- CI has wiring for lint/typecheck/test/build/package in:
-  - `.github/workflows/elizaos-os-release.yml`
-  - `.github/workflows/release-usb-installer.yml`
-- PR #7825 is prepared on the latest fetched `origin/develop` listed above.
-- GitHub checks must still be treated as source of truth for mergeability; the
-  last local pass below validates the USB installer and the root build path that
-  previously failed in CI.
-- USB installer work in this pass added:
-  - `src/backend/write-safety.ts` shared live-write guard;
-  - `WritePlan.planId` and `WriteRequest.expectedDrive`;
-  - localhost-only server origin handling;
-  - `127.0.0.1` backend binding;
-  - `ELIZAOS_USB_ENABLE_RAW_WRITE=1` live-write feature gate;
-  - server-side plan ID storage and execute-time plan reconstruction;
-  - UI target device-path confirmation;
-  - README rewrite to match reality.
-- Additional fake-media proof added on 2026-05-19:
-  - `src/__tests__/linux-fake-media-e2e.test.ts` creates a tiny fake ISO and a
-    fake USB target file under `/tmp`;
-  - calls the local HTTP handler `/plan` and `/execute` with the Linux backend;
-  - exercises the raw-write gate, server-owned `planId`, execute-time
-    revalidation, checksum validation, Linux backend write flow, real `dd`,
-    `sync`, SSE completion events, and final byte-for-byte/hash verification;
-  - never touches a real block device.
-- Additional Linux virtual block-device proof added on 2026-05-19:
-  - `src/__tests__/linux-virtual-block-device-e2e.test.ts` is opt-in through
-    `bun run --cwd usb-installer test:linux-virtual-usb`;
-  - requires Linux, passwordless `sudo -n`, and kernel `scsi_debug`;
-  - creates a disposable 64 MiB removable block device with model
-    `ELIZAUSBTEST` and refuses to run if `scsi_debug` is already loaded;
-  - exercises real `lsblk`, the local HTTP handler, server-owned `planId`,
-    execute-time revalidation, checksum validation, Linux backend write flow,
-    `sudo -n dd`, `sync`, SSE completion events, and readback SHA-256
-    verification from the virtual block device;
-  - unloads `scsi_debug` in cleanup.
-- Final local validation on PR head `d3eb80c11e` after the fake-media,
-  browser, virtual block-device, and latest-`develop` merge proofs:
-  - `bun install --frozen-lockfile` passed with no package/lockfile changes;
-  - `bun run --cwd plugins/plugin-local-inference build` passed through the
-    current `bun run build.ts` path;
-  - `bun run build:core` passed: 38 tasks successful, including
-    `@elizaos/plugin-local-inference`;
-  - `bun run --cwd usb-installer test` passed: 9 files, 76 tests,
-    with the opt-in virtual block-device test skipped by default;
-  - `bun run --cwd usb-installer typecheck` passed;
-  - `bun run --cwd usb-installer build` passed;
-  - `bun run --cwd usb-installer lint` passed across `src`,
-    `tests`, `server.ts`, and config files;
-  - `bun run --cwd usb-installer test:e2e` passed: 6 Playwright
-    tests covering desktop/mobile render and guarded wizard success flow;
-  - `bun run --cwd usb-installer test:linux-virtual-usb` passed
-    against `scsi_debug`: wrote with `sudo -n dd`, read back, SHA-256 matched,
-    and module cleanup was verified;
-  - `git diff --check` passed.
-- Follow-up local validation on 2026-05-19 after isolating package-wide cloud
-  test mocks that failed CI:
-  - `bun run verify:cloud` passed;
-  - `bun run test:cloud` passed: 266 tests across 28 files;
-  - `bun run --cwd usb-installer test` passed: 9 files, 76 tests,
-    with the opt-in virtual block-device test skipped by default;
-  - `bun run --cwd usb-installer typecheck` passed;
-  - `bun run --cwd usb-installer lint` passed;
-  - `bun run --cwd usb-installer build` passed;
-  - `bun run --cwd usb-installer test:e2e` passed: 6 Playwright
-    tests covering desktop/mobile render and guarded wizard success flow;
-  - `bun run --cwd usb-installer test:linux-virtual-usb` passed
-    against `scsi_debug`, and cleanup left `scsi_debug` unloaded;
-  - `git diff --check` passed.
-- Additional USB hardening added after the read-only audit:
-  - Linux drive enumeration now asks `lsblk` for `MOUNTPOINTS` and blocks
-    removable media mounted as `/`, `/boot`, `/boot/efi`,
-    `/run/live/medium`, `/run/live/persistence`, or `/live/medium`, preventing
-    a live-boot USB from overwriting itself;
-  - stored live-write `planId`s expire after five minutes by default
-    (`ELIZAOS_USB_PLAN_TTL_MS`);
-  - browser origins are now exact-match app/dev origins instead of any
-    localhost port, with `ELIZAOS_USB_ALLOWED_ORIGINS` for explicit additions;
-  - UI copy no longer claims Linux/Windows eject or readback behavior that the
-    current backends do not perform;
-  - OS release CI and the Linux release-packaging path now run Playwright E2E
-    and run the opt-in `scsi_debug` virtual block-device proof when the runner
-    kernel provides that module.
-- Follow-up USB hardening added on 2026-05-20 after the read-only audit:
-  - Linux drive enumeration now also reads `/proc/self/mountinfo` and resolves
-    `/dev/*` mount sources through sysfs block-device ancestry, so a current
-    root/live USB disk is blocked even when `lsblk` does not attach the system
-    mountpoint to the candidate disk tree;
-  - live-write plan expiry now has a deterministic clock hook for tests and
-    expires at the TTL boundary instead of only after it;
-  - backend step labels use `Finalize media` instead of overclaiming readback
-    verification on platforms that currently flush/eject/finalize only;
-  - completion copy is platform-specific, distinguishing macOS eject, Linux
-    flushed writes, and Windows finalized disk state;
-  - the Linux drive enumeration logic was split into smaller parse/transform
-    helpers after CodeFactor flagged the combined method complexity.
-- Additional cloud mock-stack E2E hardening added on 2026-05-20:
-  - fixed the cloud E2E repo-root resolution so the PGlite TCP bridge script
-    resolves from the repository root, not `packages/`;
-  - replaced the stale in-process control-plane mock with the real
-    `container-control-plane` sidecar and a guarded in-memory sandbox provider
-    that only activates under `NODE_ENV=test` or `CLOUD_E2E=1`;
-  - added a Node-hosted cloud-api Worker fetch adapter for the E2E harness so
-    CI exercises the generated router, real API routes, DB queue, and sidecar
-    forwarder without depending on Wrangler local runtime;
-  - fixed Node fetch forwarding for request bodies by setting `duplex: "half"`;
-  - added process-level DB pool cleanup before the fixture stops PGlite;
-  - moved best-effort per-agent API-key revocation out of the sandbox delete
-    transaction and made revocation a single delete-returning operation;
-  - updated provision/deprovision/stuck-cleanup specs to create real agents,
-    drive the real provisioning queue, and assert externally visible states.
-- Post-merge validation on 2026-05-20 after merging
-  `origin/develop@c73f1768b6`:
-  - `bun run verify:cloud` passed;
-  - `bun run test:cloud` passed: 266 tests across 28 files;
-  - `bun run --cwd usb-installer test` passed: 9 files, 80 tests,
-    with the opt-in virtual block-device test skipped by default;
-  - `bun run --cwd usb-installer typecheck` passed;
-  - `bun run --cwd usb-installer lint` passed;
-  - `bun run --cwd usb-installer build` passed;
-  - `bun run --cwd usb-installer test:e2e` passed: 6 Playwright
-    tests;
-  - `bun run --cwd usb-installer test:linux-virtual-usb` passed
-    with `scsi_debug` cleanup verified;
-  - `git diff --check` passed.
-- Final local validation on 2026-05-20 after the mock-stack E2E harness fix:
-  - `bun run --cwd packages/cloud/shared typecheck` passed;
-  - `bun run --cwd packages/cloud/api typecheck` passed;
-  - `bun run --cwd packages/cloud/api lint` passed;
-  - `bun test packages/cloud/api/webhooks/bluebubbles/route.test.ts` passed:
-    10 tests;
-  - `bun run --cwd packages/cloud/services/container-control-plane typecheck`
-    passed;
-  - `bun run --cwd packages/test/cloud-e2e typecheck` passed;
-  - `bun run --cwd packages/cloud/shared lint` passed;
-  - `bun run cloud:e2e` passed: 4 Playwright tests covering onboarding,
-    provision, deprovision, and stuck cleanup against PGlite, cloud-api,
-    cloud-frontend, the real control-plane sidecar, and the guarded memory
-    sandbox provider;
-  - `bun run --cwd packages/cloud/api test -- --runInBand` passed: 44 tests;
-  - `bun run --cwd usb-installer typecheck` passed;
-  - `bun run --cwd usb-installer test` passed: 9 files, 80 tests,
-    with the opt-in virtual block-device test skipped by default;
-  - `bun run --cwd usb-installer lint` passed;
-  - `bun run --cwd usb-installer build` passed;
-  - `bun run --cwd usb-installer test:e2e` passed: 6 Playwright
-    tests;
-  - `bun run --cwd usb-installer test:linux-virtual-usb` passed
-    against `scsi_debug`;
-  - `git diff --check` passed.
-- Follow-up local validation on 2026-05-20 after integrating the teardown-gap
-  fix and rebasing PR #7825 onto `origin/develop@f6f16699fc`:
-  - `bun run --cwd packages/cloud/shared typecheck` passed;
-  - `bun run --cwd packages/cloud/shared lint` passed;
-  - `bun run --cwd packages/cloud/api typecheck` passed;
-  - `bun run --cwd packages/test/cloud-e2e typecheck` passed;
-  - `bun run cloud:e2e` passed: 4 Playwright tests covering onboarding,
-    provision, deprovision, and stuck cleanup against PGlite, cloud-api,
-    cloud-frontend, the real control-plane sidecar, and the guarded memory
-    sandbox provider;
-  - `bun run test:cloud` passed: 279 tests across 30 files;
-  - `bun run --cwd usb-installer typecheck` passed;
-  - `bun run --cwd usb-installer test` passed: 9 files, 80 tests,
-    with the opt-in virtual block-device test skipped by default;
-  - `bun run --cwd usb-installer lint` passed;
-  - `bun run --cwd usb-installer build` passed;
-  - `bun run --cwd usb-installer test:e2e` passed: 6 Playwright
-    tests;
-  - `bun run --cwd usb-installer test:linux-virtual-usb` passed
-    against `scsi_debug`;
-  - `git diff --check` passed.
-- Follow-up local USB validation on 2026-05-20 after mountinfo/sysfs root-disk
-  hardening, honest finalize/eject copy, and the CodeFactor complexity refactor:
-  - `bun run --cwd usb-installer typecheck` passed;
-  - `bun run --cwd usb-installer test` passed: 9 files passed, 1
-    skipped, 81 tests passed, 1 skipped;
-  - `bun run --cwd usb-installer lint` passed;
-  - `bun run --cwd usb-installer build` passed;
-  - `bun run --cwd usb-installer test:e2e` passed: 6 Playwright
-    tests;
-  - `bun run --cwd usb-installer test:linux-virtual-usb` passed
-    against `scsi_debug`;
-  - `git diff --check` passed.
-- Follow-up local cloud validation on 2026-05-20 after rebasing onto
-  `origin/develop@5119665621`:
-  - `bun install --frozen-lockfile` passed;
-  - `bun run --cwd packages/cloud/shared typecheck` passed;
-  - `bun run --cwd packages/cloud/shared lint` passed;
-  - `bun run --cwd packages/cloud/api typecheck` passed;
-  - `bun run --cwd packages/test/cloud-e2e typecheck` passed;
-  - `bun run test:cloud` passed: 279 tests across 30 files;
-  - `bun run cloud:e2e` passed: 4 Playwright tests covering onboarding,
-    provision, deprovision, and stuck cleanup.
-- Disk cleanup on 2026-05-19:
-  - removed ignored/generated stale ISO artifacts and root `dist/`;
-  - removed inactive `/tmp/eliza-pr7803` temp checkout after confirming no
-    process referenced it;
-  - did not remove chroots, apt caches, worktrees, node modules inside the repo,
-    or anything needed for future builds.
+Production packaging/runtime must provide:
 
-## Important Corrections From The Session
+- `ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64` — public Ed25519 SPKI key;
+- `ELIZAOS_RELEASE_SEQUENCE_STATE_PATH` — absolute writable state-file path for
+  source/server execution or a managed packaged-app override; standalone
+  packaged apps provision a per-user Application Support/state path;
+- `ELIZAOS_RELEASE_MANIFEST_URL` — optional override of the official HTTPS
+  manifest URL;
+- `ELIZAOS_RELEASE_MANIFEST_SIGNATURE_URL` — optional distinct HTTPS detached
+  signature URL; otherwise `<manifest URL>.sig` is used.
 
-The old mental model "USB installer is dry-run only" is stale. The package has
-platform backend files for Linux, macOS, and Windows:
+`build:app` and every `package:*` command run `verify:release-key`. The build
+embeds the public key in the Bun bundle, and that compiled pin wins over a
+runtime environment override. No private key or development trust root belongs
+in this repository.
 
-- `src/backend/linux-backend.ts`
-- `src/backend/macos-backend.ts`
-- `src/backend/windows-backend.ts`
+The first missing sequence-state file is initialized from a verified manifest.
+Deleting or replacing that user-writable file can erase rollback history; the
+production installer must place and protect it with the platform's privileged
+helper or another monotonic/attested store. A leftover `.lock` directory after
+an unclean crash fails closed and currently requires an explicit recovery flow.
 
-However, the README and tests still mostly describe/test the dry-run backend,
-so the package needs hardening before we call it production-ready.
+## Issues required before physical USB release
 
-## USB Installer Goals
+1. Move the Linux `RawImageTarget` adapter behind a narrowly authorized signed
+   privileged helper and qualify its current `pkexec`/`sudo`/`doas` transport.
+   Preserve execute-time serial/WWN, size, removable-status, current-boot
+   ancestry, whole-device, flush, sync, and exactly bounded readback checks.
+2. Keep the packaged Bun runtime at the configured 1.3.14 and run
+   `test:packaged-runtime:macos -- <artifact>` for every macOS artifact. The
+   smoke extracts only to a private temp directory and reruns Ed25519, zstd,
+   mock-target readback, cancellation, and rollback-state tests under the exact
+   embedded runtime. Add equivalent Linux and Windows artifact smokes.
+3. Add macOS and Windows signed/elevated target adapters with the same stable-ID,
+   flush, cancellation, and readback guarantees. Do not reuse the legacy ISO
+   command paths for canonical releases.
+4. Define partial-write recovery: cancellation, helper crash, unplug, I/O error,
+   full device, corrupt flash, sleep, and power loss must never report success;
+   the UI must identify the incomplete device and offer a safe retry/restore.
+5. Run the Linux virtual-block test against the canonical zstd pipeline, then
+   run sacrificial physical-media tests on Intel/AMD Linux, Apple Silicon macOS,
+   Intel macOS where supported, and Windows.
+6. Verify expanded-byte readback, GPT primary/backup headers, UEFI boot, first
+   persistent expansion, recovery boot, and internal installer launch for every
+   published architecture/board claim.
+7. Add equivalent packaged launch smokes on Linux and Windows. The macOS app now
+   starts its loopback backend, serves the renderer and API on one origin, and
+   provisions an explicit per-user rollback-state path; CI still needs restart
+   and non-loopback exposure assertions on every packaged platform.
 
-- One app that a normal user can use to flash elizaOS to a USB stick.
-- Keep destructive writes out of the renderer.
-- Re-detect the target drive server-side immediately before writing.
-- Require explicit data-loss acknowledgement and block internal/system disks.
-- Verify release metadata and SHA-256 before writing.
-- Refuse live writes when the image checksum is missing or a placeholder.
-- Use standard platform mechanisms:
-  - Linux: `lsblk`, unmount mounted partitions, `pkexec`/`sudo`/`doas` + `dd`.
-  - macOS: `diskutil`, `/dev/rdiskN`, `osascript` administrator prompt.
-  - Windows: PowerShell/Get-Disk, UAC elevation, raw `\\.\PhysicalDriveN`
-    write path.
-- Bind any local backend only to localhost and reject untrusted browser origins.
-- Treat physical USB flashing and platform-specific write helpers as destructive
-  operations that require explicit manual/VM/hardware proof.
-
-## Known Gaps To Close
-
-- Physical USB proof is still separate. Do not call this hardware-proven until
-  a final ISO has been written to removable media and booted.
-- The Linux fake-media E2E proves the guarded server/backend write path safely,
-  but it is not a replacement for a physical USB flash/boot test.
-- The Linux virtual block-device E2E proves the same path against a real kernel
-  block device, but it is still not a replacement for physical USB flash/boot
-  validation with a final ISO.
-- `HttpUsbInstallerBackend.executeWritePlan` now handles fragmented SSE chunks,
-  but cancel/abort support is still missing.
-- macOS and Windows live-write helpers are still prototype-grade compared with
-  a signed helper architecture.
-- GitHub release scraping still synthesizes placeholder checksums. Live writes
-  now reject those placeholders; production needs an official signed manifest.
-- Tests still need broader UI component coverage and platform write-sequence
-  coverage for macOS/Windows mocked subprocesses.
-- macOS and Windows need broader mocked subprocess write-sequence tests before
-  being called production-proven on those platforms.
-- Keep visual branding white/blue and use official shared elizaOS logo assets.
-  Avoid orange/black-heavy shell styling.
-
-## Useful Commands
-
-From repo root:
+## Evidence commands
 
 ```bash
-bun run --cwd usb-installer test
-bun run --cwd usb-installer typecheck
-bun run --cwd usb-installer build
-bun run --cwd usb-installer lint
-bun run --cwd usb-installer test:e2e
-bun run --cwd usb-installer test:linux-virtual-usb
+bun run --cwd packages/os/usb-installer typecheck
+bun run --cwd packages/os/usb-installer lint:check
+bun run --cwd packages/os/usb-installer test
+bun run --cwd packages/os/usb-installer build
+bun run --cwd packages/os/usb-installer test:e2e
+bun run --cwd packages/os/usb-installer test:linux-virtual-usb
+bun run --cwd packages/os/usb-installer test:packaged-runtime:macos -- <artifact>
 ```
 
-Run the dev app locally:
+`test:linux-virtual-usb` is Linux-only, requires passwordless `sudo -n` and
+`scsi_debug`, and is not a substitute for physical boot evidence.
 
-```bash
-bun run --cwd usb-installer start
-```
+## macOS packaged-runtime evidence (2026-08-18)
 
-## Safety Rule
-
-Do not claim physical USB readiness from code review alone. "Code-ready" means
-tests/build/docs pass and the safety model is sound. "USB-proven" means a final
-ISO was written to a real removable drive and boot-tested, or each platform was
-tested in the appropriate VM/hardware environment.
+- Electrobun selected and embedded the configured Bun 1.3.14 runtime in a fresh
+  stable arm64 `.app.tar.zst`; `zstd -t` passed.
+- `test:packaged-runtime:macos` passed under that exact runtime, covering the
+  signed release boundary, streaming zstd, bounded in-memory write/readback,
+  cancellation, cleanup, monotonic sequence state, packaged static/API routing,
+  and per-user runtime-state configuration: 31 tests passed.
+- The full Vitest suite passed: 13 files passed, 2 skipped; 116 tests passed, 2
+  skipped. Typecheck, formatting, and Vite build also passed.
+- Node-hosted Playwright driving the Vite server launched by the packaged Bun
+  passed all 6 desktop/mobile tests. Playwright itself is intentionally not run
+  under Bun: that unsupported runner arrangement stalled browser teardown even
+  when the application had reached its successful completion screen.
+- The corrected packaged app launched visibly on macOS, served its renderer from
+  `127.0.0.1`, and enumerated seven internal Mac disks with every one classified
+  `blocked-system`. The smoke supplied a temporary explicit rollback-state path
+  and never enabled raw writes or selected a device.
+- The unsigned diagnostic artifact used an ephemeral public key and was moved
+  out of the repository after testing; it is not a production release input.

@@ -37,7 +37,7 @@ on:
 
 # Default to least privilege. Override per-job where needed.
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   publish-manifest:
@@ -50,14 +50,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
+          gh release view "${{ inputs.tag }}" >/dev/null
           mkdir -p /tmp/aosp
           gh release download "${{ inputs.tag }}" \
             --pattern "elizaos-*-android-*.zip" \
-            --dir /tmp/aosp/ 2>/dev/null || echo "::warning::No AOSP image artifacts found in this release"
-          ls -la /tmp/aosp/ || true
+            --dir /tmp/aosp/
+          if ! find /tmp/aosp -maxdepth 1 -type f -name "elizaos-*-android-*.zip" -size +0c -print -quit | grep -q .; then
+            echo "::error::release ${{ inputs.tag }} contains no nonempty AOSP image artifacts"
+            exit 1
+          fi
 
       - name: Generate AOSP update manifest
         run: |
+          set -euo pipefail
           VERSION="${{ inputs.version }}"
           CHANNEL="${{ inputs.channel }}"
           TAG="${{ inputs.tag }}"
@@ -108,12 +114,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           TAG="${{ inputs.tag }}"
           CHANNEL="${{ inputs.channel }}"
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            echo "::warning::No GitHub release for $TAG — skipping"
-            exit 0
-          fi
+          gh release view "$TAG" >/dev/null
           cp /tmp/aosp-update-manifest.json "aosp-update-manifest-${CHANNEL}.json"
           gh release upload "$TAG" "aosp-update-manifest-${CHANNEL}.json" --clobber
           echo "Uploaded aosp-update-manifest-${CHANNEL}.json"

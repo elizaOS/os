@@ -66,7 +66,7 @@ test("download manifest failure falls back to explicit unavailable state", async
 
   const downloads = page.locator("#download");
   await expect(downloads).toBeVisible();
-  await expect(downloads.getByText("ElizaOS beta")).toBeVisible();
+  await expect(downloads.getByText("elizaOS beta")).toBeVisible();
   await expect(
     downloads.getByText("Downloads are temporarily unavailable."),
   ).toBeVisible();
@@ -74,6 +74,6 @@ test("download manifest failure falls back to explicit unavailable state", async
     0,
   );
   await expect(downloads.getByText("Unavailable", { exact: true })).toHaveCount(
-    4,
+    10,
   );
 });

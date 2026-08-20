@@ -4,6 +4,9 @@
 self-hosted-runner:
   labels:
     - kvm
+    - riscv64
+    - elizaos-release-build
+    - elizaos-release-signing
 
 paths:
   .github/workflows/*.yml:

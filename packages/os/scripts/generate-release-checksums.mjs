@@ -42,6 +42,9 @@ for (const artifact of manifest.artifacts) {
   }
   records.push(await artifactFileRecord(artifactRoot, artifact));
 }
+records.sort((left, right) =>
+  left.filename < right.filename ? -1 : left.filename > right.filename ? 1 : 0,
+);
 
 await mkdir(path.dirname(outputPath), { recursive: true });
 await writeFile(
@@ -49,7 +52,6 @@ await writeFile(
   [
     `# ElizaOS OS release checksums`,
     `# manifest: ${path.relative(repoRoot, manifestPath)}`,
-    `# generated: ${new Date().toISOString()}`,
     ...records.map(formatCheckEntry),
     "",
   ].join("\n"),
