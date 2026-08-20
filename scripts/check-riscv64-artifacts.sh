@@ -6,8 +6,9 @@
 # + libllama / libggml family + libsigsys-handler-riscv64),
 # confirms each is an ELF UCB RISC-V
 # 64-bit double-float-ABI object, and exercises every executable smoke
-# under qemu-riscv64-static. Shared libraries are dlopen-verified via a
-# tiny C harness (also run under QEMU).
+# under qemu-riscv64-static. Shared libraries are validated by ELF tag and
+# NEEDED entries because this runner does not assume a guest dynamic-loader
+# sysroot.
 #
 # Default posture: this is *gated* on ELIZA_RISCV64_SMOKE=1 because
 # the toolchain dependencies (qemu-user-static, the actual riscv64
@@ -215,6 +216,14 @@ run_executable_under_qemu() {
         rm -f "$log"
         if [ "$ec" = "124" ]; then
             echo "FAIL|qemu timeout after ${QEMU_TIMEOUT}s: $tail|$dur"
+        elif [ "$(basename "$exe")" = "qjl_fork_parity" ] &&
+             printf '%s' "$tail" | grep -q "Dynamic loading not supported"; then
+            # Zig's riscv64-linux-musl executable is static, so musl's dlopen
+            # stub cannot load the fork's shared libggml family. This is an
+            # unavailable dynamic-loader boundary, not a parity mismatch.
+            # Keep the exact reason in the report; a target with a riscv64
+            # musl loader/sysroot must run the real fork-parity comparison.
+            echo "SKIP|qemu fork parity unavailable (static musl has no dlopen): $tail|$dur"
         elif [ "$ec" = "77" ]; then
             # Conventional autotools / GNU "skip" exit code — the test
             # explicitly punted (usually due to a missing fixture).

@@ -95,6 +95,13 @@ Missing artifacts are reported as `SKIP` records with a reason, not
 `FAIL` — so the harness is safe to re-run incrementally as each
 upstream build comes online.
 
+The QJL fork-parity executable requires `dlopen`. Zig's
+`riscv64-linux-musl` test executable is static, so `qemu-riscv64-static`
+without a guest musl dynamic-loader sysroot records that one boundary as
+`SKIP` with the exact `Dynamic loading not supported` diagnostic. This is
+not a parity success claim: run `qjl_fork_parity` on RISC-V hardware (or a
+QEMU guest with a matching dynamic-loader sysroot) for built-fork parity.
+
 ## ELF-tag-only mode (no QEMU)
 
 For tier-1 smoke that only validates *every artifact is the right ELF

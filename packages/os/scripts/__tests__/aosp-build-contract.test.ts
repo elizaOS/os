@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -402,7 +402,101 @@ describe("AOSP build contracts", () => {
     expect(checker).toContain(
       'LD_LIBRARY_PATH="$(dirname "$fork_ggml")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"',
     );
+    expect(checker).toContain(
+      '"$(basename "$exe")" = "qjl_fork_parity"',
+    );
+    expect(checker).toContain("Dynamic loading not supported");
+    expect(checker).toContain(
+      "qemu fork parity unavailable (static musl has no dlopen)",
+    );
   });
+
+  test("riscv64 QJL reports the static-musl dlopen boundary as unavailable", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eliza-riscv64-qjl-"));
+    try {
+      const elizaRoot = join(root, "eliza");
+      const qjlBuild = join(
+        elizaRoot,
+        "packages/native/plugins/qjl-cpu/build/riscv64",
+      );
+      const llamaBuild = join(elizaRoot, "build/riscv64-stage/riscv64");
+      const fakeBin = join(root, "bin");
+      const report = join(root, "report.json");
+      await Promise.all([
+        mkdir(qjlBuild, { recursive: true }),
+        mkdir(llamaBuild, { recursive: true }),
+        mkdir(fakeBin, { recursive: true }),
+      ]);
+
+      const parity = join(qjlBuild, "qjl_fork_parity");
+      const forkLibrary = join(llamaBuild, "libggml-cpu.so");
+      const fakeFile = join(fakeBin, "file");
+      const fakeQemu = join(fakeBin, "qemu-riscv64-static");
+      const fakeTimeout = join(fakeBin, "timeout");
+      const fakeDate = join(fakeBin, "date");
+      await Promise.all([
+        writeFile(parity, "fake riscv64 executable\n"),
+        writeFile(forkLibrary, "fake riscv64 shared library\n"),
+        writeFile(
+          fakeFile,
+          '#!/bin/sh\necho "ELF 64-bit LSB executable, UCB RISC-V, double-float ABI"\n',
+        ),
+        writeFile(
+          fakeQemu,
+          '#!/bin/sh\necho "dlopen $2: Dynamic loading not supported" >&2\nexit 1\n',
+        ),
+        writeFile(fakeTimeout, '#!/bin/sh\nshift\nexec "$@"\n'),
+        writeFile(
+          fakeDate,
+          '#!/bin/sh\nif [ "$1" = "+%s%3N" ]; then echo 1000; else exec /bin/date "$@"; fi\n',
+        ),
+      ]);
+      await Promise.all(
+        [parity, fakeFile, fakeQemu, fakeTimeout, fakeDate].map((path) =>
+          chmod(path, 0o755),
+        ),
+      );
+
+      const process = Bun.spawn(
+        [
+          "bash",
+          join(repositoryRoot, "scripts/check-riscv64-artifacts.sh"),
+          "--out",
+          report,
+        ],
+        {
+          cwd: repositoryRoot,
+          env: {
+            ...Bun.env,
+            ELIZAOS_ELIZA_ROOT: elizaRoot,
+            ELIZA_RISCV64_SMOKE: "1",
+            HOME: root,
+            PATH: `${fakeBin}:${Bun.env.PATH ?? ""}`,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      const [exitCode, stdout, stderr] = await Promise.all([
+        process.exited,
+        new Response(process.stdout).text(),
+        new Response(process.stderr).text(),
+      ]);
+      expect(`${stdout}\n${stderr}`).toContain("static musl has no dlopen");
+      expect(exitCode).toBe(0);
+
+      const parsed = JSON.parse(await Bun.file(report).text());
+      const parityResult = parsed.artifacts.find(
+        (artifact: { path: string }) => artifact.path === parity,
+      );
+      expect(parityResult?.status).toBe("SKIP");
+      expect(parityResult?.detail).toContain("Dynamic loading not supported");
+      expect(parsed.summary.fail).toBe(0);
+      expect(parsed.final_status).toBe("PASS");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
 
   test("source-only AOSP builds do not require KVM", () => {
     if (process.platform !== "linux" || process.arch !== "x64") return;
