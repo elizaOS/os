@@ -47,12 +47,18 @@ case "$*" in
   *"getprop ro.boot.slot_suffix"*) echo '_a' ;;
   *"getprop sys.boot_completed"*) echo 1 ;;
   *"pm path ai.elizaos.app"*) echo 'package:/system/priv-app/Eliza/Eliza.apk' ;;
-  *"cmd role holders android.app.role.HOME"*) echo 'ai.elizaos.app' ;;
+  *"cmd role get-role-holders android.app.role.HOME"*) echo 'ai.elizaos.app' ;;
   *"cmd package resolve-activity"*) echo 'ai.elizaos.app/.MainActivity' ;;
   *"dumpsys package ai.elizaos.app"*) echo 'Package [ai.elizaos.app]' ;;
   *"dumpsys activity activities"*) echo 'mResumedActivity: ai.elizaos.app/.MainActivity' ;;
   *"pidof ai.elizaos.app"*) echo 31337 ;;
-  *"curl -fsS http://127.0.0.1:31337/api/health"*) echo '{"status":"ready","agentId":"fixture"}' ;;
+  *"toybox nc -w 5 127.0.0.1 31337"*)
+    if [[ "${FAKE_AGENT_HEALTH_STATUS:-200}" == 200 ]]; then
+      printf 'HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n{"status":"ready","agentId":"fixture"}\n'
+    else
+      printf 'HTTP/1.0 %s Unavailable\r\nContent-Type: application/json\r\n\r\n{"status":"unhealthy"}\n' "$FAKE_AGENT_HEALTH_STATUS"
+    fi
+    ;;
   *"logcat -d"*) echo 'logcat clean' ;;
   *"settings get global adb_enabled"*) echo 1 ;;
   *) echo "fake adb $*" ;;
@@ -121,7 +127,31 @@ VALIDATE_EXEC_OUT="$TMP_DIR/validate-exec.out"
   --execute \
   >"$VALIDATE_EXEC_OUT"
 assert_contains "$VALIDATE_EXEC_OUT" "+ adb -s TEST123 get-state"
+assert_contains "$VALIDATE_EXEC_OUT" "cmd role get-role-holders android.app.role.HOME"
+assert_contains "$VALIDATE_EXEC_OUT" "toybox nc -w 5 127.0.0.1 31337"
+if grep -Fq "shell curl" "$VALIDATE_EXEC_OUT"; then
+  fail "post-flash validator still depends on an on-device curl binary"
+fi
 pass "post-flash validator execute path works with fake adb"
+
+UNHEALTHY_OUT="$TMP_DIR/validate-unhealthy.out"
+if FAKE_AGENT_HEALTH_STATUS=503 "$ROOT/scripts/validate-post-flash.sh" \
+  --device TEST123 \
+  --manifest "$ROOT/manifests/android-release-manifest.example.json" \
+  --execute >"$UNHEALTHY_OUT" 2>&1; then
+  fail "post-flash validator accepted a non-200 agent health response"
+fi
+assert_contains "$UNHEALTHY_OUT" "agent health probe did not return HTTP 200"
+pass "post-flash validator rejects unhealthy HTTP status"
+
+UNSAFE_HEALTH_OUT="$TMP_DIR/validate-unsafe-health-url.out"
+if "$ROOT/scripts/validate-post-flash.sh" \
+  --agent-health-url https://example.com/api/health \
+  >"$UNSAFE_HEALTH_OUT" 2>&1; then
+  fail "post-flash validator accepted a non-local agent health URL"
+fi
+assert_contains "$UNSAFE_HEALTH_OUT" "must be an explicit http://127.0.0.1:PORT/PATH endpoint"
+pass "post-flash validator rejects non-local health endpoints"
 
 MANIFEST_OUT="$TMP_DIR/manifest.out"
 node "$ROOT/scripts/validate-release-manifest.mjs" \
@@ -161,7 +191,7 @@ if node "$ROOT/scripts/validate-release-manifest.mjs" \
   "$INCOMPLETE_EVIDENCE_MANIFEST" >"$INCOMPLETE_EVIDENCE_OUT" 2>&1; then
   fail "manifest validator accepted incomplete runtime/rollback evidence"
 fi
-assert_contains "$INCOMPLETE_EVIDENCE_OUT" 'must include "cmd role holders"'
+assert_contains "$INCOMPLETE_EVIDENCE_OUT" 'must include "cmd role get-role-holders"'
 assert_contains "$INCOMPLETE_EVIDENCE_OUT" "must start with elizaOS/eliza_tegu_phone/tegu:"
 assert_contains "$INCOMPLETE_EVIDENCE_OUT" "must identify a retained known-good release"
 pass "manifest validator enforces runtime and rollback evidence contracts"
