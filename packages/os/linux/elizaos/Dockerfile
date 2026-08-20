@@ -1,9 +1,8 @@
 # elizaOS Linux — unified multi-arch live-build builder image.
 #
 # One image, three target architectures (amd64, arm64, riscv64). The
-# host arch must match ELIZAOS_ARCH or qemu-user-static must be
-# registered via binfmt_misc on the build host (foreign-arch builds
-# need CONFIG_BINFMT_MISC and `update-binfmts --enable`).
+# host arch must match ELIZAOS_ARCH or qemu-user must be registered via
+# binfmt_misc by the privileged build container.
 #
 # Build:
 #   docker build -t elizaos-linux-builder .
@@ -56,10 +55,12 @@ RUN test -n "${DEBIAN_SNAPSHOT_SERIAL}" \
         dosfstools \
         mkosi \
         qemu-user-static \
+        qemu-user-binfmt \
         qemu-system-arm \
         qemu-system-misc \
         qemu-efi-aarch64 \
         qemu-efi-riscv64 \
+        ipxe-qemu \
         ovmf \
         binfmt-support \
         python3 \
@@ -76,10 +77,6 @@ RUN test -n "${DEBIAN_SNAPSHOT_SERIAL}" \
         echo "grub-efi-arm64-bin unavailable for this builder architecture; skipping"; \
     fi \
     && rm -rf /var/lib/apt/lists/*
-
-# Enable foreign-arch execution inside the container.
-RUN update-binfmts --enable qemu-aarch64 || true \
- && update-binfmts --enable qemu-riscv64 || true
 
 WORKDIR /build
 ENTRYPOINT ["bash", "/build/build.sh"]

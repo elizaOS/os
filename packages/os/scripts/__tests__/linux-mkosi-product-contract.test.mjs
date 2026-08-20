@@ -36,10 +36,13 @@ test("canonical Linux documentation declares the mkosi persistent workstation", 
   );
 });
 
-test("local mkosi front door builds a pinned tool container", async () => {
-  const [makefile, dockerfile, snapshot] = await Promise.all([
+test("local mkosi front door builds a pinned multiarch tool container", async () => {
+  const [makefile, dockerfile, binfmt, riscvFinalize, qemuQualify, snapshot] = await Promise.all([
     read("packages/os/linux/elizaos/Makefile"),
     read("packages/os/linux/elizaos/Dockerfile"),
+    read("packages/os/linux/elizaos/scripts/ensure-foreign-binfmt.sh"),
+    read("packages/os/linux/elizaos/mkosi/mkosi.finalize.chroot"),
+    read("packages/os/linux/elizaos/scripts/mkosi-qemu-qualify.py"),
     read("packages/os/linux/elizaos/debian-snapshot.lock.json").then(JSON.parse),
   ]);
 
@@ -48,6 +51,19 @@ test("local mkosi front door builds a pinned tool container", async () => {
   assert.match(makefile, /^builder:\n\tdocker build --pull/m);
   assert.match(makefile, /DEBIAN_SNAPSHOT_SERIAL=\$\(DEBIAN_SNAPSHOT_SERIAL\)/);
   assert.match(makefile, /DEBIAN_BASE_IMAGE=\$\(DEBIAN_BASE_IMAGE\)/);
+  assert.match(dockerfile, /^        qemu-user-binfmt \\/m);
+  assert.match(dockerfile, /^        ipxe-qemu \\/m);
+  assert.match(makefile, /ELIZAOS_ARCH=\$\(ARCH\) \/work\/src\/elizaos\/scripts\/ensure-foreign-binfmt\.sh/);
+  assert.match(binfmt, /\/usr\/lib\/binfmt\.d\/\$handler\.conf/);
+  assert.match(binfmt, />\/proc\/sys\/fs\/binfmt_misc\/register/);
+  assert.match(binfmt, /failed to enable \$handler/);
+  assert.match(riscvFinalize, /ARCHITECTURE:-.*riscv64/);
+  assert.match(riscvFinalize, /grub-mkstandalone/);
+  assert.match(riscvFinalize, /BOOTRISCV64\.EFI/);
+  assert.match(riscvFinalize, /root=LABEL=elizaos-system/);
+  assert.match(riscvFinalize, /kernel-modules\.initrd/);
+  assert.match(qemuQualify, /You are in emergency mode/);
+  assert.match(qemuQualify, /Failed to start initrd-switch-root\.service/);
   assert.match(snapshot.baseImage, /^debian:trixie@sha256:[a-f0-9]{64}$/);
   assert.match(snapshot.serial, /^[0-9]{8}T[0-9]{6}Z$/);
 });

@@ -157,6 +157,7 @@ mkosi-build: builder check-arch
 	            rsync -a /src/ /work/src/ \
 	                --exclude .build --exclude .build.lock --exclude cache \
 	                --exclude chroot --exclude binary --exclude out && \
+	            ELIZAOS_ARCH=$(ARCH) /work/src/elizaos/scripts/ensure-foreign-binfmt.sh && \
 	            cd /work/src/elizaos/mkosi && \
 	            mkosi --force \
 	                --architecture $(MKOSI_ARCH) \
