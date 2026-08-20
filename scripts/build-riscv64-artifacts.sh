@@ -11,8 +11,9 @@
 # harness). Unset = skip all builds.
 #
 # Tooling requirements (caller's job to install):
-#   - zig 0.14+        (Zig toolchain; provides riscv64-linux-musl — every
-#                       cross-build here is zig/musl, so no Android NDK is needed)
+#   - zig 0.13.0       (known-good shared-link toolchain; provides
+#                       riscv64-linux-musl — every cross-build here is
+#                       zig/musl, so no Android NDK is needed)
 #   - cmake 3.21+      (drives every package's cross-build)
 #   - node 20+         (drives compile-libllama.mjs)
 #
@@ -61,8 +62,10 @@ if [ -z "$ZIG_BIN" ]; then
     cat >&2 <<'EOF'
 [build-riscv64-artifacts] zig not on PATH.
 
-Install Zig 0.14+ from https://ziglang.org/download/ — every cross-build in
-this harness drives `zig cc --target=riscv64-linux-musl` directly.
+Install pinned Zig 0.13.0 from https://ziglang.org/download/ — every cross-build
+in this harness drives `zig cc --target=riscv64-linux-musl` directly. Zig
+0.14.x is not eligible here because its riscv64 compiler_rt archive is non-PIC
+and cannot link the required libggml shared objects.
 
 EOF
     exit 2
@@ -165,9 +168,12 @@ build_native_plugin() {
 # vsetvli loops; a named core like sifive_x280 advertises VLEN=512
 # via zvl512b and produces code that silently truncates at smaller
 # VLEN (qemu-user reports VLEN=128, the RVV-spec minimum).
-QJL_RVV=""; POLAR_RVV=""; TBQ_RVV=""
+# Zig's clang driver treats GCC-style `-march=rv64gcv1p0` as a CPU model and
+# rejects it. Use Zig's supported generic RV64 feature form for QJL on every
+# maintained version; it enables RVV without baking in a fixed VLEN.
+QJL_RVV="-DQJL_RVV_COMPILE_OPTIONS=-mcpu=generic_rv64+v+m+a+f+d+c"
+POLAR_RVV=""; TBQ_RVV=""
 if [ "$ZIG_MAJOR_MINOR" = "0.13" ]; then
-    QJL_RVV="-DQJL_RVV_COMPILE_OPTIONS=-mcpu=sifive_x280;-mabi=lp64d"
     POLAR_RVV="-DPOLARQUANT_RVV_COMPILE_OPTIONS=-mcpu=sifive_x280;-mabi=lp64d"
     TBQ_RVV="-DTURBOQUANT_RVV_FLAGS=-mcpu=generic_rv64+v+m+a+f+d+c"
 fi

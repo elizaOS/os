@@ -224,6 +224,19 @@ describe("OS release workflow authority", () => {
     expect(riscvSource).not.toContain("restore-keys: riscv64-out-");
   });
 
+  test("RISC-V cold-build failures retain their compiler diagnostics", () => {
+    const source = readFileSync(workflowPath("riscv64-smoke.yml"), "utf8");
+
+    expect(source).toContain("name: Print failed RISC-V build diagnostics");
+    expect(source).toContain(`if: \${{ failure() }}`);
+    expect(source).toContain("tail -n 250");
+    expect(source).toContain("name: riscv64-build-diagnostics");
+    expect(source).toContain(
+      ".eliza-source/packages/native/plugins/*/build/**/*.log",
+    );
+    expect(source).toContain("include-hidden-files: true");
+  });
+
   test("desktop distributors share the exact Electrobun CLI and runtime cache", () => {
     const workflowNames = [
       "release-elizaos-setup.yml",
@@ -411,6 +424,10 @@ describe("OS release workflow authority", () => {
     expect(statSync(provisionerPath).mode & 0o111).not.toBe(0);
     expect(provisioner).toContain("0.13.0)");
     expect(provisioner).toContain("0.14.0)");
+    expect(provisioner).toContain("0.14.1)");
+    expect(provisioner).toContain(
+      "24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c",
+    );
     expect(provisioner).toContain(
       "d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea",
     );
@@ -422,6 +439,7 @@ describe("OS release workflow authority", () => {
       "refusing a symlinked Zig archive cache entry",
     );
     expect(riscv).toContain(`${zigProvisioner} "$ZIG_VERSION"`);
+    expect(riscv).toContain('ZIG_VERSION: "0.13.0"');
     expect(riscv).toContain("zig-archive-${{ runner.os }}-${{ runner.arch }}-");
     expect(cuttlefish).toContain(`${zigProvisioner} "$ZIG_VERSION"`);
     expect(cuttlefish).toContain("Compute native inference source fingerprint");
