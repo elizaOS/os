@@ -10,10 +10,10 @@ const heroCopy = [
 const installerCopy = [
   "Download beta.",
   "ElizaOS beta",
-  "ElizaOS Linux live beta",
-  "ElizaOS USB installer for Windows",
-  "ElizaOS VM launcher for Apple Silicon",
-  "ElizaOS Android beta image bundle",
+  "elizaOS persistent image for x86_64",
+  "elizaOS Debian package for amd64",
+  "elizaOS Setup for macOS",
+  "elizaOS USB Installer for Linux",
   "x86_64",
   "arm64",
   "Downloads are temporarily unavailable.",
@@ -78,7 +78,7 @@ test("download section distinguishes unavailable release artifacts", async ({
     0,
   );
   await expect(downloads.getByText("Unavailable", { exact: true })).toHaveCount(
-    4,
+    10,
   );
 });
 

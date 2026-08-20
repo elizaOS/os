@@ -351,6 +351,9 @@ describe("OS release workflow authority", () => {
       "bun run --cwd packages/os/usb-installer lint\n",
     );
     expect(source).toContain("bun run --cwd packages/os/setup test");
+    expect(source).toContain(
+      "cd packages/os/homepage && bunx playwright install --with-deps chromium",
+    );
   });
 
   test("Linux CI validates both legacy smoke and canonical mkosi contracts", () => {
