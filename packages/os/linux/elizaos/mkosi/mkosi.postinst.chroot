@@ -36,7 +36,13 @@ if [ ! -f "$brand_source" ]; then
     echo "[mkosi.postinst] required branding input is missing: $brand_source" >&2
     exit 1
 fi
+brand_icon_source="${source_root}/elizaos/assets/logo_blue_nobg.svg"
+if [ ! -f "$brand_icon_source" ]; then
+    echo "[mkosi.postinst] required branding icon is missing: $brand_icon_source" >&2
+    exit 1
+fi
 install -D -m 0644 "$brand_source" /usr/share/backgrounds/elizaos/elizaos-blue.svg
+install -D -m 0644 "$brand_icon_source" /usr/share/icons/elizaOS/scalable/places/start-here-symbolic.svg
 
 grow_definition="${source_root}/elizaos/mkosi/mkosi.repart/30-home.conf"
 if [ ! -f "$grow_definition" ] || [ -L "$grow_definition" ]; then
@@ -165,9 +171,15 @@ systemctl enable elizaos-grow-persistent.service
 systemctl set-default graphical.target
 systemctl --global enable elizaos-session.target
 
-if command -v dconf >/dev/null 2>&1; then
-    dconf update
-fi
+for command in dconf glib-compile-schemas gtk-update-icon-cache; do
+    command -v "$command" >/dev/null || {
+        echo "[mkosi.postinst] required branding compiler is missing: $command" >&2
+        exit 1
+    }
+done
+dconf update
+glib-compile-schemas /usr/share/glib-2.0/schemas
+gtk-update-icon-cache --force /usr/share/icons/elizaOS
 
 cat >/etc/os-release <<'EOF'
 PRETTY_NAME="elizaOS Linux"

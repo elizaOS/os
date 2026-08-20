@@ -85,9 +85,19 @@ test("local mkosi front door builds a pinned multiarch tool container", async ()
 });
 
 test("development images may omit the future control broker but releases fail closed", async () => {
-  const postinstall = await read(
-    "packages/os/linux/elizaos/mkosi/mkosi.postinst.chroot",
-  );
+  const [postinstall, initialSetupProfile, brandingDefaults, iconTheme] =
+    await Promise.all([
+      read("packages/os/linux/elizaos/mkosi/mkosi.postinst.chroot"),
+      read(
+        "packages/os/linux/elizaos/mkosi/mkosi.extra/usr/share/dconf/profile/gnome-initial-setup",
+      ),
+      read(
+        "packages/os/linux/elizaos/mkosi/mkosi.extra/usr/share/glib-2.0/schemas/90_elizaos-branding.gschema.override",
+      ),
+      read(
+        "packages/os/linux/elizaos/mkosi/mkosi.extra/usr/share/icons/elizaOS/index.theme",
+      ),
+    ]);
 
   assert.match(postinstall, /partial control input topology/);
   assert.match(postinstall, /release control input topology is missing/);
@@ -96,6 +106,13 @@ test("development images may omit the future control broker but releases fail cl
     /control input topology absent in explicit \$\{build_mode\} build; broker disabled/,
   );
   assert.match(postinstall, /if \[ "\$control_installed" -eq 1 \]; then\n    systemctl enable eliza-control-broker\.socket/);
+  assert.match(postinstall, /logo_blue_nobg\.svg/);
+  assert.match(postinstall, /glib-compile-schemas/);
+  assert.match(postinstall, /gtk-update-icon-cache --force \/usr\/share\/icons\/elizaOS/);
+  assert.match(initialSetupProfile, /system-db:local/);
+  assert.match(brandingDefaults, /elizaos-blue\.svg/);
+  assert.match(brandingDefaults, /icon-theme='elizaOS'/);
+  assert.match(iconTheme, /Inherits=Adwaita,hicolor/);
 });
 
 test("release image schema accepts only raw zstd images for supported architectures", async () => {
