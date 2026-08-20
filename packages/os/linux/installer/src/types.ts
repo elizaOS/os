@@ -22,6 +22,7 @@ export interface PartitionInventory {
   id: string;
   startBytes: number;
   endBytes: number;
+  mounted: boolean;
   role: "esp" | "os" | "recovery" | "data" | "unknown";
   filesystem: Filesystem;
   osFamily?: OsFamily;

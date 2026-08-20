@@ -128,6 +128,10 @@ export function validateDiskInventory(disk: DiskInventory): void {
       throw new Error(`Partition ${partition.id} has an invalid role.`);
     if (!FILESYSTEMS.has(partition.filesystem))
       throw new Error(`Partition ${partition.id} has an invalid filesystem.`);
+    if (typeof partition.mounted !== "boolean")
+      throw new Error(
+        `Partition ${partition.id} mount state must be explicit.`,
+      );
     if (partition.osFamily && !OS_FAMILIES.has(partition.osFamily))
       throw new Error(`Partition ${partition.id} has an invalid OS family.`);
     if (partition.encryption && !ENCRYPTION_STATES.has(partition.encryption))
@@ -152,6 +156,7 @@ export function validateDiskInventory(disk: DiskInventory): void {
       if (
         typeof partition.resize.filesystemHealthy !== "boolean" ||
         typeof partition.resize.mounted !== "boolean" ||
+        partition.resize.mounted !== partition.mounted ||
         (partition.resize.hibernated !== undefined &&
           typeof partition.resize.hibernated !== "boolean") ||
         (partition.resize.dirty !== undefined &&
@@ -204,6 +209,7 @@ export function createDiskInventoryFingerprint(disk: DiskInventory): string {
       id: partition.id,
       startBytes: partition.startBytes,
       endBytes: partition.endBytes,
+      mounted: partition.mounted,
       role: partition.role,
       filesystem: partition.filesystem,
       osFamily: partition.osFamily ?? null,
@@ -269,6 +275,11 @@ function assertTarget(request: InstallRequest, disk: DiskInventory): void {
       "Refusing to install because current boot-device ancestry is unresolved.",
     );
   }
+  if (disk.partitions.some((partition) => partition.mounted)) {
+    throw new Error(
+      "Refusing to install while a target partition or stacked descendant is mounted.",
+    );
+  }
   if (disk.partitionTable === "gpt" && disk.gptRedundancyVerified !== true) {
     throw new Error(
       "Refusing to install because GPT main/backup redundancy is unverified.",
@@ -303,7 +314,7 @@ function reusableEsp(disk: DiskInventory): PartitionInventory | undefined {
 
 function assertShrinkEligible(partition: PartitionInventory): void {
   const evidence = partition.resize;
-  if (!evidence?.filesystemHealthy || evidence.mounted) {
+  if (!evidence?.filesystemHealthy || partition.mounted || evidence.mounted) {
     throw new Error(
       `Partition ${partition.id} lacks healthy, unmounted resize evidence.`,
     );

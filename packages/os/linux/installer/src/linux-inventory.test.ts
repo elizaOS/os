@@ -227,10 +227,12 @@ describe("Linux read-only disk inventory parser", () => {
       id: "b27e2419-9e58-416e-a921-d8d51a443692",
       startBytes: MIB,
       endBytes: 513 * MIB,
+      mounted: false,
       role: "esp",
       filesystem: "fat32",
     });
     expect(inventory.partitions[1]).toMatchObject({
+      mounted: false,
       role: "data",
       filesystem: "ext4",
       encryption: "none",
@@ -247,9 +249,10 @@ describe("Linux read-only disk inventory parser", () => {
   });
 
   it("marks root-backed, read-only, removable, and unverified disks as protected", () => {
-    expect(
-      parse(serializedInventory({}, { mountpoints: ["/"] })).currentBootSource,
-    ).toBe(true);
+    const rootBacked = parse(serializedInventory({}, { mountpoints: ["/"] }));
+    expect(rootBacked.currentBootSource).toBe(true);
+    expect(rootBacked.partitions[1]?.mounted).toBe(true);
+    expect(rootBacked.protectedReason).toMatch(/mounted partition/);
     expect(parse(serializedInventory({ ro: true })).protectedReason).toMatch(
       /read-only/,
     );
@@ -278,6 +281,24 @@ describe("Linux read-only disk inventory parser", () => {
     );
     expect(directRoot.bootAncestryResolved).toBe(true);
     expect(directRoot.currentBootSource).toBe(true);
+  });
+
+  it("propagates a stacked descendant mount to its containing partition", () => {
+    const document = JSON.parse(serializedInventory()) as {
+      blockdevices: Array<Record<string, unknown>>;
+    };
+    document.blockdevices.push({
+      path: "/dev/mapper/vg-data",
+      kname: "/dev/dm-0",
+      pkname: "/dev/vda2",
+      type: "lvm",
+      mountpoints: ["/srv/data"],
+    });
+
+    const inventory = parse(JSON.stringify(document));
+    expect(inventory.partitions[1]?.mounted).toBe(true);
+    expect(inventory.currentBootSource).toBe(false);
+    expect(inventory.protectedReason).toMatch(/stacked descendant/);
   });
 
   it("does not require partition-table verification for an empty disk", () => {

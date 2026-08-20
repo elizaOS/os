@@ -268,6 +268,7 @@ function partition(
   device: LsblkDevice,
   sectorBytes: number,
   partitionTable: DiskInventory["partitionTable"],
+  mounted: boolean,
 ): PartitionInventory {
   const id = requiredString(
     "partition PARTUUID",
@@ -296,6 +297,7 @@ function partition(
     id,
     startBytes,
     endBytes,
+    mounted,
     role: partitionRole(device),
     filesystem: detectedFilesystem,
     encryption:
@@ -305,6 +307,32 @@ function partition(
           ? "unknown"
           : "none",
   };
+}
+
+function mountedDeviceNames(devices: LsblkDevice[]): Set<string> {
+  const result = new Set<string>();
+  for (const device of devices) {
+    if (mounts(device.mountpoints).length > 0) {
+      result.add(requiredString("mounted device kernel name", device.kname));
+    }
+  }
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const device of devices) {
+      const kernelName = requiredString("device kernel name", device.kname);
+      const parentName = optionalString(device.pkname);
+      if (
+        result.has(kernelName) &&
+        parentName !== undefined &&
+        !result.has(parentName)
+      ) {
+        result.add(parentName);
+        changed = true;
+      }
+    }
+  }
+  return result;
 }
 
 function freeExtents(
@@ -377,6 +405,7 @@ export function parseLinuxLsblkInventory(options: {
         ? "none"
         : "unknown";
   const partitionDevices = devices.filter((device) => device.type === "part");
+  const mountedNames = mountedDeviceNames(devices);
   for (const device of partitionDevices) {
     if (requiredString("partition parent", device.pkname) !== diskKernelName) {
       throw new Error(
@@ -385,7 +414,12 @@ export function parseLinuxLsblkInventory(options: {
     }
   }
   const partitions = partitionDevices.map((device) =>
-    partition(device, sectorBytes, partitionTable),
+    partition(
+      device,
+      sectorBytes,
+      partitionTable,
+      mountedNames.has(requiredString("partition kernel name", device.kname)),
+    ),
   );
   const serial = requiredString("disk serial", disk.serial);
   const wwn = optionalString(disk.wwn);
@@ -408,13 +442,15 @@ export function parseLinuxLsblkInventory(options: {
           ? "GPT main/backup redundancy verification failed."
           : !bootAncestryResolved
             ? "Current boot-device ancestry is unresolved."
-            : options.firmware === "unknown"
-              ? "Firmware mode is unknown."
-              : readOnly
-                ? "Target disk is read-only."
-                : removable
-                  ? "Target disk is removable media."
-                  : undefined;
+            : partitions.some((partition) => partition.mounted)
+              ? "Target disk has a mounted partition or stacked descendant."
+              : options.firmware === "unknown"
+                ? "Firmware mode is unknown."
+                : readOnly
+                  ? "Target disk is read-only."
+                  : removable
+                    ? "Target disk is removable media."
+                    : undefined;
   const inventory: DiskInventory = {
     stableId: options.stableId,
     path: options.stablePath,

@@ -20,8 +20,9 @@ package never changes a partition table.
   plan-bound; an exit-zero in-memory recovery is rejected. Root-device ancestry
   is now resolved through `findmnt` plus inverse `lsblk` dependencies and is
   also plan-bound; unresolved or stacked boot targets fail closed. Add the
-  filesystem/encryption/hibernation/shrink probes before connecting it to the
-  root service.
+  filesystem health, encryption, hibernation, and shrink-minimum probes before
+  connecting it to the root service. Mount state already propagates through
+  stacked descendants and must agree with any later resize evidence.
 - **Connect plan revalidation and authorization to the root service.** The
   library now reproduces the initial inventory/plan ID, verifies an expiring
   owner credential, re-enumerates before every typed action, and stops on

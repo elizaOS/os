@@ -35,6 +35,7 @@ function disk(overrides: Partial<DiskInventory> = {}): DiskInventory {
         id: "esp",
         startBytes: MIB,
         endBytes: 513 * MIB,
+        mounted: false,
         role: "esp",
         filesystem: "fat32",
         encryption: "none",
@@ -43,6 +44,7 @@ function disk(overrides: Partial<DiskInventory> = {}): DiskInventory {
         id: "host-os",
         startBytes: 513 * MIB,
         endBytes: 300 * GIB,
+        mounted: false,
         role: "os",
         filesystem: "ntfs",
         osFamily: "windows",
@@ -165,6 +167,15 @@ describe("elizaOS internal-disk installer planner", () => {
     });
     expect(plan.compatibility.automaticShrinkSupported).toBe(true);
     expect(plan.executable).toBe(false);
+  });
+
+  it("refuses free-space installation while any target descendant is mounted", () => {
+    const target = disk({
+      partitions: [partition(0), { ...partition(1), mounted: true }],
+    });
+    expect(() => createInstallPlan(request(target), target)).toThrow(
+      /stacked descendant is mounted/,
+    );
   });
 
   it.each([
@@ -365,6 +376,31 @@ describe("elizaOS internal-disk installer planner", () => {
         hardwareIdentity: { ...disk().hardwareIdentity, serial: "" },
       }),
     ).toThrow("hardware identity");
+    const missingMountState = partition(1);
+    delete (missingMountState as Partial<PartitionInventory>).mounted;
+    expect(() =>
+      validateDiskInventory({
+        ...disk(),
+        partitions: [partition(0), missingMountState],
+      }),
+    ).toThrow("mount state");
+    expect(() =>
+      validateDiskInventory({
+        ...disk(),
+        partitions: [
+          partition(0),
+          {
+            ...partition(1),
+            mounted: true,
+            resize: {
+              filesystemHealthy: true,
+              mounted: false,
+              minimumBytes: 200 * GIB,
+            },
+          },
+        ],
+      }),
+    ).toThrow("resize evidence");
     const missingGptVerification = disk();
     delete missingGptVerification.gptRedundancyVerified;
     expect(() => validateDiskInventory(missingGptVerification)).toThrow(

@@ -101,6 +101,11 @@ function assertTargetIdentity(
   if (inventory.currentBootSource) {
     throw new Error("Refusing to mutate the disk that booted the installer.");
   }
+  if (inventory.partitions.some((partition) => partition.mounted)) {
+    throw new Error(
+      "Refusing to mutate a disk with a mounted partition or stacked descendant.",
+    );
+  }
   if (inventory.protectedReason) {
     throw new Error(`Target disk is protected: ${inventory.protectedReason}`);
   }
