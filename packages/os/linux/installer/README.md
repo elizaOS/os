@@ -45,6 +45,9 @@ The provider also resolves `/` with `findmnt` and walks its complete inverse
 stacked root is protected even when `/` is not mounted directly on a partition.
 An overlay, network root, failed ancestry command, or incomplete chain remains
 explicitly unresolved and protects every otherwise ambiguous target.
+Mount state is propagated from dm/LVM/MD descendants back to their containing
+partition and is independently bound into the inventory fingerprint. Any
+filesystem-specific resize evidence must agree with that observed mount state.
 
 The package intentionally does not yet provide the root service, OS-native
 inventory probes, filesystem tools, GPT writer, image extractor, or bootloader

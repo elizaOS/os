@@ -47,6 +47,7 @@ function disk(overrides: Partial<DiskInventory> = {}): DiskInventory {
         id: "old-root",
         startBytes: MIB,
         endBytes: 128 * GIB,
+        mounted: false,
         role: "os",
         filesystem: "ext4",
         osFamily: "linux",
@@ -238,6 +239,37 @@ describe("privileged installer execution boundary", () => {
         dependencies(disk({ bootAncestryResolved: false })),
       ),
     ).rejects.toThrow(/identity changed|stale/);
+  });
+
+  it("rejects a mount appearing before execution without applying an action", async () => {
+    const target = disk();
+    const { request, plan } = reviewedPlan(target);
+    const deps = dependencies(target);
+    const authorized = await authorizeInstallPlan(
+      request,
+      plan,
+      authorization(target, plan.planId),
+      deps,
+    );
+    let appliedCount = 0;
+    const targetPartition = target.partitions[0];
+    if (!targetPartition) throw new Error("Test target partition is missing.");
+    deps.inventory.inspect = async () =>
+      disk({
+        partitions: [{ ...targetPartition, mounted: true }],
+      });
+    deps.operations.apply = async (action) => {
+      appliedCount += 1;
+      return {
+        receiptId: `receipt-${action.type}`,
+        actionDigest: digestAction(action),
+      };
+    };
+
+    await expect(
+      executeAuthorizedInstallPlan(authorized, deps),
+    ).rejects.toThrow(/mounted partition/);
+    expect(appliedCount).toBe(0);
   });
 
   it("backs up GPT, journals every action, and returns durable completion", async () => {
