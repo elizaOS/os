@@ -58,7 +58,7 @@
     },
     "requiredValidationTokens": [
       "pm path",
-      "cmd role holders",
+      "cmd role get-role-holders",
       "foreground",
       "service",
       "/api/health",

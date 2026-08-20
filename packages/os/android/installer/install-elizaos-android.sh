@@ -365,14 +365,6 @@ build_plan() {
     else
       add_validation_plan "$POST_FLASH_VALIDATOR" --manifest "$MANIFEST" --execute
     fi
-    add_validation_plan "${adb_cmd[@]}" shell pm path ai.elizaos.app
-    add_validation_plan "${adb_cmd[@]}" shell cmd role holders android.app.role.HOME
-    add_validation_plan "${adb_cmd[@]}" shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME
-    add_validation_plan "${adb_cmd[@]}" shell dumpsys package ai.elizaos.app
-    add_validation_plan "${adb_cmd[@]}" shell dumpsys activity activities
-    add_validation_plan "${adb_cmd[@]}" shell pidof ai.elizaos.app
-    add_validation_plan "${adb_cmd[@]}" shell curl -fsS http://127.0.0.1:31337/api/health
-    add_validation_plan "${adb_cmd[@]}" logcat -d
   fi
 }
 

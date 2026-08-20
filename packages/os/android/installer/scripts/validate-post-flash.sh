@@ -8,6 +8,7 @@ BOOT_TIMEOUT=""
 LAUNCHER_PACKAGE="ai.elizaos.app"
 LAUNCHER_ACTIVITY="ai.elizaos.app/.MainActivity"
 AGENT_HEALTH_URL="http://127.0.0.1:31337/api/health"
+AGENT_HEALTH_COMMAND=""
 EXPECTED_PM_PATH=""
 declare -a EXPECTED_PROPS=()
 declare -a PLAN=()
@@ -210,6 +211,21 @@ NODE
   done <<<"$manifest_output"
 }
 
+build_agent_health_command() {
+  local health_port health_path
+  if [[ "$AGENT_HEALTH_URL" =~ ^http://127\.0\.0\.1:([0-9]{1,5})(/[A-Za-z0-9._~/?&=%+-]*)$ ]]; then
+    health_port="${BASH_REMATCH[1]}"
+    health_path="${BASH_REMATCH[2]}"
+  else
+    die "agent health URL must be an explicit http://127.0.0.1:PORT/PATH endpoint"
+  fi
+  (( health_port >= 1 && health_port <= 65535 )) \
+    || die "agent health URL port is outside 1..65535"
+  printf -v AGENT_HEALTH_COMMAND \
+    "printf 'GET %s HTTP/1.0\\r\\nHost: 127.0.0.1:%s\\r\\nConnection: close\\r\\n\\r\\n' | toybox nc -w 5 127.0.0.1 %s" \
+    "$health_path" "$health_port" "$health_port"
+}
+
 build_plan() {
   local adb_cmd
   read -r -a adb_cmd <<<"$(adb_base)"
@@ -225,12 +241,14 @@ build_plan() {
   add_plan "${adb_cmd[@]}" shell getprop ro.boot.slot_suffix
   add_plan "${adb_cmd[@]}" shell getprop sys.boot_completed
   add_plan "${adb_cmd[@]}" shell pm path "$LAUNCHER_PACKAGE"
-  add_plan "${adb_cmd[@]}" shell cmd role holders android.app.role.HOME
+  add_plan "${adb_cmd[@]}" shell cmd role get-role-holders android.app.role.HOME
   add_plan "${adb_cmd[@]}" shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME
   add_plan "${adb_cmd[@]}" shell dumpsys package "$LAUNCHER_PACKAGE"
   add_plan "${adb_cmd[@]}" shell dumpsys activity activities
   add_plan "${adb_cmd[@]}" shell pidof "$LAUNCHER_PACKAGE"
-  add_plan "${adb_cmd[@]}" shell curl -fsS "$AGENT_HEALTH_URL"
+  # The printed diagnostic must not preempt the explicit status/body checks
+  # below when the endpoint is absent or unhealthy.
+  add_plan "${adb_cmd[@]}" shell "${AGENT_HEALTH_COMMAND} || true"
   add_plan "${adb_cmd[@]}" logcat -d
   add_plan "${adb_cmd[@]}" logcat -d
 }
@@ -286,7 +304,7 @@ validate_launcher_agent_liveness() {
   [[ "$DRY_RUN" -eq 0 ]] || return 0
   local adb_cmd
   read -r -a adb_cmd <<<"$(adb_base)"
-  local pm_path
+  local pm_path health_response
 
   pm_path="$("${adb_cmd[@]}" shell pm path "$LAUNCHER_PACKAGE" | tr -d '\r')"
   if [[ -n "$EXPECTED_PM_PATH" ]]; then
@@ -296,7 +314,7 @@ validate_launcher_agent_liveness() {
     grep -F "package:" <<<"$pm_path" >/dev/null \
       || die "launcher package is not installed: $LAUNCHER_PACKAGE"
   fi
-  "${adb_cmd[@]}" shell cmd role holders android.app.role.HOME | grep -F "$LAUNCHER_PACKAGE" >/dev/null \
+  "${adb_cmd[@]}" shell cmd role get-role-holders android.app.role.HOME | grep -Fx "$LAUNCHER_PACKAGE" >/dev/null \
     || die "launcher package is not a HOME role holder: $LAUNCHER_PACKAGE"
   "${adb_cmd[@]}" shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME \
     | grep -F "$LAUNCHER_PACKAGE" >/dev/null \
@@ -305,8 +323,12 @@ validate_launcher_agent_liveness() {
     || die "expected launcher foreground activity was not found: $LAUNCHER_ACTIVITY"
   "${adb_cmd[@]}" shell pidof "$LAUNCHER_PACKAGE" >/dev/null \
     || die "launcher/agent process is not running: $LAUNCHER_PACKAGE"
-  "${adb_cmd[@]}" shell curl -fsS "$AGENT_HEALTH_URL" | grep -Ei '"status"[[:space:]]*:[[:space:]]*"ready"|ok|healthy' >/dev/null \
-    || die "agent health probe did not return ready/ok/healthy: $AGENT_HEALTH_URL"
+  health_response="$("${adb_cmd[@]}" shell "$AGENT_HEALTH_COMMAND" | tr -d '\r')" \
+    || die "agent health probe transport failed: $AGENT_HEALTH_URL"
+  grep -Eq '^HTTP/1\.[01] 200([[:space:]]|$)' <<<"$health_response" \
+    || die "agent health probe did not return HTTP 200: $AGENT_HEALTH_URL"
+  grep -Ei '"status"[[:space:]]*:[[:space:]]*"ready"|ok|healthy' <<<"$health_response" >/dev/null \
+    || die "agent health probe body did not return ready/ok/healthy: $AGENT_HEALTH_URL"
   ! "${adb_cmd[@]}" logcat -d | grep -Ei 'FATAL EXCEPTION|AndroidRuntime|crash' >/dev/null \
     || die "fatal Android runtime/crash log entries were found"
   ! "${adb_cmd[@]}" logcat -d | grep -i 'avc: denied' >/dev/null \
@@ -327,6 +349,7 @@ execute_plan() {
 
 parse_args "$@"
 load_manifest_expectations
+build_agent_health_command
 build_plan
 print_plan
 execute_plan

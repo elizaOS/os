@@ -20,7 +20,7 @@ const hardwareTargetsById = new Map(
 );
 const REQUIRED_VALIDATION_TOKENS = [
   "pm path",
-  "cmd role holders",
+  "cmd role get-role-holders",
   "foreground",
   "service",
   "/api/health",

@@ -386,7 +386,7 @@ jobs:
           adb shell dumpsys voiceinteraction > "$evidence/voiceinteraction.txt" || true
           adb shell dumpsys input_method > "$evidence/input-method.txt" || true
           adb shell dumpsys activity activities > "$evidence/activities.txt" || true
-          adb shell cmd role holders android.app.role.ASSISTANT > "$evidence/assistant-role.txt" || true
+          adb shell cmd role get-role-holders android.app.role.ASSISTANT > "$evidence/assistant-role.txt" || true
           {
             adb shell settings get secure voice_interaction_service
             adb shell settings get secure assistant
