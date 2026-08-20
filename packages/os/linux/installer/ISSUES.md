@@ -18,8 +18,11 @@ package never changes a partition table.
 - **Connect plan revalidation and authorization to the root service.** The
   library now reproduces the initial inventory/plan ID, verifies an expiring
   owner credential, re-enumerates before every typed action, and stops on
-  identity, journal, or inventory drift. Implement the OS credential verifier
-  and ensure the service accepts no renderer-supplied commands or device paths.
+  identity, journal, or inventory drift. Its file-backed journal durably syncs
+  every record and directory update, serializes and head-checks appends, and
+  fails closed on unsafe files or interrupted locks. Provision its owner-only
+  state directory, implement the OS credential verifier, and ensure the service
+  accepts no renderer-supplied commands or device paths.
 - **Implement recoverable GPT mutation.** Save and verify both GPT headers and
   partition entries to separate recovery media/state, perform typed operations,
   reread the kernel partition table, and prove rollback after every injected

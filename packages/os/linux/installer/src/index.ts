@@ -11,6 +11,7 @@ export {
   executeAuthorizedInstallPlan,
   InstallRecoveryRequiredError,
 } from "./executor";
+export { DurableFileInstallJournal } from "./file-journal";
 export {
   createDiskConfirmationToken,
   createDiskInventoryFingerprint,
