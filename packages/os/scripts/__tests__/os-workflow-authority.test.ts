@@ -721,8 +721,34 @@ describe("OS release workflow authority", () => {
     expect(control).toContain("Architecture: any");
     expect(control).toContain("${shlibs:Depends}");
     expect(rules).toContain("cp -a payload/.");
+    expect(rules).toContain("usr/lib/elizaos");
+    expect(rules).not.toContain("/opt/elizaos");
     expect(rules).not.toContain("elizaos-app.mjs");
     expect(rules).not.toContain("node_modules");
+    expect(source).toContain("extracted/usr/lib/elizaos");
+    expect(source).not.toContain("extracted/opt/elizaos");
+    for (const obsolete of ["install", "postinst", "prerm"]) {
+      expect(
+        existsSync(
+          join(
+            repositoryRoot,
+            "packages/os/linux/packaging/debian",
+            obsolete,
+          ),
+        ),
+      ).toBe(false);
+    }
+    const packagingDirectory = join(
+      repositoryRoot,
+      "packages/os/linux/packaging/debian",
+    );
+    const packagingSource = readdirSync(packagingDirectory)
+      .map((name) => join(packagingDirectory, name))
+      .filter((path) => statSync(path).isFile())
+      .map((path) => readFileSync(path, "utf8"))
+      .join("\n");
+    expect(packagingSource).not.toContain("/opt/elizaos");
+    expect(packagingSource).not.toContain("systemctl --user");
     expect(packages.map((artifact) => artifact.id).sort()).toEqual([
       "debian-package-amd64",
       "debian-package-arm64",

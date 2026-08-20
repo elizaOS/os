@@ -1,3 +1,3 @@
 #!/bin/sh
 set -eu
-exec /opt/elizaos/bin/eliza-desktop "$@"
+exec /usr/lib/elizaos/bin/eliza-desktop "$@"

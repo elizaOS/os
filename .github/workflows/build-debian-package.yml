@@ -199,8 +199,8 @@ jobs:
           extracted="$WORK_ROOT/extracted"
           dpkg-deb --extract "$package" "$extracted"
           diff --no-dereference --recursive --brief \
-            "$WORK_ROOT/source/payload" "$extracted/opt/elizaos"
-          readelf -h "$extracted/opt/elizaos/bin/eliza-desktop" >/dev/null
+            "$WORK_ROOT/source/payload" "$extracted/usr/lib/elizaos"
+          readelf -h "$extracted/usr/lib/elizaos/bin/eliza-desktop" >/dev/null
           sha256sum "$package" > "$package.sha256"
           echo "path=$package" >> "$GITHUB_OUTPUT"
       - name: Lint package with no policy errors
