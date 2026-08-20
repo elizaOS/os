@@ -98,7 +98,11 @@ jobs:
           repository: elizaOS/eliza
           ref: ${{ steps.eliza-lock.outputs.ref }}
           path: .eliza-source
-          submodules: recursive
+          # The desktop build initializes only the pinned llama.cpp submodule
+          # when CI builds the fused local-inference library. Fetching every
+          # submodule here also downloads the optional opencode agent and the
+          # Electrobun source fork even though neither is an ISO build input.
+          submodules: false
 
       - name: Restore live-build cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9

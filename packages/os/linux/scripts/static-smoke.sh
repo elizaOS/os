@@ -99,6 +99,11 @@ grep -Fq 'if [ -f "${SRC}/binary.iso" ]' build-iso.sh
 grep -Fq 'find "${SRC}" -maxdepth 1 -name' build-iso.sh
 grep -Fq "sort -nr" build-iso.sh
 grep -Fq -- '-name "tails-${ELIZAOS_ARCH}-*.iso"' ../../../.github/workflows/build-linux-iso.yml
+grep -Fq 'submodules: false' ../../../.github/workflows/build-linux-iso.yml
+if grep -Fq 'submodules: recursive' ../../../.github/workflows/build-linux-iso.yml; then
+    echo "build-linux-iso must let the Eliza desktop build initialize only required submodules" >&2
+    exit 1
+fi
 bash scripts/build-cache-contract.test.sh
 bash scripts/smoke-test-iso.test.sh
 bash scripts/verify-eliza-source-lock.test.sh
