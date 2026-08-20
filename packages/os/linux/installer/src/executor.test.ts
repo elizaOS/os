@@ -99,6 +99,34 @@ function digestAction(action: InstallerAction): string {
   return createHash("sha256").update(JSON.stringify(action)).digest("hex");
 }
 
+function rehashJournal(entries: InstallJournalEntry[]): void {
+  let previousDigest: string | null = null;
+  for (const [sequence, entry] of entries.entries()) {
+    const body = {
+      ...entry,
+      sequence,
+      previousDigest,
+      digest: undefined,
+    };
+    delete body.digest;
+    entry.sequence = sequence;
+    entry.previousDigest = previousDigest;
+    entry.digest = createHash("sha256")
+      .update(JSON.stringify(body))
+      .digest("hex");
+    previousDigest = entry.digest;
+  }
+}
+
+function requiredJournalEntry(
+  entries: InstallJournalEntry[],
+  index: number,
+): InstallJournalEntry {
+  const entry = entries[index];
+  if (!entry) throw new Error(`Test journal entry ${index} is missing.`);
+  return entry;
+}
+
 function dependencies(
   target: DiskInventory,
   overrides: Partial<InstallExecutionDependencies> = {},
@@ -318,6 +346,65 @@ describe("privileged installer execution boundary", () => {
       executeAuthorizedInstallPlan(authorized, deps),
     ).rejects.toBeInstanceOf(InstallRecoveryRequiredError);
     expect(attempts).toBe(1);
+  });
+
+  it.each([
+    [
+      "completion before its action start",
+      (entries: InstallJournalEntry[]) => {
+        const started = requiredJournalEntry(entries, 2);
+        const completed = requiredJournalEntry(entries, 3);
+        entries[2] = completed;
+        entries[3] = started;
+      },
+    ],
+    [
+      "a duplicate partition-table backup",
+      (entries: InstallJournalEntry[]) => {
+        entries[2] = { ...requiredJournalEntry(entries, 1) };
+      },
+    ],
+    [
+      "a mismatched action digest",
+      (entries: InstallJournalEntry[]) => {
+        requiredJournalEntry(entries, 3).actionDigest = "f".repeat(64);
+      },
+    ],
+    [
+      "an action receipt on a start checkpoint",
+      (entries: InstallJournalEntry[]) => {
+        requiredJournalEntry(entries, 2).receiptId = "impossible-early-receipt";
+      },
+    ],
+    [
+      "a record after terminal completion",
+      (entries: InstallJournalEntry[]) => {
+        entries.push({ ...requiredJournalEntry(entries, 0) });
+      },
+    ],
+    [
+      "a decreasing checkpoint timestamp",
+      (entries: InstallJournalEntry[]) => {
+        requiredJournalEntry(entries, 2).timestamp = "2026-08-20T03:59:59.000Z";
+      },
+    ],
+  ])("rejects a validly rehashed journal with %s", async (_name, mutate) => {
+    const target = disk();
+    const { request, plan } = reviewedPlan(target);
+    const deps = dependencies(target);
+    const authorized = await authorizeInstallPlan(
+      request,
+      plan,
+      authorization(target, plan.planId),
+      deps,
+    );
+    await executeAuthorizedInstallPlan(authorized, deps);
+    mutate(deps.journal.entries);
+    rehashJournal(deps.journal.entries);
+
+    await expect(
+      executeAuthorizedInstallPlan(authorized, deps),
+    ).rejects.toBeInstanceOf(InstallRecoveryRequiredError);
   });
 
   it("rejects a plan body changed after review", async () => {

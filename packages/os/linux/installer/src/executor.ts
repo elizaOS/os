@@ -199,6 +199,11 @@ function journalEntryDigest(
 
 function validateJournal(planId: string, entries: InstallJournalEntry[]): void {
   let previousDigest: string | null = null;
+  let phase: "authorization" | "backup" | "actions" = "authorization";
+  let completedActions = 0;
+  let pendingActionDigest: string | undefined;
+  let terminal = false;
+  let previousTimestamp = Number.NEGATIVE_INFINITY;
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index];
     if (
@@ -217,7 +222,106 @@ function validateJournal(planId: string, entries: InstallJournalEntry[]): void {
         "Install journal digest chain verification failed.",
       );
     }
+    const timestamp = Date.parse(entry.timestamp);
+    if (
+      !SHA256_PATTERN.test(entry.inventoryFingerprint) ||
+      !Number.isFinite(timestamp) ||
+      new Date(timestamp).toISOString() !== entry.timestamp ||
+      timestamp < previousTimestamp
+    ) {
+      throw new InstallRecoveryRequiredError(
+        "Install journal checkpoint metadata is invalid.",
+      );
+    }
+    if (terminal) {
+      throw new InstallRecoveryRequiredError(
+        "Install journal contains records after a terminal event.",
+      );
+    }
+    const hasActionFields =
+      entry.actionIndex !== undefined || entry.actionDigest !== undefined;
+    switch (entry.event) {
+      case "authorized":
+        if (
+          phase !== "authorization" ||
+          hasActionFields ||
+          !SHA256_PATTERN.test(entry.receiptId ?? "")
+        ) {
+          throw new InstallRecoveryRequiredError(
+            "Install journal authorization event is out of order or malformed.",
+          );
+        }
+        phase = "backup";
+        break;
+      case "partition-table-backup-verified":
+        if (
+          phase !== "backup" ||
+          hasActionFields ||
+          !SHA256_PATTERN.test(entry.receiptId ?? "")
+        ) {
+          throw new InstallRecoveryRequiredError(
+            "Install journal partition-table backup event is out of order or malformed.",
+          );
+        }
+        phase = "actions";
+        break;
+      case "action-started":
+        if (
+          phase !== "actions" ||
+          pendingActionDigest !== undefined ||
+          entry.actionIndex !== completedActions ||
+          !SHA256_PATTERN.test(entry.actionDigest ?? "") ||
+          entry.receiptId !== undefined
+        ) {
+          throw new InstallRecoveryRequiredError(
+            "Install journal action start is out of order or malformed.",
+          );
+        }
+        pendingActionDigest = entry.actionDigest;
+        break;
+      case "action-completed":
+        if (
+          pendingActionDigest === undefined ||
+          entry.actionIndex !== completedActions ||
+          entry.actionDigest !== pendingActionDigest ||
+          !entry.receiptId?.trim()
+        ) {
+          throw new InstallRecoveryRequiredError(
+            "Install journal action completion is out of order or malformed.",
+          );
+        }
+        completedActions += 1;
+        pendingActionDigest = undefined;
+        break;
+      case "execution-failed":
+        if (
+          pendingActionDigest === undefined ||
+          entry.actionIndex !== completedActions ||
+          entry.actionDigest !== pendingActionDigest ||
+          entry.receiptId !== undefined
+        ) {
+          throw new InstallRecoveryRequiredError(
+            "Install journal failure event is out of order or malformed.",
+          );
+        }
+        terminal = true;
+        break;
+      case "execution-completed":
+        if (
+          phase !== "actions" ||
+          pendingActionDigest !== undefined ||
+          hasActionFields ||
+          entry.receiptId !== undefined
+        ) {
+          throw new InstallRecoveryRequiredError(
+            "Install journal completion event is out of order or malformed.",
+          );
+        }
+        terminal = true;
+        break;
+    }
     previousDigest = digest;
+    previousTimestamp = timestamp;
   }
 }
 
