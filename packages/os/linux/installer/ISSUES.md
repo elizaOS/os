@@ -11,8 +11,10 @@ package never changes a partition table.
 - **Implement the privileged inventory service.** Return whole-disk stable ID,
   current-boot ancestry, sector geometry, GPT primary/backup validity, exact
   partition/free extents, filesystem health, mount state, encryption state,
-  hibernation/Fast Startup state, and shrink minimums. Validate its serialized
-  schema before creating a plan.
+  hibernation/Fast Startup state, and shrink minimums. The typed planner and
+  executor already bind serial, optional WWN, firmware/sysfs path, logical
+  sector size, and GPT disk GUID; the service must populate those fields from
+  OS-owned probes and validate its serialized schema before creating a plan.
 - **Connect plan revalidation and authorization to the root service.** The
   library now reproduces the initial inventory/plan ID, verifies an expiring
   owner credential, re-enumerates before every typed action, and stops on

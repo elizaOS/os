@@ -28,6 +28,13 @@ function disk(overrides: Partial<DiskInventory> = {}): DiskInventory {
   return {
     stableId: "wwn-0x5000c50012345678",
     path: "/dev/disk/by-id/wwn-0x5000c50012345678",
+    hardwareIdentity: {
+      serial: "Z4D3ABCD",
+      wwn: "0x5000c50012345678",
+      firmwarePath:
+        "/sys/devices/pci0000:00/0000:00:17.0/ata1/host0/target0:0:0/0:0:0:0",
+      gptDiskGuid: "f73cab3d-5f8c-43e6-9092-00fef09bd497",
+    },
     sizeBytes: 256 * GIB,
     logicalSectorBytes: 4096,
     partitionTable: "gpt",
@@ -142,6 +149,28 @@ describe("privileged installer execution boundary", () => {
     const target = disk();
     const { request, plan } = reviewedPlan(target);
     const changed = disk({ sizeBytes: 257 * GIB });
+
+    await expect(
+      authorizeInstallPlan(
+        request,
+        plan,
+        authorization(target, plan.planId),
+        dependencies(changed),
+      ),
+    ).rejects.toThrow(/identity changed|stale/);
+  });
+
+  it.each([
+    ["serial", { serial: "Z4D3EFGH" }],
+    ["WWN", { wwn: "0x5000c50087654321" }],
+    ["firmware path", { firmwarePath: "/sys/devices/virtual/block/loop7" }],
+    ["GPT disk GUID", { gptDiskGuid: "1539e59f-943e-47cb-b0b9-6e6175818029" }],
+  ])("rejects %s drift before authorization", async (_name, identityChange) => {
+    const target = disk();
+    const { request, plan } = reviewedPlan(target);
+    const changed = disk({
+      hardwareIdentity: { ...target.hardwareIdentity, ...identityChange },
+    });
 
     await expect(
       authorizeInstallPlan(
