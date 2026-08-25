@@ -112,6 +112,31 @@ export function loadAospLock(filePath = aospLockPath) {
       seen.add(project.path);
     }
   }
+  if (lock.sourceOverlays !== undefined) {
+    if (
+      !Array.isArray(lock.sourceOverlays) ||
+      lock.sourceOverlays.length === 0 ||
+      lock.sourceOverlays.some(
+        (overlay) =>
+          !safeRelativePath(overlay?.path) ||
+          typeof overlay?.url !== "string" ||
+          !overlay.url.startsWith("https://") ||
+          !/^[0-9a-f]{40}$/.test(overlay?.sourceCommit ?? "") ||
+          !/^[0-9a-f]{64}$/.test(overlay?.sha256 ?? "") ||
+          (overlay.baseSha256 !== null &&
+            !/^[0-9a-f]{64}$/.test(overlay?.baseSha256 ?? "")),
+      )
+    ) {
+      fail(`invalid sourceOverlays in AOSP lock: ${filePath}`);
+    }
+    const seen = new Set();
+    for (const overlay of lock.sourceOverlays) {
+      if (seen.has(overlay.path)) {
+        fail(`duplicate source overlay in AOSP lock: ${overlay.path}`);
+      }
+      seen.add(overlay.path);
+    }
+  }
   for (const requiredPath of lock.requiredSourceFiles ?? []) {
     if (!safeRelativePath(requiredPath)) {
       fail(`invalid requiredSourceFiles entry in ${filePath}`);
@@ -447,6 +472,44 @@ export async function verifyLockedArtifact(
     fail(`${label} SHA-256 ${sha256} does not match locked ${contract.sha256}`);
   }
   return { path: resolved, sizeBytes, sha256 };
+}
+
+/** Apply immutable source files required to reconcile pinned AOSP with adevtool. */
+export async function materializeLockedSourceOverlays(aospRoot, lock) {
+  for (const overlay of lock.sourceOverlays ?? []) {
+    const destination = path.join(aospRoot, overlay.path);
+    const currentSha = fs.existsSync(destination)
+      ? createHash("sha256").update(fs.readFileSync(destination)).digest("hex")
+      : null;
+    if (currentSha === overlay.sha256) continue;
+    if (currentSha !== overlay.baseSha256) {
+      fail(
+        `source overlay base mismatch for ${overlay.path}: expected ${overlay.baseSha256 ?? "absent"}, got ${currentSha ?? "absent"}`,
+      );
+    }
+    const partial = `${destination}.partial`;
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    run("curl", [
+      "--location",
+      "--fail",
+      "--retry",
+      "5",
+      "--output",
+      partial,
+      overlay.url,
+    ]);
+    const downloadedSha = createHash("sha256")
+      .update(fs.readFileSync(partial))
+      .digest("hex");
+    if (downloadedSha !== overlay.sha256) {
+      fs.rmSync(partial, { force: true });
+      fail(
+        `source overlay SHA-256 mismatch for ${overlay.path}: expected ${overlay.sha256}, got ${downloadedSha}`,
+      );
+    }
+    fs.renameSync(partial, destination);
+  }
+  return lock.sourceOverlays ?? [];
 }
 
 export async function verifyProprietaryArchive(lock, archivePath) {

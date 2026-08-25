@@ -11,6 +11,7 @@ import {
   assertPinnedAospCheckout,
   loadAospLock,
   materializeExternalProjects,
+  materializeLockedSourceOverlays,
   verifyLockedArtifact,
 } from "./bootstrap-aosp.mjs";
 import { withSisoCompatibility } from "./siso-env.mjs";
@@ -104,6 +105,7 @@ export async function prepareGrizzly({
   }
   materializeExternalProjects(aospRoot, lock);
   assertPinnedAospCheckout(aospRoot, lock);
+  await materializeLockedSourceOverlays(aospRoot, lock);
 
   const adevtoolRoot = path.join(aospRoot, "vendor/adevtool");
   if (!skipInstall) {

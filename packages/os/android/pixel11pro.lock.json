@@ -42,6 +42,43 @@
       "sparsePaths": ["grizzly.json"]
     }
   ],
+  "sourceOverlays": [
+    {
+      "path": "tools/aapt2/Android.bp",
+      "url": "https://raw.githubusercontent.com/GrapheneOS/platform_frameworks_base/b2be3bb5f88bc5833dd4f9a11b3c295259ae733f/tools/aapt2/Android.bp",
+      "sourceCommit": "b2be3bb5f88bc5833dd4f9a11b3c295259ae733f",
+      "baseSha256": "95bc042ba4e10e2a0ad803c1ab96374e5c085c2e4ba318316c06b751e52c2e3b",
+      "sha256": "ecf7e90381479335fdfb9a96a1616fbbe5b66972b1f7c1beaa9fcdaa3b223a39"
+    },
+    {
+      "path": "tools/aapt2/BriefPackageInfo.proto",
+      "url": "https://raw.githubusercontent.com/GrapheneOS/platform_frameworks_base/b2be3bb5f88bc5833dd4f9a11b3c295259ae733f/tools/aapt2/BriefPackageInfo.proto",
+      "sourceCommit": "b2be3bb5f88bc5833dd4f9a11b3c295259ae733f",
+      "baseSha256": null,
+      "sha256": "a7695326ebfc0799888e2b785a1e31518ea1bb85cc89591e66c83879cc3880e7"
+    },
+    {
+      "path": "tools/aapt2/cmd/Dump.cpp",
+      "url": "https://raw.githubusercontent.com/GrapheneOS/platform_frameworks_base/b2be3bb5f88bc5833dd4f9a11b3c295259ae733f/tools/aapt2/cmd/Dump.cpp",
+      "sourceCommit": "b2be3bb5f88bc5833dd4f9a11b3c295259ae733f",
+      "baseSha256": "67965516d553bc2966fee3692e7e9212f33cfcebff79ae073efd605fb8e01fc7",
+      "sha256": "1a0414d6af278aaf138d98c53d7fee10a185a480241d037e5748eb0465055518"
+    },
+    {
+      "path": "tools/aapt2/cmd/Dump.h",
+      "url": "https://raw.githubusercontent.com/GrapheneOS/platform_frameworks_base/b2be3bb5f88bc5833dd4f9a11b3c295259ae733f/tools/aapt2/cmd/Dump.h",
+      "sourceCommit": "b2be3bb5f88bc5833dd4f9a11b3c295259ae733f",
+      "baseSha256": "5dd42182c4972e58a2b4bb647bb650f777625dbeed516d5c266ec8a24d98a344",
+      "sha256": "8271bc53c7421846582a76ea3c5c84b7e7f1d69b6bfc7dfd58b8a7a3f14ba971"
+    },
+    {
+      "path": "tools/aapt2/format/proto/ProtoSerialize.h",
+      "url": "https://raw.githubusercontent.com/GrapheneOS/platform_frameworks_base/b2be3bb5f88bc5833dd4f9a11b3c295259ae733f/tools/aapt2/format/proto/ProtoSerialize.h",
+      "sourceCommit": "b2be3bb5f88bc5833dd4f9a11b3c295259ae733f",
+      "baseSha256": "7bc19c0fcc8dc50ca95b6a2fbeb18f5fe2f5f7e00e06ac04b7f11af1ba31f73c",
+      "sha256": "67b1441fc748881c6fc059a22e1a6ffacb1858d6a4cf64432f494e2d6c971b97"
+    }
+  ],
   "requiredSourceFiles": [
     "vendor/adevtool/config/device/grizzly.yml",
     "vendor/adevtool/config/device/common/gen11pixel.yml",
