@@ -135,9 +135,11 @@ export async function prepareGrizzly({
     });
   }
   const generatedRoot = path.join(aospRoot, "vendor/google_devices/grizzly");
+  let generatedTreeComplete = false;
   if (fs.existsSync(generatedRoot)) {
     try {
       assertGeneratedVendorTree(aospRoot, lock);
+      generatedTreeComplete = true;
     } catch {
       // A failed adevtool run can leave a partial tree that is unsafe to
       // merge into on retry. Remove only this generated device directory.
@@ -147,15 +149,17 @@ export async function prepareGrizzly({
   fs.mkdirSync(path.dirname(overlayStampPath), { recursive: true });
   fs.writeFileSync(overlayStampPath, overlayStamp);
 
-  const [commandName, ...commandArguments] = lock.generatedVendor.command;
-  const command =
-    commandName === "adevtool"
-      ? path.join(adevtoolRoot, "bin/run")
-      : commandName;
-  run(command, commandArguments, {
-    cwd: aospRoot,
-    env: withSisoCompatibility(),
-  });
+  if (!generatedTreeComplete) {
+    const [commandName, ...commandArguments] = lock.generatedVendor.command;
+    const command =
+      commandName === "adevtool"
+        ? path.join(adevtoolRoot, "bin/run")
+        : commandName;
+    run(command, commandArguments, {
+      cwd: aospRoot,
+      env: withSisoCompatibility(),
+    });
+  }
   const files = assertGeneratedVendorTree(aospRoot, lock);
 
   const downloadRoot = path.join(adevtoolRoot, "dl");
