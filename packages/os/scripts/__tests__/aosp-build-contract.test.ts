@@ -311,6 +311,11 @@ describe("AOSP build contracts", () => {
             "df70b3a1420e5d0e4e8407714cee5cbee14f91c7f6dc6f41f5b08910a88858ad",
         }),
         expect.objectContaining({
+          path: "frameworks/base/tools/aapt2/format/proto/ProtoSerialize.cpp",
+          sha256:
+            "b348a29437cbe7974c7fd10dc22227c903d3866c9f4184ce5c6a87f5692cdf46",
+        }),
+        expect.objectContaining({
           path: "frameworks/base/tools/aapt2/cmd/Dump.cpp",
           sha256:
             "1a0414d6af278aaf138d98c53d7fee10a185a480241d037e5748eb0465055518",

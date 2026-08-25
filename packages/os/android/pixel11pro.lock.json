@@ -106,6 +106,13 @@
       "sha256": "67b1441fc748881c6fc059a22e1a6ffacb1858d6a4cf64432f494e2d6c971b97"
     },
     {
+      "path": "frameworks/base/tools/aapt2/format/proto/ProtoSerialize.cpp",
+      "url": "https://raw.githubusercontent.com/GrapheneOS/platform_frameworks_base/b2be3bb5f88bc5833dd4f9a11b3c295259ae733f/tools/aapt2/format/proto/ProtoSerialize.cpp",
+      "sourceCommit": "b2be3bb5f88bc5833dd4f9a11b3c295259ae733f",
+      "baseSha256": "7c00e64e926d0f745ec8c101a6afcf571a3a8d6d59fd4d9979d8cdedfeedca79",
+      "sha256": "b348a29437cbe7974c7fd10dc22227c903d3866c9f4184ce5c6a87f5692cdf46"
+    },
+    {
       "path": "tools/apksig/Android.bp",
       "url": "https://raw.githubusercontent.com/GrapheneOS/platform_tools_apksig/ba4d984e1a360d427307d669d2f789212130e9e8/Android.bp",
       "sourceCommit": "ba4d984e1a360d427307d669d2f789212130e9e8",
