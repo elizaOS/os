@@ -256,6 +256,13 @@ describe("AOSP build contracts", () => {
       `${pixelLock.device.productBrand}/${pixelLock.device.productName}/${pixelLock.device.codename}:`,
     );
     const grizzlyLock = loadAospLock(grizzlyLockPath);
+    expect(grizzlyLock).toMatchObject({
+      manifestUrl: "https://github.com/GrapheneOS/platform_manifest.git",
+      manifestRevision: "17",
+      manifestRefType: "branch",
+      manifestCommit: "aee72ee010700905b6e3d1315cf7f5f2371a0276",
+    });
+    expect(grizzlyLock.manifestTagObject).toBeUndefined();
     expect(grizzlyLock.device).toMatchObject({
       targetId: "pixel11pro-grizzly",
       codename: "grizzly",

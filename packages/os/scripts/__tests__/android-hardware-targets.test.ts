@@ -44,7 +44,7 @@ test("physical Android target inventory stays fail-closed", () => {
   expect(pixel11Pro.blockedReasons).toContainEqual(
     expect.stringContaining("stock kernel"),
   );
-  expect(products).toContain("eliza_grizzly_phone-trunk_staging-userdebug");
+  expect(products).toContain("eliza_grizzly_phone-cur-userdebug");
   expect(lightPhone).toMatchObject({
     targetId: "lightphone3-tlp301",
     sourceStatus: "blocked",

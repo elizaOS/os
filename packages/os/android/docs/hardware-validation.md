@@ -43,13 +43,15 @@ Gemma artifact is unavailable.
 
 ## Pixel 11 Pro generated candidate
 
-`grizzly` is pinned in `pixel11pro.lock.json` to Android 17 r1, stock build
-`CD1A.260714.001.A9`, exact `adevtool` and `vendor_state` commits, and the stock
-kernel extraction path. The connected lab phone reports the same A9 build and
-bootloader after its stock update, so that exact factory image is also the
-rollback source. Do not downgrade to the phone's earlier C2 build after the A9
-bootloader has run. Do not unlock or flash until the A9 archive verifies and
-the A9-derived elizaOS images are retained.
+`grizzly` is pinned in `pixel11pro.lock.json` to the GrapheneOS 17 manifest
+commit based on Android 17 r1, stock build `CD1A.260714.001.A9`, exact
+`adevtool` and `vendor_state` commits, and the stock-kernel extraction path.
+The connected lab phone currently reports `CD1A.260618.001.C2`, so retain and
+verify its exact C2 factory image before unlocking and treat A9 as an upgrade.
+After the first sync, retain `repo manifest -r` because the GrapheneOS
+development manifest refers to moving project branches. Do not downgrade to C2
+after the A9 bootloader has run. Do not unlock or flash until both recovery
+archives verify and the A9-derived elizaOS images are retained.
 
 Generate and verify the device layer before building:
 

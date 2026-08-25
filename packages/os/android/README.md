@@ -136,9 +136,12 @@ and Google's [Pixel driver binaries](https://developers.google.com/android/drive
 ### Pixel 11 Pro (`grizzly`) generated device support
 
 Google has not published the traditional Pixel 11 device/kernel project set.
-`pixel11pro.lock.json` therefore pins a reproducible generated-device path:
-Android 17 r1, GrapheneOS `adevtool`, GrapheneOS `vendor_state`, and Google's
-A9 factory image matching the lab phone for both generation and rollback. The
+`pixel11pro.lock.json` therefore pins a generated-device path: the GrapheneOS
+17 manifest commit based on Android 17 r1, GrapheneOS `adevtool`, GrapheneOS
+`vendor_state`, and Google's A9 factory image for generation and the
+post-upgrade recovery baseline. The GrapheneOS development manifest still uses
+moving project branches, so the first successful sync must retain `repo
+manifest -r` before the resulting source tree is fully immutable. The
 first bring-up deliberately uses the stock `spacecraft` kernel, modules, DTB,
 and DTBO extracted by `adevtool`; it does not treat the missing public kernel
 source as reconstructed source.
@@ -157,8 +160,9 @@ make -C packages/os/android build-grizzly \
 
 Preparation uses sparse exact-commit Git checkouts for the generation inputs,
 runs `adevtool generate-all -d grizzly`, verifies the required output, and
-retains and verifies both factory images. Downloads are governed by Google's
-Pixel factory-image terms, which `adevtool` displays before download. The
+retains and verifies the A9 factory image. The exact stock build on a lab phone
+must also be retained separately before unlocking. Downloads are governed by
+Google's Pixel factory-image terms, which `adevtool` displays before download. The
 result remains installer-ineligible until the exact image completes the full
 physical validation and rollback matrix.
 

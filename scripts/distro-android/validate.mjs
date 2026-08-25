@@ -395,9 +395,9 @@ export function validateProductLayer(vendorDir, brand) {
   );
   assertMatches(
     androidProducts,
-    new RegExp(`${brand.productName}-trunk_staging-userdebug`),
+    new RegExp(escapeRegExp(brand.lunchTarget)),
     "AndroidProducts.mk",
-    `${brand.productName}-trunk_staging-userdebug lunch choice`,
+    `${brand.lunchTarget} lunch choice`,
   );
 
   // Init script + sepolicy files required by the product overlay.

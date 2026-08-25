@@ -146,7 +146,7 @@ function releaseArtifactInstructions(
     ],
     provenance_requirements: [
       `AOSP workspace path and ${inventoryTarget?.aospLockPath ?? "the selected AOSP lock"} digest`,
-      `lunch target ${productName}-trunk_staging-userdebug`,
+      `lunch target ${inventoryTarget?.lunchTarget ?? `${productName}-trunk_staging-userdebug`}`,
       "elizaOS/eliza source commit used for the retained application",
       "product_out_dir used as source for staged images",
       "per-file byte size and SHA-256 computed from staged boot/vendor_boot/super images",

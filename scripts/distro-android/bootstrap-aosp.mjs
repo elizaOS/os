@@ -24,19 +24,22 @@ export function loadAospLock(filePath = aospLockPath) {
   const document = JSON.parse(fs.readFileSync(filePath, "utf8"));
   const cuttlefishProfile = document?.profiles?.cuttlefish;
   const lock = cuttlefishProfile
-    ? {
-        schemaVersion: document.schemaVersion,
-        manifestUrl: cuttlefishProfile.manifest?.url,
-        manifestRevision: cuttlefishProfile.manifest?.tag,
-        manifestTagObject: cuttlefishProfile.manifest?.tagObject,
-        manifestCommit: cuttlefishProfile.manifest?.commit,
-      }
-    : document;
+      ? {
+          schemaVersion: document.schemaVersion,
+          manifestUrl: cuttlefishProfile.manifest?.url,
+          manifestRevision: cuttlefishProfile.manifest?.tag,
+          manifestTagObject: cuttlefishProfile.manifest?.tagObject,
+          manifestCommit: cuttlefishProfile.manifest?.commit,
+        }
+      : document;
+  const manifestRefType = lock.manifestRefType ?? "tag";
   if (
     lock.schemaVersion !== 1 ||
     typeof lock.manifestUrl !== "string" ||
     typeof lock.manifestRevision !== "string" ||
-    !/^[0-9a-f]{40}$/.test(lock.manifestTagObject ?? "") ||
+    !["branch", "tag"].includes(manifestRefType) ||
+    (manifestRefType === "tag" &&
+      !/^[0-9a-f]{40}$/.test(lock.manifestTagObject ?? "")) ||
     !/^[0-9a-f]{40}$/.test(lock.manifestCommit ?? "")
   ) {
     fail(`invalid AOSP lock: ${filePath}`);
@@ -319,7 +322,23 @@ export function assertPinnedAospCheckout(
   return actual;
 }
 
-export function assertRemoteManifestTag(lock = loadAospLock()) {
+export function assertRemoteManifestRevision(lock = loadAospLock()) {
+  const manifestRefType = lock.manifestRefType ?? "tag";
+  if (manifestRefType === "branch") {
+    const branchRef = `refs/heads/${lock.manifestRevision}`;
+    const output = run(
+      "git",
+      ["ls-remote", lock.manifestUrl, branchRef],
+      { capture: true },
+    );
+    const [actualCommit, actualRef] = output.trim().split(/\s+/, 2);
+    if (actualRef !== branchRef || actualCommit !== lock.manifestCommit) {
+      fail(
+        `remote manifest branch ${lock.manifestRevision} does not match the lock`,
+      );
+    }
+    return;
+  }
   const output = run(
     "git",
     [
@@ -515,7 +534,7 @@ export function bootstrapAosp({
       `refusing to initialize nonempty directory without .repo: ${aospRoot}`,
     );
   }
-  assertRemoteManifestTag(lock);
+  assertRemoteManifestRevision(lock);
   run(
     repoBin,
     ["init", "-u", lock.manifestUrl, "-b", lock.manifestRevision, "--depth=1"],

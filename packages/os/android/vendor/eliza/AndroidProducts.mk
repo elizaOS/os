@@ -20,4 +20,4 @@ COMMON_LUNCH_CHOICES := \
     eliza_cf_x86_64_phone-trunk_staging-userdebug \
     eliza_cf_riscv64_phone-trunk_staging-userdebug \
     eliza_tegu_phone-trunk_staging-userdebug \
-    eliza_grizzly_phone-trunk_staging-userdebug
+    eliza_grizzly_phone-cur-userdebug
