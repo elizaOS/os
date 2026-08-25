@@ -149,6 +149,43 @@ function normalizeGeneratedVintf(aospRoot) {
   if (normalized !== contents) fs.writeFileSync(manifestPath, normalized);
 }
 
+// The extracted stock Malibu fstab carries encryption/compression and large-
+// device options that are not implemented by the Android 17 kernel we build
+// for the generated grizzly target.  Leaving them in place makes f2fs reject
+// the /data mount during first-stage init (and the phone remains on the Google
+// splash with no normal-boot ADB).  Keep the stock file in the generated tree
+// for provenance, but replace only its userdata entry with the conservative
+// options verified against this kernel in recovery.  This is deliberately
+// applied to both the vendor and recovery copies so diagnostics and normal
+// boot use the same mount contract.
+function normalizeGeneratedF2fsMountOptions(aospRoot) {
+  const relativePaths = [
+    "vendor/google_devices/grizzly/proprietary/vendor/etc/fstab.malibu",
+    "vendor/google_devices/grizzly/proprietary/vendor_ramdisk/system/etc/fstab.malibu",
+    "vendor/google_devices/grizzly/proprietary/recovery/system/etc/recovery.fstab",
+  ];
+  const userdataPattern =
+    /^\/dev\/block\/platform\/3c2d0000\.ufs\/by-name\/userdata\s+\/data\s+f2fs\s+.*$/m;
+  const normalizedUserdata =
+    "/dev/block/platform/3c2d0000.ufs/by-name/userdata /data f2fs " +
+    "noatime,nosuid,nodev,discard,reserve_root=32768,resgid=1065," +
+    "fsync_mode=nobarrier,atgc,checkpoint_merge " +
+    "latemount,wait,check,quota,formattable," +
+    "sysfs_path=/dev/sys/block/bootdevice";
+  for (const relativePath of relativePaths) {
+    const filePath = path.join(aospRoot, relativePath);
+    if (!fs.existsSync(filePath)) continue;
+    const contents = fs.readFileSync(filePath, "utf8");
+    const normalized = contents.replace(userdataPattern, normalizedUserdata);
+    if (normalized !== contents) {
+      fs.writeFileSync(
+        filePath,
+        `# elizaOS: use kernel-supported f2fs userdata options for grizzly\n${normalized}`,
+      );
+    }
+  }
+}
+
 function fail(message) {
   throw new Error(`[distro-android:grizzly] ${message}`);
 }
@@ -268,6 +305,7 @@ export async function prepareGrizzly({
       normalizeGeneratedProprietaryNamespace(aospRoot);
       normalizeGeneratedSePolicy(aospRoot);
       normalizeGeneratedVintf(aospRoot);
+      normalizeGeneratedF2fsMountOptions(aospRoot);
       assertGeneratedVendorTree(aospRoot, lock);
       generatedTreeComplete = true;
     } catch {
@@ -293,6 +331,7 @@ export async function prepareGrizzly({
     normalizeGeneratedProprietaryNamespace(aospRoot);
     normalizeGeneratedSePolicy(aospRoot);
     normalizeGeneratedVintf(aospRoot);
+    normalizeGeneratedF2fsMountOptions(aospRoot);
   }
   const files = assertGeneratedVendorTree(aospRoot, lock);
 
