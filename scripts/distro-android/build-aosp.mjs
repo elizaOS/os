@@ -174,23 +174,14 @@ function stopRunningCvd() {
   );
 }
 
-function runAospBuild(aospRoot, jobs, brand, lock) {
-  const env = { ...process.env };
-  const buildId = lock.referenceFactoryImage?.buildId;
-  if (buildId) {
-    // Android 17 makes BUILD_ID read-only before product makefiles are
-    // evaluated. Supply the product-scoped override consumed by
-    // build/make/core/version_util.mk instead of assigning BUILD_ID in the
-    // product definition.
-    env[`BUILD_ID_${brand.productName}`] = buildId;
-  }
+function runAospBuild(aospRoot, jobs, brand) {
   run(
     "bash",
     [
       "-lc",
       `source build/envsetup.sh && lunch ${brand.lunchTarget} && m -j${jobs}`,
     ],
-    { cwd: aospRoot, env },
+    { cwd: aospRoot },
   );
 }
 
@@ -296,7 +287,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   if (!args.skipBuild) {
-    runAospBuild(args.aospRoot, args.jobs, brand, lock);
+    runAospBuild(args.aospRoot, args.jobs, brand);
   }
 
   if (args.launch) {
