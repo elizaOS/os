@@ -290,12 +290,12 @@ describe("AOSP build contracts", () => {
     expect(grizzlyLock.sourceOverlays).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          path: "tools/aapt2/BriefPackageInfo.proto",
+          path: "frameworks/base/tools/aapt2/BriefPackageInfo.proto",
           sourceCommit: "b2be3bb5f88bc5833dd4f9a11b3c295259ae733f",
           baseSha256: null,
         }),
         expect.objectContaining({
-          path: "tools/aapt2/cmd/Dump.cpp",
+          path: "frameworks/base/tools/aapt2/cmd/Dump.cpp",
           sha256:
             "1a0414d6af278aaf138d98c53d7fee10a185a480241d037e5748eb0465055518",
         }),
