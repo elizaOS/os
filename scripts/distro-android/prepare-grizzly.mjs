@@ -185,6 +185,20 @@ function normalizeGeneratedF2fsMountOptions(aospRoot) {
   }
 }
 
+function normalizeGeneratedUsbConfigfs(aospRoot) {
+  const filePath = path.join(
+    aospRoot,
+    "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.malibu.usb.rc",
+  );
+  if (!fs.existsSync(filePath)) return;
+  const contents = fs.readFileSync(filePath, "utf8");
+  const normalized = contents.replace(
+    /setprop sys\.usb\.configfs 2/g,
+    "setprop sys.usb.configfs 1",
+  );
+  if (normalized !== contents) fs.writeFileSync(filePath, normalized);
+}
+
 function fail(message) {
   throw new Error(`[distro-android:grizzly] ${message}`);
 }
@@ -305,6 +319,7 @@ export async function prepareGrizzly({
       normalizeGeneratedSePolicy(aospRoot);
       normalizeGeneratedVintf(aospRoot);
       normalizeGeneratedF2fsMountOptions(aospRoot);
+      normalizeGeneratedUsbConfigfs(aospRoot);
       assertGeneratedVendorTree(aospRoot, lock);
       generatedTreeComplete = true;
     } catch {
@@ -331,6 +346,7 @@ export async function prepareGrizzly({
     normalizeGeneratedSePolicy(aospRoot);
     normalizeGeneratedVintf(aospRoot);
     normalizeGeneratedF2fsMountOptions(aospRoot);
+    normalizeGeneratedUsbConfigfs(aospRoot);
   }
   const files = assertGeneratedVendorTree(aospRoot, lock);
 
