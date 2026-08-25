@@ -35,6 +35,7 @@ ARTIFACT_DIR="$TMP_DIR/artifacts"
 mkdir -p "$BIN_DIR" "$ARTIFACT_DIR"
 printf 'boot-image-fixture\n' >"$ARTIFACT_DIR/boot.img"
 printf 'vendor-boot-image-fixture\n' >"$ARTIFACT_DIR/vendor_boot.img"
+printf 'vendor-kernel-boot-image-fixture\n' >"$ARTIFACT_DIR/vendor_kernel_boot.img"
 printf 'super-image-fixture\n' >"$ARTIFACT_DIR/super.img"
 
 cat >"$BIN_DIR/adb" <<'EOF'
@@ -91,6 +92,7 @@ INSTALL_OUT="$TMP_DIR/install.out"
 assert_contains "$INSTALL_OUT" "Dry-run only. No commands were executed."
 assert_contains "$INSTALL_OUT" "fastboot flash boot"
 assert_contains "$INSTALL_OUT" "fastboot flash vendor_boot"
+assert_contains "$INSTALL_OUT" "fastboot flash vendor_kernel_boot"
 assert_contains "$INSTALL_OUT" "fastboot flash super"
 pass "installer dry-run plans discovered images"
 
@@ -211,15 +213,17 @@ pass "manifest validator enforces runtime and rollback evidence contracts"
 
 HASH_BOOT="$(node -e "const {createHash}=require('node:crypto'); const {readFileSync}=require('node:fs'); process.stdout.write(createHash('sha256').update(readFileSync(process.argv[1])).digest('hex'))" "$ARTIFACT_DIR/boot.img")"
 HASH_VENDOR_BOOT="$(node -e "const {createHash}=require('node:crypto'); const {readFileSync}=require('node:fs'); process.stdout.write(createHash('sha256').update(readFileSync(process.argv[1])).digest('hex'))" "$ARTIFACT_DIR/vendor_boot.img")"
+HASH_VENDOR_KERNEL_BOOT="$(node -e "const {createHash}=require('node:crypto'); const {readFileSync}=require('node:fs'); process.stdout.write(createHash('sha256').update(readFileSync(process.argv[1])).digest('hex'))" "$ARTIFACT_DIR/vendor_kernel_boot.img")"
 HASH_SUPER="$(node -e "const {createHash}=require('node:crypto'); const {readFileSync}=require('node:fs'); process.stdout.write(createHash('sha256').update(readFileSync(process.argv[1])).digest('hex'))" "$ARTIFACT_DIR/super.img")"
 ARTIFACT_MANIFEST="$TMP_DIR/release-manifest.json"
-node - "$ROOT/manifests/android-release-manifest.example.json" "$ARTIFACT_MANIFEST" "$HASH_BOOT" "$HASH_VENDOR_BOOT" "$HASH_SUPER" <<'NODE'
+node - "$ROOT/manifests/android-release-manifest.example.json" "$ARTIFACT_MANIFEST" "$HASH_BOOT" "$HASH_VENDOR_BOOT" "$HASH_VENDOR_KERNEL_BOOT" "$HASH_SUPER" <<'NODE'
 const { readFileSync, writeFileSync } = require('node:fs');
-const [source, target, bootHash, vendorBootHash, superHash] = process.argv.slice(2);
+const [source, target, bootHash, vendorBootHash, vendorKernelBootHash, superHash] = process.argv.slice(2);
 const manifest = JSON.parse(readFileSync(source, 'utf8'));
 manifest.artifacts[0].sha256 = bootHash;
 manifest.artifacts[1].sha256 = vendorBootHash;
-manifest.artifacts[2].sha256 = superHash;
+manifest.artifacts[2].sha256 = vendorKernelBootHash;
+manifest.artifacts[3].sha256 = superHash;
 writeFileSync(target, `${JSON.stringify(manifest, null, 2)}\n`);
 NODE
 
@@ -235,6 +239,7 @@ EXTRA_ARTIFACT_DIR="$TMP_DIR/artifacts-with-extra-image"
 mkdir -p "$EXTRA_ARTIFACT_DIR"
 cp "$ARTIFACT_DIR/boot.img" "$EXTRA_ARTIFACT_DIR/boot.img"
 cp "$ARTIFACT_DIR/vendor_boot.img" "$EXTRA_ARTIFACT_DIR/vendor_boot.img"
+cp "$ARTIFACT_DIR/vendor_kernel_boot.img" "$EXTRA_ARTIFACT_DIR/vendor_kernel_boot.img"
 cp "$ARTIFACT_DIR/super.img" "$EXTRA_ARTIFACT_DIR/super.img"
 printf 'undeclared-dtbo-image\n' >"$EXTRA_ARTIFACT_DIR/dtbo.img"
 EXTRA_ARTIFACT_OUT="$TMP_DIR/extra-artifact.out"

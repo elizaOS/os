@@ -34,6 +34,14 @@
       "fastbootMode": "bootloader"
     },
     {
+      "partition": "vendor_kernel_boot",
+      "filename": "vendor_kernel_boot.img",
+      "sha256": "85fefc1a87a7de510a204dccb603a9c9fcd0b2273d57df625a3c5fc1b55e39dc",
+      "sizeBytes": 33,
+      "required": true,
+      "fastbootMode": "bootloader"
+    },
+    {
       "partition": "super",
       "filename": "super.img",
       "sha256": "fb5500dfc6572b380682d824fb84662cfd39c8bb834e5604f3d4772462987628",

@@ -276,6 +276,7 @@ collect_images() {
   local known_images=(
     boot
     vendor_boot
+    vendor_kernel_boot
     dtbo
     vbmeta
     vbmeta_system
