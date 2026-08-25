@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   loadPhysicalTargetContract,
@@ -15,6 +15,7 @@ import {
 import { parseSmokeArgs } from "../../../../scripts/aosp/smoke-cuttlefish.mjs";
 import {
   assertExtractedVendorTree,
+  assertGeneratedVendorTree,
   loadAospLock,
   parseBootstrapArgs,
   verifyProprietaryArchive,
@@ -315,6 +316,36 @@ describe("AOSP build contracts", () => {
         ),
       ),
     ).toBe(false);
+  });
+
+  test("generated Pixel support verifies pinned firmware text invariants", async () => {
+    const root = await mkdtemp(join(tmpdir(), "elizaos-grizzly-contract-"));
+    try {
+      const lock = loadAospLock(
+        join(repositoryRoot, "packages/os/android/pixel11pro.lock.json"),
+      );
+      for (const requiredPath of lock.generatedVendor.requiredFiles) {
+        const destination = join(root, requiredPath);
+        await mkdir(dirname(destination), { recursive: true });
+        await writeFile(destination, "generated fixture\n");
+      }
+      for (const entry of lock.generatedVendor.requiredTextFiles) {
+        await writeFile(
+          join(root, entry.path),
+          `${entry.includes.join("\n")}\n`,
+        );
+      }
+      expect(assertGeneratedVendorTree(root, lock)).toHaveLength(
+        lock.generatedVendor.requiredFiles.length,
+      );
+      const firmwareContract = lock.generatedVendor.requiredTextFiles[0];
+      await writeFile(join(root, firmwareContract.path), "wrong firmware\n");
+      expect(() => assertGeneratedVendorTree(root, lock)).toThrow(
+        /generated vendor contract mismatch/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test("Pixel deployment uses the OS brand contract accepted by build-aosp", () => {

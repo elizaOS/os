@@ -83,6 +83,24 @@
       "vendor/google_devices/grizzly/stock-kernel/vendor_dlkm.modules.blocklist",
       "vendor/google_devices/grizzly/stock-kernel/vendor_dlkm.modules.load",
       "vendor/google_devices/grizzly/stock-kernel/vendor_kernel_boot.modules.load"
+    ],
+    "requiredTextFiles": [
+      {
+        "path": "vendor/google_devices/grizzly/firmware/android-info.txt",
+        "includes": [
+          "require board=grizzly",
+          "require version-bootloader=spacecraft-17.4-15938155",
+          "require version-baseband=a900a-MP_260716-260716-M-15880348",
+          "require partition-exists=vendor_kernel_boot"
+        ]
+      },
+      {
+        "path": "vendor/google_devices/grizzly/grizzly.mk",
+        "includes": [
+          "ifneq ($(BUILD_ID),CD1A.260714.001.A9)",
+          "TARGET_KERNEL_DIR := vendor/google_devices/grizzly/stock-kernel"
+        ]
+      }
     ]
   }
 }

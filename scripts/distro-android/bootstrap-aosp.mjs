@@ -167,7 +167,20 @@ export function loadAospLock(filePath = aospLockPath) {
       generated.requiredFiles.length === 0 ||
       generated.requiredFiles.some(
         (requiredPath) => !safeRelativePath(requiredPath),
-      )
+      ) ||
+      (generated.requiredTextFiles !== undefined &&
+        (!Array.isArray(generated.requiredTextFiles) ||
+          generated.requiredTextFiles.length === 0 ||
+          generated.requiredTextFiles.some(
+            (entry) =>
+              !safeRelativePath(entry?.path) ||
+              !generated.requiredFiles.includes(entry.path) ||
+              !Array.isArray(entry?.includes) ||
+              entry.includes.length === 0 ||
+              entry.includes.some(
+                (token) => typeof token !== "string" || token.length === 0,
+              ),
+          )))
     ) {
       fail(`invalid generatedVendor in ${filePath}`);
     }
@@ -450,6 +463,17 @@ export function assertGeneratedVendorTree(aospRoot, lock) {
   );
   if (missing.length > 0) {
     fail(`generated vendor tree is incomplete: ${missing.join(", ")}`);
+  }
+  for (const entry of contract.requiredTextFiles ?? []) {
+    const contents = fs.readFileSync(path.join(aospRoot, entry.path), "utf8");
+    const missingTokens = entry.includes.filter(
+      (token) => !contents.includes(token),
+    );
+    if (missingTokens.length > 0) {
+      fail(
+        `generated vendor contract mismatch in ${entry.path}: ${missingTokens.join(", ")}`,
+      );
+    }
   }
   return contract.requiredFiles;
 }
