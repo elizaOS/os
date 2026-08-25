@@ -22,6 +22,9 @@ The product and release architecture is recorded in
   Neither a private key nor a substitute development trust root is committed
   here.
 - Secure Boot signing keys are release inputs and are never committed here.
+  Secure Boot is unsupported on riscv64 because Debian does not provide a
+  reviewed signed shim chain for that architecture; release metadata must not
+  claim Secure Boot parity for RISC-V.
 - Native builds use the Debian host's installed tooling. Do not set
   `ToolsTree=default`: mkosi 25.3's generated tools-tree package closure pulls
   the x86-only `grub-pc-bin` package even for an arm64 tools tree. The target

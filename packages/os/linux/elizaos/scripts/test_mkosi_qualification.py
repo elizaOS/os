@@ -186,6 +186,35 @@ class QualificationPreflightTest(unittest.TestCase):
                 document["errors"],
             )
 
+    def test_qemu_preflight_requires_the_promotion_graphical_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            evidence = root / "qemu.json"
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(HERE / "mkosi-qemu-qualify.py"),
+                    "--architecture", "amd64",
+                    "--image", str(root / "missing.raw"),
+                    "--firmware-code", str(root / "missing-code.fd"),
+                    "--firmware-vars", str(root / "missing-vars.fd"),
+                    "--transcript", str(root / "transcript.log"),
+                    "--evidence", str(evidence),
+                    "--preflight-only",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            document = json.loads(evidence.read_text())
+            self.assertIn(
+                "Started gdm.service - GNOME Display Manager",
+                document["requiredMarkers"],
+            )
+            self.assertIn(
+                "Reached target Graphical Interface", document["requiredMarkers"]
+            )
+
     def test_persistence_preflight_never_invents_write_or_reboot_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

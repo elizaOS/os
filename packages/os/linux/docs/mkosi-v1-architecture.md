@@ -100,6 +100,10 @@ RISC-V firmware and boards. Software rendering is acceptable for the initial
 qualified boards when the complete GNOME, tray, overlay, Cloud, browser, and
 computer-use acceptance suite passes.
 
+Secure Boot is unsupported on riscv64. Debian does not provide the reviewed
+signed shim chain required by this release contract, so RISC-V release and
+marketing metadata must not claim Secure Boot parity.
+
 ## Full Control contract
 
 The UI, renderer, browser automation, model client, and plugins run as the

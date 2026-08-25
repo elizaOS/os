@@ -46,6 +46,12 @@ const ENCRYPTION_STATES = new Set([
   "luks",
   "unknown",
 ]);
+const FILESYSTEM_HEALTH_STATES = new Set([
+  "healthy",
+  "dirty",
+  "unhealthy",
+  "unknown",
+]);
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -128,6 +134,14 @@ export function validateDiskInventory(disk: DiskInventory): void {
       throw new Error(`Partition ${partition.id} has an invalid role.`);
     if (!FILESYSTEMS.has(partition.filesystem))
       throw new Error(`Partition ${partition.id} has an invalid filesystem.`);
+    if (
+      partition.filesystemHealth !== undefined &&
+      !FILESYSTEM_HEALTH_STATES.has(partition.filesystemHealth)
+    ) {
+      throw new Error(
+        `Partition ${partition.id} has invalid filesystem health evidence.`,
+      );
+    }
     if (typeof partition.mounted !== "boolean")
       throw new Error(
         `Partition ${partition.id} mount state must be explicit.`,
@@ -157,6 +171,8 @@ export function validateDiskInventory(disk: DiskInventory): void {
         typeof partition.resize.filesystemHealthy !== "boolean" ||
         typeof partition.resize.mounted !== "boolean" ||
         partition.resize.mounted !== partition.mounted ||
+        (partition.filesystemHealth !== undefined &&
+          partition.filesystemHealth !== "healthy") ||
         (partition.resize.hibernated !== undefined &&
           typeof partition.resize.hibernated !== "boolean") ||
         (partition.resize.dirty !== undefined &&
@@ -212,6 +228,7 @@ export function createDiskInventoryFingerprint(disk: DiskInventory): string {
       mounted: partition.mounted,
       role: partition.role,
       filesystem: partition.filesystem,
+      filesystemHealth: partition.filesystemHealth ?? null,
       osFamily: partition.osFamily ?? null,
       encryption: partition.encryption ?? null,
       resize: partition.resize

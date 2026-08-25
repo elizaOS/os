@@ -43,6 +43,7 @@ require_text 'BuildSources=../..' "${MKOSI_DIR}/mkosi.conf"
 require_text 'Checksum=yes' "${MKOSI_DIR}/mkosi.conf"
 require_text '    python3-cryptography' "${MKOSI_DIR}/mkosi.conf"
 require_text '    gdisk' "${MKOSI_DIR}/mkosi.conf"
+require_text '    e2fsprogs' "${MKOSI_DIR}/mkosi.conf"
 require_text '    zstd' "${MKOSI_DIR}/mkosi.conf"
 for package in gdm3 gnome-core gnome-initial-setup speech-dispatcher-espeak-ng xdg-desktop-portal-gnome; do
     require_text "    ${package}" "${MKOSI_DIR}/mkosi.conf"
@@ -177,14 +178,18 @@ require_text 'choices=("usb", "virtio"), default="usb"' \
 require_text 'terminationReason' "${ROOT}/scripts/mkosi-qemu-qualify.py"
 require_text 'virt,accel=hvf,gic-version=max' "${ROOT}/scripts/mkosi-qemu-qualify.py"
 require_text 'Started gdm.service - GNOME Display Manager' "${ROOT}/scripts/mkosi-qemu-qualify.py"
+require_text 'Reached target Graphical Interface' "${ROOT}/scripts/mkosi-qemu-qualify.py"
 require_text 'two_boot_home_persistence' \
     "${ROOT}/scripts/mkosi-persistence-qualify.py"
 require_text 'virtual USB expanded-byte readback digest mismatch' \
     "${ROOT}/scripts/mkosi-persistence-qualify.py"
 require_text 'home sentinel did not survive the second boot' \
     "${ROOT}/scripts/mkosi-persistence-qualify.py"
+require_text 'Reached target Graphical Interface' \
+    "${ROOT}/scripts/mkosi-persistence-qualify.py"
 require_text 'work image must not already exist' \
     "${ROOT}/scripts/mkosi-persistence-qualify.py"
+require_text 'Secure Boot is unsupported on riscv64' "${ROOT}/mkosi/README.md"
 require_text 'elizaos-system' "${ROOT}/scripts/generate-mkosi-sbom.sh"
 require_text 'mount --read-only --options noload' \
     "${ROOT}/scripts/generate-mkosi-sbom.sh"

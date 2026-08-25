@@ -36,8 +36,12 @@ sanitized environment, and no shell. Its parser binds serial, WWN,
 firmware path, sector size, GPT and partition UUIDs, redundant GPT main/backup
 integrity, exact byte boundaries,
 reported mountpoints, read-only/removable state, and conservative filesystem
-and encryption classifications. It emits no resize evidence; dedicated
-filesystem-native health and minimum-size probes must add that later.
+and encryption classifications. Unmounted ext4 filesystems are checked with
+read-only `dumpe2fs`, `e2fsck -f -n`, and `resize2fs -P` probes. Clean 4 KiB
+filesystems receive bounded minimum-size evidence; dirty and unhealthy ext4
+filesystems protect the disk, while missing, malformed, non-4-KiB, or failed
+probe output emits no shrink claim. Dedicated btrfs and Windows-native health,
+encryption, hibernation, and minimum-size probes are still required.
 The GPT verifier parses diagnostics as well as exit status because `sgdisk`
 may report exit zero after reconstructing a corrupt backup header in memory.
 The provider also resolves `/` with `findmnt` and walks its complete inverse

@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
+import type {
+  LinuxInventoryCommandResult,
+  LinuxInventoryCommandRunner,
+} from "./linux-inventory";
 import {
   isSgdiskRedundancyVerified,
   parseLinuxBootAncestorPaths,
   parseLinuxLsblkInventory,
   parseLinuxRootBlockSource,
+  probeLinuxExt4Filesystem,
 } from "./linux-inventory";
 
 const GIB = 1024 ** 3;
@@ -103,6 +108,107 @@ function parse(
 }
 
 describe("Linux read-only disk inventory parser", () => {
+  it("derives bounded ext4 resize evidence from read-only native probes", async () => {
+    const calls: Array<[string, readonly string[]]> = [];
+    const runner: LinuxInventoryCommandRunner = {
+      async run(command, args): Promise<LinuxInventoryCommandResult> {
+        calls.push([command, args]);
+        if (command.endsWith("dumpe2fs")) {
+          return {
+            exitCode: 0,
+            stdout:
+              "Filesystem state:         clean\nBlock size:               4096\n",
+            stderr: "",
+          };
+        }
+        if (command.endsWith("e2fsck")) {
+          return { exitCode: 0, stdout: "clean\n", stderr: "" };
+        }
+        return {
+          exitCode: 0,
+          stdout: "Estimated minimum size of the filesystem: 1048576\n",
+          stderr: "",
+        };
+      },
+    };
+
+    await expect(
+      probeLinuxExt4Filesystem({
+        runner,
+        devicePath: "/dev/vda2",
+        partitionSizeBytes: 8 * GIB,
+      }),
+    ).resolves.toEqual({
+      filesystemHealth: "healthy",
+      minimumBytes: 4 * GIB,
+    });
+    expect(calls).toEqual([
+      ["/usr/sbin/dumpe2fs", ["-h", "/dev/vda2"]],
+      ["/usr/sbin/e2fsck", ["-f", "-n", "/dev/vda2"]],
+      ["/usr/sbin/resize2fs", ["-P", "/dev/vda2"]],
+    ]);
+  });
+
+  it("fails ext4 resize evidence closed for dirty, unhealthy, or malformed probes", async () => {
+    const probe = async (options: {
+      state?: string;
+      checkExit?: number;
+      minimum?: string;
+      blockSize?: number;
+    }) =>
+      probeLinuxExt4Filesystem({
+        devicePath: "/dev/vda2",
+        partitionSizeBytes: 8 * GIB,
+        runner: {
+          async run(command) {
+            if (command.endsWith("dumpe2fs")) {
+              return {
+                exitCode: 0,
+                stdout: `Filesystem state: ${options.state ?? "clean"}\nBlock size: ${options.blockSize ?? 4096}\n`,
+                stderr: "",
+              };
+            }
+            if (command.endsWith("e2fsck")) {
+              return {
+                exitCode: options.checkExit ?? 0,
+                stdout: "",
+                stderr: "",
+              };
+            }
+            return {
+              exitCode: 0,
+              stdout: `Estimated minimum size of the filesystem: ${options.minimum ?? "1048576"}\n`,
+              stderr: "",
+            };
+          },
+        },
+      });
+
+    await expect(probe({ state: "not clean with errors" })).resolves.toEqual({
+      filesystemHealth: "dirty",
+    });
+    await expect(probe({ checkExit: 4 })).resolves.toEqual({
+      filesystemHealth: "unhealthy",
+    });
+    await expect(probe({ minimum: "999999999999999999999" })).resolves.toEqual({
+      filesystemHealth: "healthy",
+    });
+    await expect(probe({ blockSize: 1024 })).resolves.toEqual({
+      filesystemHealth: "healthy",
+    });
+    await expect(
+      probeLinuxExt4Filesystem({
+        runner: {
+          async run() {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          },
+        },
+        devicePath: "/dev/../etc/passwd",
+        partitionSizeBytes: 8 * GIB,
+      }),
+    ).rejects.toThrow(/device path/);
+  });
+
   it("resolves root block sources and complete inverse ancestry", () => {
     expect(
       parseLinuxRootBlockSource(
@@ -339,6 +445,12 @@ describe("Linux read-only disk inventory parser", () => {
       encryption: "luks",
     });
     expect(encrypted?.resize).toBeUndefined();
+    const bitlocker = parse(serializedInventory({}, { fstype: "BitLocker" }))
+      .partitions[1];
+    expect(bitlocker).toMatchObject({
+      filesystem: "unknown",
+      encryption: "bitlocker",
+    });
     const unknown = parse(serializedInventory({}, { fstype: null }))
       .partitions[1];
     expect(unknown?.encryption).toBe("unknown");

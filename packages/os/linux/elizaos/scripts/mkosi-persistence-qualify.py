@@ -31,7 +31,11 @@ MACHINES = {
     "arm64": "virt,accel=kvm:tcg,gic-version=max",
     "riscv64": "virt,accel=kvm:tcg",
 }
-REQUIRED_MARKERS = ("Linux version", "Started gdm.service - GNOME Display Manager")
+REQUIRED_MARKERS = (
+    "Linux version",
+    "Started gdm.service - GNOME Display Manager",
+    "Reached target Graphical Interface",
+)
 FORBIDDEN_MARKERS = (
     "Kernel panic - not syncing",
     "Entering emergency mode",
