@@ -72,8 +72,15 @@
       "vendor/google_devices/grizzly/BoardConfig.mk",
       "vendor/google_devices/grizzly/grizzly.mk",
       "vendor/google_devices/grizzly/firmware/android-info.txt",
+      "vendor/google_devices/grizzly/proprietary/Android.bp",
       "vendor/google_devices/grizzly/stock-kernel/Image.lz4",
       "vendor/google_devices/grizzly/stock-kernel/dtbo.img",
+      "vendor/google_devices/grizzly/stock-kernel/init.insmod.grizzly.cfg",
+      "vendor/google_devices/grizzly/stock-kernel/init.insmod.spacecraft.cfg",
+      "vendor/google_devices/grizzly/stock-kernel/modules.load",
+      "vendor/google_devices/grizzly/stock-kernel/system_dlkm.modules.blocklist",
+      "vendor/google_devices/grizzly/stock-kernel/system_dlkm.modules.load",
+      "vendor/google_devices/grizzly/stock-kernel/vendor_dlkm.modules.blocklist",
       "vendor/google_devices/grizzly/stock-kernel/vendor_dlkm.modules.load",
       "vendor/google_devices/grizzly/stock-kernel/vendor_kernel_boot.modules.load"
     ]

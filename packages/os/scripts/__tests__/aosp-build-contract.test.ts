@@ -272,6 +272,16 @@ describe("AOSP build contracts", () => {
       sha256:
         "86fb81516d54a21c28487745e748aee8e36847dc400a6ab40ef2458146b0becb",
     });
+    expect(grizzlyLock.generatedVendor?.requiredFiles).toEqual(
+      expect.arrayContaining([
+        "vendor/google_devices/grizzly/proprietary/Android.bp",
+        "vendor/google_devices/grizzly/stock-kernel/Image.lz4",
+        "vendor/google_devices/grizzly/stock-kernel/modules.load",
+        "vendor/google_devices/grizzly/stock-kernel/system_dlkm.modules.load",
+        "vendor/google_devices/grizzly/stock-kernel/vendor_dlkm.modules.load",
+        "vendor/google_devices/grizzly/stock-kernel/vendor_kernel_boot.modules.load",
+      ]),
+    );
     const grizzlyProduct = readFileSync(
       join(
         repositoryRoot,
