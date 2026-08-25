@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "manifestUrl": "https://android.googlesource.com/platform/manifest",
+  "manifestRevision": "android-17.0.0_r1",
+  "manifestTagObject": "7a9e46ba6ed424f922a3457f4964e67e0b966201",
+  "manifestCommit": "5bc9a7ce1cd78dd53613bbfd0ebf506e1e4adb0f",
+  "device": {
+    "targetId": "pixel11pro-grizzly",
+    "codename": "grizzly",
+    "marketingName": "Pixel 11 Pro",
+    "buildId": "CD1A.260714.001.A9",
+    "productBrand": "elizaOS",
+    "productName": "eliza_grizzly_phone",
+    "expectedFingerprintPrefix": "elizaOS/eliza_grizzly_phone/grizzly:"
+  },
+  "externalProjects": [
+    {
+      "path": "vendor/adevtool",
+      "url": "https://github.com/GrapheneOS/adevtool.git",
+      "ref": "refs/heads/17",
+      "commit": "b396d9430743905fa56e5ee3e72c161614835cc0",
+      "sparsePaths": [
+        "assets",
+        "bin",
+        "carrier-settings",
+        "config",
+        "gservices-flags",
+        "scripts",
+        "src",
+        "vendor-specs/google_devices/grizzly.yml",
+        "package.json",
+        "yarn.lock",
+        "tsconfig.json",
+        ".eslintrc"
+      ]
+    },
+    {
+      "path": "vendor/state",
+      "url": "https://github.com/GrapheneOS/vendor_state.git",
+      "ref": "refs/heads/17",
+      "commit": "afd6a0c9f6ca13d395f00e98227a0866cc14de07",
+      "sparsePaths": ["grizzly.json"]
+    }
+  ],
+  "requiredSourceFiles": [
+    "vendor/adevtool/config/device/grizzly.yml",
+    "vendor/adevtool/config/device/common/gen11pixel.yml",
+    "vendor/adevtool/config/mk/google_devices/device/grizzly/BoardConfig-base.mk",
+    "vendor/adevtool/config/mk/google_devices/device/grizzly/device.mk",
+    "vendor/adevtool/vendor-specs/google_devices/grizzly.yml",
+    "vendor/state/grizzly.json"
+  ],
+  "referenceFactoryImage": {
+    "filename": "grizzly-cd1a.260714.001.a9-factory-86fb8151.zip",
+    "url": "https://dl.google.com/dl/android/aosp/grizzly-cd1a.260714.001.a9-factory-86fb8151.zip",
+    "sizeBytes": 15363261784,
+    "sha256": "86fb81516d54a21c28487745e748aee8e36847dc400a6ab40ef2458146b0becb",
+    "buildId": "CD1A.260714.001.A9"
+  },
+  "rollbackFactoryImage": {
+    "filename": "grizzly-cd1a.260714.001.a9-factory-86fb8151.zip",
+    "url": "https://dl.google.com/dl/android/aosp/grizzly-cd1a.260714.001.a9-factory-86fb8151.zip",
+    "sizeBytes": 15363261784,
+    "sha256": "86fb81516d54a21c28487745e748aee8e36847dc400a6ab40ef2458146b0becb",
+    "buildId": "CD1A.260714.001.A9"
+  },
+  "generatedVendor": {
+    "command": ["adevtool", "generate-all", "-d", "grizzly"],
+    "requiredFiles": [
+      "vendor/google_devices/grizzly/Android.mk",
+      "vendor/google_devices/grizzly/AndroidProducts.mk",
+      "vendor/google_devices/grizzly/BoardConfig.mk",
+      "vendor/google_devices/grizzly/grizzly.mk",
+      "vendor/google_devices/grizzly/firmware/android-info.txt",
+      "vendor/google_devices/grizzly/stock-kernel/Image.lz4",
+      "vendor/google_devices/grizzly/stock-kernel/dtbo.img",
+      "vendor/google_devices/grizzly/stock-kernel/vendor_dlkm.modules.load",
+      "vendor/google_devices/grizzly/stock-kernel/vendor_kernel_boot.modules.load"
+    ]
+  }
+}

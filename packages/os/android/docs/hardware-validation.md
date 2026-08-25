@@ -6,7 +6,7 @@ device identity, and retained runtime evidence all agree.
 
 ## Pixel 9a candidate
 
-The sole current candidate is `tegu` on `android-15.0.0_r31`, build
+The public-source candidate is `tegu` on `android-15.0.0_r31`, build
 `BD4A.250505.003`. Verify the manually license-accepted vendor archive before
 building:
 
@@ -40,6 +40,29 @@ self-test must pass WAV → local ASR → local agent → local TTS, and its ass
 surface verifier runs with `--require-engine`. Consequently, a selected IME or
 a successful deep-link alone cannot satisfy the full-engine gate while the
 Gemma artifact is unavailable.
+
+## Pixel 11 Pro generated candidate
+
+`grizzly` is pinned in `pixel11pro.lock.json` to Android 17 r1, stock build
+`CD1A.260714.001.A9`, exact `adevtool` and `vendor_state` commits, and the stock
+kernel extraction path. The connected lab phone reports the same A9 build and
+bootloader after its stock update, so that exact factory image is also the
+rollback source. Do not downgrade to the phone's earlier C2 build after the A9
+bootloader has run. Do not unlock or flash until the A9 archive verifies and
+the A9-derived elizaOS images are retained.
+
+Generate and verify the device layer before building:
+
+```bash
+node scripts/distro-android/prepare-grizzly.mjs \
+  --aosp-root "$AOSP_ROOT" \
+  --lock packages/os/android/pixel11pro.lock.json
+```
+
+This is generated device support, not a claim that Google published the
+missing device tree or `spacecraft` kernel source. Promotion additionally
+requires an exact-build compile, bootloader/slot capture, stock rollback drill,
+and every physical validation item below.
 
 ## Promotion matrix
 

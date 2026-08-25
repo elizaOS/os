@@ -83,6 +83,35 @@ export function loadAospLock(filePath = aospLockPath) {
       seen.add(project.path);
     }
   }
+  if (lock.externalProjects !== undefined) {
+    if (
+      !Array.isArray(lock.externalProjects) ||
+      lock.externalProjects.length === 0
+    ) {
+      fail(`invalid externalProjects in AOSP lock: ${filePath}`);
+    }
+    const seen = new Set();
+    for (const project of lock.externalProjects) {
+      if (
+        !safeRelativePath(project?.path) ||
+        typeof project?.url !== "string" ||
+        !project.url.startsWith("https://") ||
+        typeof project?.ref !== "string" ||
+        !project.ref.startsWith("refs/heads/") ||
+        !/^[0-9a-f]{40}$/.test(project?.commit ?? "") ||
+        (project.sparsePaths !== undefined &&
+          (!Array.isArray(project.sparsePaths) ||
+            project.sparsePaths.length === 0 ||
+            project.sparsePaths.some(
+              (sparsePath) => !safeRelativePath(sparsePath),
+            ))) ||
+        seen.has(project.path)
+      ) {
+        fail(`invalid locked external project in ${filePath}`);
+      }
+      seen.add(project.path);
+    }
+  }
   for (const requiredPath of lock.requiredSourceFiles ?? []) {
     if (!safeRelativePath(requiredPath)) {
       fail(`invalid requiredSourceFiles entry in ${filePath}`);
@@ -106,6 +135,41 @@ export function loadAospLock(filePath = aospLockPath) {
       )
     ) {
       fail(`invalid proprietaryArchive in ${filePath}`);
+    }
+  }
+  for (const field of ["referenceFactoryImage", "rollbackFactoryImage"]) {
+    const image = lock[field];
+    if (
+      image !== undefined &&
+      (typeof image.filename !== "string" ||
+        path.basename(image.filename) !== image.filename ||
+        typeof image.url !== "string" ||
+        !image.url.startsWith("https://") ||
+        !Number.isSafeInteger(image.sizeBytes) ||
+        image.sizeBytes <= 0 ||
+        !/^[0-9a-f]{64}$/.test(image.sha256 ?? "") ||
+        image.sha256 === "0".repeat(64) ||
+        typeof image.buildId !== "string" ||
+        image.buildId.length === 0)
+    ) {
+      fail(`invalid ${field} in ${filePath}`);
+    }
+  }
+  if (lock.generatedVendor !== undefined) {
+    const generated = lock.generatedVendor;
+    if (
+      !Array.isArray(generated.command) ||
+      generated.command.length === 0 ||
+      generated.command.some(
+        (argument) => typeof argument !== "string" || argument.length === 0,
+      ) ||
+      !Array.isArray(generated.requiredFiles) ||
+      generated.requiredFiles.length === 0 ||
+      generated.requiredFiles.some(
+        (requiredPath) => !safeRelativePath(requiredPath),
+      )
+    ) {
+      fail(`invalid generatedVendor in ${filePath}`);
     }
   }
   return lock;
@@ -199,6 +263,28 @@ export function assertPinnedAospCheckout(
         );
       }
     }
+    for (const project of lock.externalProjects ?? []) {
+      const projectRoot = path.join(aospRoot, project.path);
+      if (!fs.existsSync(path.join(projectRoot, ".git"))) {
+        fail(`missing locked external project: ${project.path}`);
+      }
+      const projectHead = run("git", ["rev-parse", "HEAD"], {
+        cwd: projectRoot,
+        capture: true,
+      });
+      if (projectHead !== project.commit) {
+        fail(
+          `external project mismatch for ${project.path}: expected ${project.commit}, got ${projectHead}`,
+        );
+      }
+      const dirty = run("git", ["status", "--porcelain"], {
+        cwd: projectRoot,
+        capture: true,
+      });
+      if (dirty) {
+        fail(`locked external project is dirty: ${project.path}`);
+      }
+    }
     for (const requiredPath of lock.requiredSourceFiles ?? []) {
       if (!fs.existsSync(path.join(aospRoot, requiredPath))) {
         fail(`missing required AOSP source path: ${requiredPath}`);
@@ -262,19 +348,66 @@ export function assertRemoteManifestTag(lock = loadAospLock()) {
   }
 }
 
-export async function verifyProprietaryArchive(lock, archivePath) {
-  const contract = lock.proprietaryArchive;
-  if (!contract) fail("selected AOSP lock has no proprietary archive contract");
-  const resolved = path.resolve(archivePath);
-  if (!fs.existsSync(resolved))
-    fail(`proprietary archive is missing: ${resolved}`);
-  if (path.basename(resolved) !== contract.filename) {
-    fail(`proprietary archive filename must be ${contract.filename}`);
+export function materializeExternalProjects(aospRoot, lock) {
+  for (const project of lock.externalProjects ?? []) {
+    const projectRoot = path.join(aospRoot, project.path);
+    if (fs.existsSync(projectRoot)) {
+      if (!fs.existsSync(path.join(projectRoot, ".git"))) {
+        fail(`external project path is not a Git checkout: ${project.path}`);
+      }
+      continue;
+    }
+    fs.mkdirSync(path.dirname(projectRoot), { recursive: true });
+    fs.mkdirSync(projectRoot, { recursive: true });
+    run("git", ["init"], { cwd: projectRoot });
+    run("git", ["remote", "add", "origin", project.url], {
+      cwd: projectRoot,
+    });
+    if (project.sparsePaths?.length) {
+      run("git", ["sparse-checkout", "init", "--no-cone"], {
+        cwd: projectRoot,
+      });
+      run(
+        "git",
+        [
+          "sparse-checkout",
+          "set",
+          "--no-cone",
+          ...project.sparsePaths.map((sparsePath) => `/${sparsePath}`),
+        ],
+        { cwd: projectRoot },
+      );
+    }
+    // Fetch the immutable object rather than a moving branch head. The
+    // recorded ref remains provenance only; a future upstream push must not
+    // make a previously pinned build unreproducible.
+    run(
+      "git",
+      ["fetch", "--filter=blob:none", "--depth=1", "origin", project.commit],
+      { cwd: projectRoot },
+    );
+    run("git", ["checkout", "--detach", "FETCH_HEAD"], {
+      cwd: projectRoot,
+    });
+  }
+  return lock.externalProjects ?? [];
+}
+
+export async function verifyLockedArtifact(
+  contract,
+  artifactPath,
+  { enforceFilename = true, label = "artifact" } = {},
+) {
+  if (!contract) fail(`selected AOSP lock has no ${label} contract`);
+  const resolved = path.resolve(artifactPath);
+  if (!fs.existsSync(resolved)) fail(`${label} is missing: ${resolved}`);
+  if (enforceFilename && path.basename(resolved) !== contract.filename) {
+    fail(`${label} filename must be ${contract.filename}`);
   }
   const sizeBytes = fs.statSync(resolved).size;
   if (sizeBytes !== contract.sizeBytes) {
     fail(
-      `proprietary archive size ${sizeBytes} does not match locked ${contract.sizeBytes}`,
+      `${label} size ${sizeBytes} does not match locked ${contract.sizeBytes}`,
     );
   }
   const hash = createHash("sha256");
@@ -286,11 +419,15 @@ export async function verifyProprietaryArchive(lock, archivePath) {
   });
   const sha256 = hash.digest("hex");
   if (sha256 !== contract.sha256) {
-    fail(
-      `proprietary archive SHA-256 ${sha256} does not match locked ${contract.sha256}`,
-    );
+    fail(`${label} SHA-256 ${sha256} does not match locked ${contract.sha256}`);
   }
   return { path: resolved, sizeBytes, sha256 };
+}
+
+export async function verifyProprietaryArchive(lock, archivePath) {
+  return verifyLockedArtifact(lock.proprietaryArchive, archivePath, {
+    label: "proprietary archive",
+  });
 }
 
 export function assertExtractedVendorTree(aospRoot, lock) {
@@ -303,6 +440,18 @@ export function assertExtractedVendorTree(aospRoot, lock) {
     fail(`licensed vendor extraction is incomplete: ${missing.join(", ")}`);
   }
   return contract.requiredExtractedFiles;
+}
+
+export function assertGeneratedVendorTree(aospRoot, lock) {
+  const contract = lock.generatedVendor;
+  if (!contract) fail("selected AOSP lock has no generated vendor contract");
+  const missing = contract.requiredFiles.filter(
+    (requiredPath) => !fs.existsSync(path.join(aospRoot, requiredPath)),
+  );
+  if (missing.length > 0) {
+    fail(`generated vendor tree is incomplete: ${missing.join(", ")}`);
+  }
+  return contract.requiredFiles;
 }
 
 export function bootstrapAosp({
@@ -341,6 +490,7 @@ export function bootstrapAosp({
       ],
       { cwd: aospRoot },
     );
+    materializeExternalProjects(aospRoot, lock);
     assertPinnedAospCheckout(aospRoot, lock);
   }
   fs.copyFileSync(lockPath, path.join(aospRoot, ".elizaos-aosp-lock.json"));

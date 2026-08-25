@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import {
   aospLockPath,
   assertExtractedVendorTree,
+  assertGeneratedVendorTree,
   assertPinnedAospCheckout,
   loadAospLock,
   verifyProprietaryArchive,
@@ -254,6 +255,9 @@ export async function main(argv = process.argv.slice(2)) {
     }
     await verifyProprietaryArchive(lock, archivePath);
     assertExtractedVendorTree(args.aospRoot, lock);
+  }
+  if (lock.generatedVendor) {
+    assertGeneratedVendorTree(args.aospRoot, lock);
   }
 
   const brandConfigArgs = ["--brand-config", brand.brandConfigPath];

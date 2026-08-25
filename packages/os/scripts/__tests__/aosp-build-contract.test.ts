@@ -20,6 +20,7 @@ import {
   verifyProprietaryArchive,
 } from "../../../../scripts/distro-android/bootstrap-aosp.mjs";
 import { assertBuildHost } from "../../../../scripts/distro-android/build-aosp.mjs";
+import { parseArgs as parseGrizzlyArgs } from "../../../../scripts/distro-android/prepare-grizzly.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../../../..", import.meta.url));
 
@@ -179,9 +180,15 @@ describe("AOSP build contracts", () => {
       expect(products).not.toContain(absentTarget);
     }
     expect(products).toContain("eliza_tegu_phone");
+    expect(products).toContain("eliza_grizzly_phone");
     expect(
       existsSync(join(repositoryRoot, "packages/os/android/pixel9a.lock.json")),
     ).toBe(true);
+    const grizzlyLockPath = join(
+      repositoryRoot,
+      "packages/os/android/pixel11pro.lock.json",
+    );
+    expect(existsSync(grizzlyLockPath)).toBe(true);
     const inventory = JSON.parse(
       readFileSync(
         join(repositoryRoot, "packages/os/android/hardware-targets.json"),
@@ -198,6 +205,13 @@ describe("AOSP build contracts", () => {
       expect.objectContaining({
         targetId: "pixel9a-tegu",
         sourceStatus: "pinned",
+        installerEligible: false,
+      }),
+    );
+    expect(inventory.targets).toContainEqual(
+      expect.objectContaining({
+        targetId: "pixel11pro-grizzly",
+        sourceStatus: "pinned-generated",
         installerEligible: false,
       }),
     );
@@ -240,6 +254,44 @@ describe("AOSP build contracts", () => {
     expect(pixelLock.device.expectedFingerprintPrefix).toBe(
       `${pixelLock.device.productBrand}/${pixelLock.device.productName}/${pixelLock.device.codename}:`,
     );
+    const grizzlyLock = loadAospLock(grizzlyLockPath);
+    expect(grizzlyLock.device).toMatchObject({
+      targetId: "pixel11pro-grizzly",
+      codename: "grizzly",
+      buildId: "CD1A.260714.001.A9",
+      productName: "eliza_grizzly_phone",
+    });
+    expect(grizzlyLock.externalProjects).toHaveLength(2);
+    expect(grizzlyLock.referenceFactoryImage).toMatchObject({
+      sizeBytes: 15363261784,
+      sha256:
+        "86fb81516d54a21c28487745e748aee8e36847dc400a6ab40ef2458146b0becb",
+    });
+    expect(grizzlyLock.rollbackFactoryImage).toMatchObject({
+      buildId: "CD1A.260714.001.A9",
+      sha256:
+        "86fb81516d54a21c28487745e748aee8e36847dc400a6ab40ef2458146b0becb",
+    });
+    const grizzlyProduct = readFileSync(
+      join(
+        repositoryRoot,
+        "packages/os/android/vendor/eliza/products/eliza_grizzly_phone.mk",
+      ),
+      "utf8",
+    );
+    expect(grizzlyProduct).toContain("USE_STOCK_KERNEL := true");
+    expect(grizzlyProduct).toContain(
+      "vendor/google_devices/grizzly/grizzly.mk",
+    );
+    expect(grizzlyProduct).toContain("PRODUCT_NAME := eliza_grizzly_phone");
+    expect(
+      parseGrizzlyArgs(["--aosp-root", "/tmp/aosp-grizzly"]),
+    ).toMatchObject({
+      aospRoot: "/tmp/aosp-grizzly",
+      lockPath: grizzlyLockPath,
+      skipInstall: false,
+      skipRollbackDownload: false,
+    });
     expect(
       existsSync(
         join(repositoryRoot, "scripts/distro-android/brand.openagent.json"),
@@ -388,23 +440,17 @@ describe("AOSP build contracts", () => {
     expect(driver).toContain(
       'QJL_RVV="-DQJL_RVV_COMPILE_OPTIONS=-mcpu=generic_rv64+v+m+a+f+d+c"',
     );
-    expect(driver).not.toContain(
-      "QJL_RVV_COMPILE_OPTIONS=-mcpu=sifive_x280",
-    );
+    expect(driver).not.toContain("QJL_RVV_COMPILE_OPTIONS=-mcpu=sifive_x280");
 
     const checker = readFileSync(
       join(repositoryRoot, "scripts/check-riscv64-artifacts.sh"),
       "utf8",
     );
-    expect(checker).toContain(
-      'verify_artifact "$artifact" "$fork_ggml"',
-    );
+    expect(checker).toContain('verify_artifact "$artifact" "$fork_ggml"');
     expect(checker).toContain(
       'LD_LIBRARY_PATH="$(dirname "$fork_ggml")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"',
     );
-    expect(checker).toContain(
-      '"$(basename "$exe")" = "qjl_fork_parity"',
-    );
+    expect(checker).toContain('"$(basename "$exe")" = "qjl_fork_parity"');
     expect(checker).toContain("Dynamic loading not supported");
     expect(checker).toContain(
       "qemu fork parity unavailable (static musl has no dlopen)",
