@@ -4,7 +4,6 @@
 # Keep the stock Pixel kernel for the first hardware bring-up. The public
 # spacecraft kernel source is not yet available, while adevtool extracts the
 # matching kernel, modules, DTB, and DTBO from the pinned reference image.
-BUILD_ID := CD1A.260714.001.A9
 USE_STOCK_KERNEL := true
 $(call inherit-product, vendor/google_devices/grizzly/grizzly.mk)
 
