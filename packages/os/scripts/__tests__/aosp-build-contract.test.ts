@@ -22,10 +22,29 @@ import {
 } from "../../../../scripts/distro-android/bootstrap-aosp.mjs";
 import { assertBuildHost } from "../../../../scripts/distro-android/build-aosp.mjs";
 import { parseArgs as parseGrizzlyArgs } from "../../../../scripts/distro-android/prepare-grizzly.mjs";
+import { withSisoCompatibility } from "../../../../scripts/distro-android/siso-env.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../../../..", import.meta.url));
 
 describe("AOSP build contracts", () => {
+  test("Android 17 Siso builds tolerate generated missing targets", () => {
+    expect(withSisoCompatibility({})).toMatchObject({
+      SISO_EXPERIMENTS: "ignore-missing-targets",
+    });
+    expect(
+      withSisoCompatibility({ SISO_EXPERIMENTS: "oom-score-adj" }),
+    ).toMatchObject({
+      SISO_EXPERIMENTS: "oom-score-adj,ignore-missing-targets",
+    });
+    expect(
+      withSisoCompatibility({
+        SISO_EXPERIMENTS: "ignore-missing-targets,oom-score-adj",
+      }),
+    ).toMatchObject({
+      SISO_EXPERIMENTS: "ignore-missing-targets,oom-score-adj",
+    });
+  });
+
   test("the Make front door rebuilds the privileged APK", () => {
     const makefile = readFileSync(
       join(repositoryRoot, "packages/os/android/Makefile"),

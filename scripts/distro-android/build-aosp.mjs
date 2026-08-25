@@ -27,6 +27,7 @@ import {
   verifyProprietaryArchive,
 } from "./bootstrap-aosp.mjs";
 import { loadBrandFromArgv } from "./brand-config.mjs";
+import { withSisoCompatibility } from "./siso-env.mjs";
 import { main as syncToAospMain } from "./sync-to-aosp.mjs";
 import { main as validateMain } from "./validate.mjs";
 
@@ -181,7 +182,7 @@ function runAospBuild(aospRoot, jobs, brand) {
       "-lc",
       `source build/envsetup.sh && lunch ${brand.lunchTarget} && m -j${jobs}`,
     ],
-    { cwd: aospRoot },
+    { cwd: aospRoot, env: withSisoCompatibility() },
   );
 }
 

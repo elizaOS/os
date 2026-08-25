@@ -13,6 +13,7 @@ import {
   materializeExternalProjects,
   verifyLockedArtifact,
 } from "./bootstrap-aosp.mjs";
+import { withSisoCompatibility } from "./siso-env.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(here, "../..");
@@ -116,7 +117,10 @@ export async function prepareGrizzly({
     commandName === "adevtool"
       ? path.join(adevtoolRoot, "bin/run")
       : commandName;
-  run(command, commandArguments, { cwd: aospRoot });
+  run(command, commandArguments, {
+    cwd: aospRoot,
+    env: withSisoCompatibility(),
+  });
   const files = assertGeneratedVendorTree(aospRoot, lock);
 
   const downloadRoot = path.join(adevtoolRoot, "dl");
