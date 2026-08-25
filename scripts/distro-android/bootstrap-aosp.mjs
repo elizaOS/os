@@ -180,6 +180,18 @@ export function loadAospLock(filePath = aospLockPath) {
               entry.includes.some(
                 (token) => typeof token !== "string" || token.length === 0,
               ),
+          ))) ||
+      (generated.requiredArtifacts !== undefined &&
+        (!Array.isArray(generated.requiredArtifacts) ||
+          generated.requiredArtifacts.length === 0 ||
+          generated.requiredArtifacts.some(
+            (artifact) =>
+              !safeRelativePath(artifact?.path) ||
+              !generated.requiredFiles.includes(artifact.path) ||
+              !Number.isSafeInteger(artifact?.sizeBytes) ||
+              artifact.sizeBytes <= 0 ||
+              !/^[0-9a-f]{64}$/.test(artifact?.sha256 ?? "") ||
+              artifact.sha256 === "0".repeat(64),
           )))
     ) {
       fail(`invalid generatedVendor in ${filePath}`);
@@ -472,6 +484,16 @@ export function assertGeneratedVendorTree(aospRoot, lock) {
     if (missingTokens.length > 0) {
       fail(
         `generated vendor contract mismatch in ${entry.path}: ${missingTokens.join(", ")}`,
+      );
+    }
+  }
+  for (const artifact of contract.requiredArtifacts ?? []) {
+    const artifactPath = path.join(aospRoot, artifact.path);
+    const bytes = fs.readFileSync(artifactPath);
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    if (bytes.length !== artifact.sizeBytes || sha256 !== artifact.sha256) {
+      fail(
+        `generated vendor artifact mismatch in ${artifact.path}: expected ${artifact.sizeBytes}/${artifact.sha256}, got ${bytes.length}/${sha256}`,
       );
     }
   }

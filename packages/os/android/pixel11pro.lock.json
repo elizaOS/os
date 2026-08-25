@@ -101,6 +101,18 @@
           "TARGET_KERNEL_DIR := vendor/google_devices/grizzly/stock-kernel"
         ]
       }
+    ],
+    "requiredArtifacts": [
+      {
+        "path": "vendor/google_devices/grizzly/stock-kernel/Image.lz4",
+        "sizeBytes": 20230712,
+        "sha256": "b456e2b874e4cc2a2fd208d4c7e4bd2fd52dc29c6727fb81052d16bc8da86ae3"
+      },
+      {
+        "path": "vendor/google_devices/grizzly/stock-kernel/dtbo.img",
+        "sizeBytes": 16777216,
+        "sha256": "f906ba29c87ce26fed65f206119a147f8e810dab2be500a3470639fc4eef32ce"
+      }
     ]
   }
 }

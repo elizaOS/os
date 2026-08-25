@@ -283,6 +283,22 @@ describe("AOSP build contracts", () => {
         "vendor/google_devices/grizzly/stock-kernel/vendor_kernel_boot.modules.load",
       ]),
     );
+    expect(grizzlyLock.generatedVendor?.requiredArtifacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "vendor/google_devices/grizzly/stock-kernel/Image.lz4",
+          sizeBytes: 20230712,
+          sha256:
+            "b456e2b874e4cc2a2fd208d4c7e4bd2fd52dc29c6727fb81052d16bc8da86ae3",
+        }),
+        expect.objectContaining({
+          path: "vendor/google_devices/grizzly/stock-kernel/dtbo.img",
+          sizeBytes: 16777216,
+          sha256:
+            "f906ba29c87ce26fed65f206119a147f8e810dab2be500a3470639fc4eef32ce",
+        }),
+      ]),
+    );
     const grizzlyProduct = readFileSync(
       join(
         repositoryRoot,
@@ -324,6 +340,15 @@ describe("AOSP build contracts", () => {
       const lock = loadAospLock(
         join(repositoryRoot, "packages/os/android/pixel11pro.lock.json"),
       );
+      const fixtureLock = structuredClone(lock);
+      const generatedFixture = "generated fixture\n";
+      fixtureLock.generatedVendor.requiredArtifacts = [
+        {
+          path: "vendor/google_devices/grizzly/stock-kernel/Image.lz4",
+          sizeBytes: Buffer.byteLength(generatedFixture),
+          sha256: createHash("sha256").update(generatedFixture).digest("hex"),
+        },
+      ];
       for (const requiredPath of lock.generatedVendor.requiredFiles) {
         const destination = join(root, requiredPath);
         await mkdir(dirname(destination), { recursive: true });
@@ -335,13 +360,24 @@ describe("AOSP build contracts", () => {
           `${entry.includes.join("\n")}\n`,
         );
       }
-      expect(assertGeneratedVendorTree(root, lock)).toHaveLength(
+      expect(assertGeneratedVendorTree(root, fixtureLock)).toHaveLength(
         lock.generatedVendor.requiredFiles.length,
       );
       const firmwareContract = lock.generatedVendor.requiredTextFiles[0];
       await writeFile(join(root, firmwareContract.path), "wrong firmware\n");
-      expect(() => assertGeneratedVendorTree(root, lock)).toThrow(
+      expect(() => assertGeneratedVendorTree(root, fixtureLock)).toThrow(
         /generated vendor contract mismatch/,
+      );
+      await writeFile(
+        join(root, firmwareContract.path),
+        `${firmwareContract.includes.join("\n")}\n`,
+      );
+      await writeFile(
+        join(root, fixtureLock.generatedVendor.requiredArtifacts[0].path),
+        "wrong artifact\n",
+      );
+      expect(() => assertGeneratedVendorTree(root, fixtureLock)).toThrow(
+        /generated vendor artifact mismatch/,
       );
     } finally {
       await rm(root, { recursive: true, force: true });
