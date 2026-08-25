@@ -18,6 +18,9 @@ const FINDMNT = "/usr/bin/findmnt";
 const UDEVADM = "/usr/bin/udevadm";
 const SFDISK = "/usr/sbin/sfdisk";
 const SGDISK = "/usr/sbin/sgdisk";
+const DUMPE2FS = "/usr/sbin/dumpe2fs";
+const E2FSCK = "/usr/sbin/e2fsck";
+const RESIZE2FS = "/usr/sbin/resize2fs";
 
 interface LsblkDevice {
   path?: unknown;
@@ -60,6 +63,77 @@ export interface LinuxInventoryCommandRunner {
     command: string,
     args: readonly string[],
   ): Promise<LinuxInventoryCommandResult>;
+}
+
+export interface LinuxExt4ProbeEvidence {
+  filesystemHealth: NonNullable<PartitionInventory["filesystemHealth"]>;
+  minimumBytes?: number;
+}
+
+const EXT4_BLOCK_SIZE_PATTERN = /^Block size:\s*(\d+)\s*$/m;
+const EXT4_STATE_PATTERN = /^Filesystem state:\s*(.+?)\s*$/m;
+const RESIZE2FS_MINIMUM_PATTERN =
+  /Estimated minimum size of the filesystem:\s*(\d+)\s*$/m;
+
+/**
+ * Run read-only ext4 checks and return resize evidence only when every probe
+ * independently reports a clean filesystem and a bounded minimum size.
+ */
+export async function probeLinuxExt4Filesystem(options: {
+  runner: LinuxInventoryCommandRunner;
+  devicePath: string;
+  partitionSizeBytes: number;
+}): Promise<LinuxExt4ProbeEvidence> {
+  if (!isSafeDevicePath(options.devicePath)) {
+    throw new Error("Linux ext4 probe device path is invalid.");
+  }
+  const superblock = await options.runner.run(DUMPE2FS, [
+    "-h",
+    options.devicePath,
+  ]);
+  if (superblock.exitCode !== 0) {
+    return { filesystemHealth: "unknown" };
+  }
+  const state = EXT4_STATE_PATTERN.exec(superblock.stdout)?.[1]
+    ?.trim()
+    .toLowerCase();
+  if (state !== "clean") {
+    return { filesystemHealth: state ? "dirty" : "unknown" };
+  }
+  const check = await options.runner.run(E2FSCK, [
+    "-f",
+    "-n",
+    options.devicePath,
+  ]);
+  if (check.exitCode !== 0) {
+    return { filesystemHealth: "unhealthy" };
+  }
+  const minimum = await options.runner.run(RESIZE2FS, [
+    "-P",
+    options.devicePath,
+  ]);
+  if (minimum.exitCode !== 0) {
+    return { filesystemHealth: "healthy" };
+  }
+  const blockSizeText = EXT4_BLOCK_SIZE_PATTERN.exec(superblock.stdout)?.[1];
+  const minimumBlocksText = RESIZE2FS_MINIMUM_PATTERN.exec(minimum.stdout)?.[1];
+  if (!blockSizeText || !minimumBlocksText) {
+    return { filesystemHealth: "healthy" };
+  }
+  const blockSize = Number(blockSizeText);
+  const minimumBlocks = Number(minimumBlocksText);
+  const minimumBytes = blockSize * minimumBlocks;
+  if (
+    !Number.isSafeInteger(blockSize) ||
+    !Number.isSafeInteger(minimumBlocks) ||
+    !Number.isSafeInteger(minimumBytes) ||
+    blockSize !== 4096 ||
+    minimumBlocks <= 0 ||
+    minimumBytes >= options.partitionSizeBytes
+  ) {
+    return { filesystemHealth: "healthy" };
+  }
+  return { filesystemHealth: "healthy", minimumBytes };
 }
 
 const SGDISK_FAILURE_PATTERN =
@@ -293,6 +367,7 @@ function partition(
     );
   }
   const detectedFilesystem = filesystem(device.fstype);
+  const detectedType = optionalString(device.fstype)?.toLowerCase();
   return {
     id,
     startBytes,
@@ -301,11 +376,13 @@ function partition(
     role: partitionRole(device),
     filesystem: detectedFilesystem,
     encryption:
-      optionalString(device.fstype)?.toLowerCase() === "crypto_luks"
+      detectedType === "crypto_luks"
         ? "luks"
-        : detectedFilesystem === "unknown" || detectedFilesystem === "apfs"
-          ? "unknown"
-          : "none",
+        : detectedType === "bitlocker"
+          ? "bitlocker"
+          : detectedFilesystem === "unknown" || detectedFilesystem === "apfs"
+            ? "unknown"
+            : "none",
   };
 }
 
@@ -331,6 +408,31 @@ function mountedDeviceNames(devices: LsblkDevice[]): Set<string> {
         changed = true;
       }
     }
+  }
+  return result;
+}
+
+function partitionDevicePaths(serialized: string): Map<string, string> {
+  let document: LsblkDocument;
+  try {
+    document = JSON.parse(serialized) as LsblkDocument;
+  } catch {
+    throw new Error("Linux inventory lsblk output is not valid JSON.");
+  }
+  const result = new Map<string, string>();
+  for (const device of flattenDevices(document.blockdevices)) {
+    if (device.type !== "part") continue;
+    const id = requiredString(
+      "partition PARTUUID",
+      device.partuuid,
+    ).toLowerCase();
+    const path = requiredString(`partition ${id} path`, device.path);
+    if (!isSafeDevicePath(path) || result.has(id)) {
+      throw new Error(
+        `Linux inventory partition ${id} has an invalid or duplicate device path.`,
+      );
+    }
+    result.set(id, path);
   }
   return result;
 }
@@ -593,7 +695,7 @@ export class LinuxInstallInventoryProvider implements InstallInventoryProvider {
     if ((await realpath(stablePath)) !== devicePath) {
       throw new Error("Linux inventory stable ID changed during probing.");
     }
-    return parseLinuxLsblkInventory({
+    const inventory = parseLinuxLsblkInventory({
       stableId,
       stablePath,
       devicePath,
@@ -605,5 +707,54 @@ export class LinuxInstallInventoryProvider implements InstallInventoryProvider {
       bootAncestorPaths,
       bootAncestryResolved,
     });
+    const devicePaths = partitionDevicePaths(lsblk.stdout);
+    inventory.partitions = await Promise.all(
+      inventory.partitions.map(async (partition) => {
+        if (partition.filesystem !== "ext4") return partition;
+        const partitionPath = devicePaths.get(partition.id);
+        if (!partitionPath) {
+          throw new Error(
+            `Linux inventory partition ${partition.id} lost its device path.`,
+          );
+        }
+        if (partition.mounted) {
+          return { ...partition, filesystemHealth: "unknown" as const };
+        }
+        const evidence = await probeLinuxExt4Filesystem({
+          runner: this.runner,
+          devicePath: partitionPath,
+          partitionSizeBytes: partition.endBytes - partition.startBytes,
+        });
+        return {
+          ...partition,
+          filesystemHealth: evidence.filesystemHealth,
+          ...(evidence.minimumBytes !== undefined
+            ? {
+                resize: {
+                  filesystemHealthy: true,
+                  mounted: false,
+                  minimumBytes: evidence.minimumBytes,
+                  dirty: false,
+                },
+              }
+            : {}),
+        };
+      }),
+    );
+    const unsafeFilesystem = inventory.partitions.find(
+      (partition) =>
+        partition.filesystemHealth === "dirty" ||
+        partition.filesystemHealth === "unhealthy",
+    );
+    if (!inventory.protectedReason && unsafeFilesystem) {
+      inventory.protectedReason = `Partition ${unsafeFilesystem.id} has a ${unsafeFilesystem.filesystemHealth} filesystem.`;
+    }
+    if ((await realpath(stablePath)) !== devicePath) {
+      throw new Error(
+        "Linux inventory stable ID changed during filesystem probing.",
+      );
+    }
+    validateDiskInventory(inventory);
+    return inventory;
   }
 }

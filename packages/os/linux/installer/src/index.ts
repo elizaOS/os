@@ -13,6 +13,7 @@ export {
 } from "./executor";
 export { DurableFileInstallJournal } from "./file-journal";
 export type {
+  LinuxExt4ProbeEvidence,
   LinuxInstallInventoryProviderOptions,
   LinuxInventoryCommandResult,
   LinuxInventoryCommandRunner,
@@ -23,6 +24,7 @@ export {
   parseLinuxBootAncestorPaths,
   parseLinuxLsblkInventory,
   parseLinuxRootBlockSource,
+  probeLinuxExt4Filesystem,
 } from "./linux-inventory";
 export {
   createDiskConfirmationToken,

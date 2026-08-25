@@ -401,6 +401,23 @@ describe("elizaOS internal-disk installer planner", () => {
         ],
       }),
     ).toThrow("resize evidence");
+    expect(() =>
+      validateDiskInventory({
+        ...disk(),
+        partitions: [
+          partition(0),
+          {
+            ...partition(1),
+            filesystemHealth: "dirty",
+            resize: {
+              filesystemHealthy: true,
+              mounted: false,
+              minimumBytes: 200 * GIB,
+            },
+          },
+        ],
+      }),
+    ).toThrow("resize evidence");
     const missingGptVerification = disk();
     delete missingGptVerification.gptRedundancyVerified;
     expect(() => validateDiskInventory(missingGptVerification)).toThrow(

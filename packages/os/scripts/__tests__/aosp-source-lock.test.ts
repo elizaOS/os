@@ -1,12 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   loadProfile,
   verifyArchive,
   verifyExtractedVendor,
 } from "../../../../scripts/aosp/verify-source-lock.mjs";
+
+const repositoryRoot = fileURLToPath(new URL("../../../..", import.meta.url));
 
 describe("AOSP source locks", () => {
   test("Pixel 9a is pinned to its matching public source and vendor build", () => {
@@ -22,6 +25,9 @@ describe("AOSP source locks", () => {
       "device/google/tegu",
       "device/google/tegu-sepolicy",
       "device/google/tegu-kernels/6.1",
+      "device/google/zumapro",
+      "device/google/zumapro-sepolicy",
+      "device/google/gs-common",
     ]);
     expect(profile.requiredSourceFiles).toContain(
       "device/google/tegu-kernels/6.1/25D4/Image.lz4",
@@ -31,6 +37,28 @@ describe("AOSP source locks", () => {
     );
     expect(profile.installerEligibility).toBe(
       "blocked-until-physical-evidence",
+    );
+  });
+
+  test("the verification profile cannot drift from the Pixel build lock", () => {
+    const profile = loadProfile("pixel9a");
+    const buildLock = JSON.parse(
+      readFileSync(
+        join(repositoryRoot, "packages/os/android/pixel9a.lock.json"),
+        "utf8",
+      ),
+    );
+
+    expect(profile.manifest).toEqual({
+      url: buildLock.manifestUrl,
+      tag: buildLock.manifestRevision,
+      tagObject: buildLock.manifestTagObject,
+      commit: buildLock.manifestCommit,
+    });
+    expect(profile.projects).toEqual(buildLock.projects);
+    expect(profile.requiredSourceFiles).toEqual(buildLock.requiredSourceFiles);
+    expect(profile.proprietaryArchive).toMatchObject(
+      buildLock.proprietaryArchive,
     );
   });
 
