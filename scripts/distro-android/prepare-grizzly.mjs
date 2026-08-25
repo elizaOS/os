@@ -131,6 +131,24 @@ function normalizeGeneratedSePolicy(aospRoot) {
   if (normalized !== contents) fs.writeFileSync(typesPath, normalized);
 }
 
+// The stock A9 vendor manifest advertises the previous sepolicy API level
+// (202604), while Android 17's board contract builds against 202704. Keep the
+// generated HAL declarations unchanged and update only the manifest's
+// sepolicy version so assemble_vintf can validate the device tree.
+function normalizeGeneratedVintf(aospRoot) {
+  const manifestPath = path.join(
+    aospRoot,
+    "vendor/google_devices/grizzly/vintf/vendor/manifest.xml",
+  );
+  if (!fs.existsSync(manifestPath)) return;
+  const contents = fs.readFileSync(manifestPath, "utf8");
+  const normalized = contents.replace(
+    /(<sepolicy>\s*<version>)202604(<\/version>\s*<\/sepolicy>)/,
+    "$1202704$2",
+  );
+  if (normalized !== contents) fs.writeFileSync(manifestPath, normalized);
+}
+
 function fail(message) {
   throw new Error(`[distro-android:grizzly] ${message}`);
 }
@@ -249,6 +267,7 @@ export async function prepareGrizzly({
       normalizeGeneratedBuildIdGuard(aospRoot);
       normalizeGeneratedProprietaryNamespace(aospRoot);
       normalizeGeneratedSePolicy(aospRoot);
+      normalizeGeneratedVintf(aospRoot);
       assertGeneratedVendorTree(aospRoot, lock);
       generatedTreeComplete = true;
     } catch {
@@ -273,6 +292,7 @@ export async function prepareGrizzly({
     normalizeGeneratedBuildIdGuard(aospRoot);
     normalizeGeneratedProprietaryNamespace(aospRoot);
     normalizeGeneratedSePolicy(aospRoot);
+    normalizeGeneratedVintf(aospRoot);
   }
   const files = assertGeneratedVendorTree(aospRoot, lock);
 
