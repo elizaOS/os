@@ -169,7 +169,10 @@ physical validation and rollback matrix.
 `scripts/aosp/` contains device deployment and Cuttlefish runtime smoke
 orchestration. App compilation and agent-payload staging remain in the
 external `eliza` application repository; OS scripts locate that checkout via
-`ELIZAOS_ELIZA_ROOT` or `.eliza-source`.
+`ELIZAOS_ELIZA_ROOT` or `.eliza-source`. The grizzly build exports
+`ELIZA_ANDROID_SYSTEM_ABIS=arm64-v8a`, so its staged APK drops emulator and
+32-bit native payloads before Soong applies the platform signature. This saves
+dynamic-partition space without changing the universal app build artifact.
 
 ## Boot experience: splash + launcher
 

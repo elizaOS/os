@@ -34,6 +34,7 @@ describe("AOSP build contracts", () => {
 
     expect(makefile).toContain("--rebuild-privileged-apk");
     expect(makefile).toContain("ELIZA_BUN_RISCV64_OPTIONAL=1");
+    expect(makefile).toContain("ELIZA_ANDROID_SYSTEM_ABIS=arm64-v8a");
     expect(makefile).toContain("filter riscv64,$(ARCH)");
     expect(makefile).toContain("native-inference");
     expect(makefile).toContain("$(HERE)/../../..");
