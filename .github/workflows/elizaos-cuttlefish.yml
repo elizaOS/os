@@ -97,8 +97,27 @@ permissions:
   contents: read
 
 jobs:
+  probe-builder:
+    name: Probe AOSP builder capacity
+    if: ${{ inputs.aosp-root == '__probe__' }}
+    runs-on: [self-hosted, linux, x64, kvm]
+    timeout-minutes: 10
+    steps:
+      - name: Report build capacity
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'architecture=%s\n' "$(uname -m)"
+          printf 'kernel=%s\n' "$(uname -s)"
+          printf 'cpus=%s\n' "$(nproc)"
+          awk '/MemTotal/ { printf "memory_kib=%s\n", $2 }' /proc/meminfo
+          df -hT /
+          df -hT /var/tmp
+          df -hT "$RUNNER_WORKSPACE"
+
   build-and-validate:
     name: Build and validate brand AOSP image
+    if: ${{ inputs.aosp-root != '__probe__' }}
     runs-on: [self-hosted, linux, x64, kvm]
     timeout-minutes: 720
     env:
