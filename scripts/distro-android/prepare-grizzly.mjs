@@ -64,17 +64,15 @@ function normalizeGeneratedProprietaryNamespace(aospRoot) {
     );
   }
 
-  const shimDir = path.join(
-    aospRoot,
-    "vendor/google_devices/grizzly/malibu-plugin-provider",
-  );
-  fs.mkdirSync(shimDir, { recursive: true });
+  const shimDir = path.join(aospRoot, "vendor/google_devices/grizzly");
+  const staleShimDir = path.join(shimDir, "malibu-plugin-provider");
+  fs.rmSync(staleShimDir, { recursive: true, force: true });
   fs.writeFileSync(
     path.join(shimDir, "Android.bp"),
     `dex_import {
     name: "malibu-plugin-provider",
     owner: "google_devices",
-    jars: [ "../proprietary/system_ext/framework/malibu-plugin-provider.jar" ],
+    jars: [ "proprietary/system_ext/framework/malibu-plugin-provider.jar" ],
     system_ext_specific: true,
 }
 `,
