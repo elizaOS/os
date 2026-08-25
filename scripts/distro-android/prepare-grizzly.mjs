@@ -44,25 +44,59 @@ function normalizeGeneratedBuildIdGuard(aospRoot) {
 }
 
 // Android 17's root dexpreopt check resolves the Malibu provider by its local
-// module name. adevtool emits the proprietary Android.bp in a private Soong
-// namespace, which makes that provider invisible to the root namespace. Keep
-// the generated modules global for this product-only vendor tree.
+// module name. adevtool emits the provider in a private Soong namespace, which
+// makes it invisible to the root namespace. Add a narrow global shim rather
+// than flattening every proprietary module (some names, such as `health`, also
+// exist in Cuttlefish).
 function normalizeGeneratedProprietaryNamespace(aospRoot) {
-  const bpPath = path.join(
+  const proprietaryBpPath = path.join(
     aospRoot,
     "vendor/google_devices/grizzly/proprietary/Android.bp",
   );
-  if (!fs.existsSync(bpPath)) return;
-  const contents = fs.readFileSync(bpPath, "utf8");
-  const namespace = "soong_namespace {}\n";
-  if (!contents.includes(namespace)) return;
-  fs.writeFileSync(
-    bpPath,
-    contents.replace(
-      namespace,
-      "// elizaOS: expose grizzly proprietary modules globally\n",
-    ),
+  if (!fs.existsSync(proprietaryBpPath)) return;
+  const contents = fs.readFileSync(proprietaryBpPath, "utf8");
+  const flattenedMarker =
+    "// elizaOS: expose grizzly proprietary modules globally\n";
+  if (contents.includes(flattenedMarker)) {
+    fs.writeFileSync(
+      proprietaryBpPath,
+      contents.replace(flattenedMarker, "soong_namespace {}\n"),
+    );
+  }
+
+  const shimDir = path.join(
+    aospRoot,
+    "vendor/google_devices/grizzly/malibu-plugin-provider",
   );
+  fs.mkdirSync(shimDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(shimDir, "Android.bp"),
+    `dex_import {
+    name: "malibu-plugin-provider",
+    owner: "google_devices",
+    jars: [ "../proprietary/system_ext/framework/malibu-plugin-provider.jar" ],
+    system_ext_specific: true,
+}
+`,
+  );
+
+  const makefilePath = path.join(
+    aospRoot,
+    "vendor/google_devices/grizzly/grizzly.mk",
+  );
+  if (fs.existsSync(makefilePath)) {
+    const makefile = fs.readFileSync(makefilePath, "utf8");
+    const namespaceLine = "    vendor/google_devices/grizzly \\\n";
+    if (!makefile.includes(namespaceLine)) {
+      fs.writeFileSync(
+        makefilePath,
+        makefile.replace(
+          "PRODUCT_SOONG_NAMESPACES += \\\n",
+          `PRODUCT_SOONG_NAMESPACES += \\\n${namespaceLine}`,
+        ),
+      );
+    }
+  }
 }
 
 function fail(message) {
