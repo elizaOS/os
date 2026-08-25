@@ -91,6 +91,11 @@ describe("AOSP build contracts", () => {
     expect(repoProvisioner).toContain(
       'repo_sha256="1211b57b57e4122a9c546295a59b37d24068f1164d0e87bef096d5323c413e4f"',
     );
+    const bootstrapSource = readFileSync(
+      join(repositoryRoot, "scripts/distro-android/bootstrap-aosp.mjs"),
+      "utf8",
+    );
+    expect(bootstrapSource).toContain('"--retry-fetches=5"');
   });
 
   test("licensed Pixel vendor inputs are verified by bytes, digest, and extraction", async () => {

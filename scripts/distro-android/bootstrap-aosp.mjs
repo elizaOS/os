@@ -530,6 +530,7 @@ export function bootstrapAosp({
         "-c",
         "--no-tags",
         "--optimized-fetch",
+        "--retry-fetches=5",
         "--prune",
         "--fail-fast",
         `-j${jobs}`,
