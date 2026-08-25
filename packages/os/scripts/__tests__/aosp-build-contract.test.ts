@@ -301,6 +301,11 @@ describe("AOSP build contracts", () => {
           baseSha256: null,
         }),
         expect.objectContaining({
+          path: "frameworks/base/tools/aapt2/Configuration.proto",
+          sha256:
+            "9161de5a4711e574e8e38457938ab3b10ba5445874106a0bf1b22dcd739f51ed",
+        }),
+        expect.objectContaining({
           path: "frameworks/base/tools/aapt2/cmd/Dump.cpp",
           sha256:
             "1a0414d6af278aaf138d98c53d7fee10a185a480241d037e5748eb0465055518",

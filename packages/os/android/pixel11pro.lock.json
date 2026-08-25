@@ -64,6 +64,13 @@
       "sha256": "a7695326ebfc0799888e2b785a1e31518ea1bb85cc89591e66c83879cc3880e7"
     },
     {
+      "path": "frameworks/base/tools/aapt2/Configuration.proto",
+      "url": "https://raw.githubusercontent.com/GrapheneOS/platform_frameworks_base/b2be3bb5f88bc5833dd4f9a11b3c295259ae733f/tools/aapt2/Configuration.proto",
+      "sourceCommit": "b2be3bb5f88bc5833dd4f9a11b3c295259ae733f",
+      "baseSha256": "a51fca4be60094c8e895f6b49188d07af64ae4fc4c65134a07e5edd6830a067b",
+      "sha256": "9161de5a4711e574e8e38457938ab3b10ba5445874106a0bf1b22dcd739f51ed"
+    },
+    {
       "path": "frameworks/base/tools/aapt2/cmd/Dump.cpp",
       "url": "https://raw.githubusercontent.com/GrapheneOS/platform_frameworks_base/b2be3bb5f88bc5833dd4f9a11b3c295259ae733f/tools/aapt2/cmd/Dump.cpp",
       "sourceCommit": "b2be3bb5f88bc5833dd4f9a11b3c295259ae733f",
