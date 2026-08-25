@@ -286,7 +286,13 @@ describe("AOSP build contracts", () => {
       buildId: "CD1A.260714.001.A9",
       productName: "eliza_grizzly_phone",
     });
-    expect(grizzlyLock.externalProjects).toHaveLength(2);
+    expect(grizzlyLock.externalProjects).toHaveLength(3);
+    expect(grizzlyLock.externalProjects).toContainEqual(
+      expect.objectContaining({
+        path: "tools/arsclib",
+        commit: "a67388430c8319f4c7066626e340b5c4d7f27882",
+      }),
+    );
     expect(grizzlyLock.sourceOverlays).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

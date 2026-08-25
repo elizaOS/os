@@ -40,6 +40,12 @@
       "ref": "refs/heads/17",
       "commit": "afd6a0c9f6ca13d395f00e98227a0866cc14de07",
       "sparsePaths": ["grizzly.json"]
+    },
+    {
+      "path": "tools/arsclib",
+      "url": "https://github.com/GrapheneOS/platform_tools_arsclib.git",
+      "ref": "refs/heads/17",
+      "commit": "a67388430c8319f4c7066626e340b5c4d7f27882"
     }
   ],
   "sourceOverlays": [
