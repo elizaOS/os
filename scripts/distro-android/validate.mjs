@@ -359,7 +359,9 @@ export function validateProductLayer(vendorDir, brand) {
     ),
     "framework-res overlay (must mirror frameworks/base/core/res/res/...)",
   );
-  // Ensure no first-boot UX leaks through.
+  // Strip legacy/proprietary setup components, but retain GrapheneOS
+  // SetupWizard2 for one-time provisioning. It has no INTERNET permission and
+  // sets DEVICE_PROVISIONED / USER_SETUP_COMPLETE before handing HOME to Eliza.
   for (const marker of ["Provision", "SetupWizard", "ManagedProvisioning"]) {
     assertIncludes(
       common,
@@ -367,7 +369,18 @@ export function validateProductLayer(vendorDir, brand) {
       `${brand.commonMakefile} PRODUCT_PACKAGES -= strip list`,
     );
   }
-  assertIncludes(common, "ro.setupwizard.mode=DISABLED", brand.commonMakefile);
+  if (common.includes("ro.setupwizard.mode=DISABLED")) {
+    fail(
+      `${brand.commonMakefile} disables the retained SetupWizard2 and can leave Android unprovisioned.`,
+    );
+  }
+  for (const marker of ["AppStore", "Auditor", "InfoApp", "Updater"]) {
+    assertIncludes(
+      common,
+      marker,
+      `${brand.commonMakefile} GrapheneOS network-service strip list`,
+    );
+  }
   // Boot-time scaffolds.
   assertIncludes(
     common,
@@ -442,8 +455,17 @@ export function validateProductLayer(vendorDir, brand) {
     '"Messaging"',
     '"Contacts"',
     '"Trebuchet"',
+    '"AppStore"',
+    '"Auditor"',
+    '"InfoApp"',
+    '"Updater"',
   ]) {
     assertIncludes(androidBp, marker, `${brand.appName} Android.bp`);
+  }
+  if (androidBp.includes('"SetupWizard2"')) {
+    fail(
+      `${brand.appName} Android.bp overrides SetupWizard2; retain it until first-boot provisioning is complete.`,
+    );
   }
 
   const frameworkConfig = read(

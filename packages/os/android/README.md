@@ -173,14 +173,18 @@ external `eliza` application repository; OS scripts locate that checkout via
 
 ## Boot experience: splash + launcher
 
-Every eliza image boots straight into the elizaOS launcher with the
-elizaOS boot splash:
+Every eliza image uses the elizaOS launcher after one-time provisioning and
+ships with the elizaOS boot splash:
 
 - **Launcher** — `eliza_common.mk` strips the stock launchers and the Eliza
   APK `overrides: ["Launcher3", "Launcher3QuickStep", "Trebuchet", …]`, so
   Eliza (`ai.elizaos.app`) is the only HOME app. The overlay sets
   `config_defaultHome` (alongside dialer/sms/assistant/browser) and
-  `ro.elizaos.home`, and SetupWizard is disabled — no Google "Welcome" flow.
+  `ro.elizaos.home`. Pixel builds retain GrapheneOS SetupWizard2 for one-time
+  offline-capable provisioning; it has no INTERNET permission and hands HOME
+  to Eliza after setting Android's provisioning flags. The Google setup wizard
+  remains excluded. GrapheneOS AppStore, Auditor, InfoApp, and Updater are also
+  excluded so this fork does not poll their upstream services.
 - **Splash** — `scripts/generate-eliza-bootanimation.mjs` renders the white
   elizaOS logo on the elizaOS blue field (#0B35F1) into
   `vendor/eliza/bootanimation/` from the canonical brand SVG using `sharp`

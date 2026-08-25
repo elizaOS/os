@@ -44,6 +44,10 @@ const REQUIRED_GRANTED_PERMISSIONS = [
 ];
 
 const FORBIDDEN_STOCK_PACKAGES = [
+  "app.attestation.auditor",
+  "app.grapheneos.apps",
+  "app.grapheneos.info",
+  "app.seamlessupdate.client",
   "com.android.browser",
   "com.android.calendar",
   "com.android.camera2",
@@ -96,7 +100,6 @@ function brandBootProperties(brand) {
   // <propertyPrefix>.boot_phase is intentionally non-ro so init.<brand>.rc
   // can re-set it at each phase. ro.* is immutable after first set.
   return {
-    "ro.setupwizard.mode": "DISABLED",
     [`${brand.propertyPrefix}.boot_phase`]: "completed",
   };
 }
@@ -305,6 +308,25 @@ function validateBootProperties(adb, serial, brand) {
   return properties;
 }
 
+function validateProvisioning(adb, serial) {
+  const deviceProvisioned = shell(
+    adb,
+    serial,
+    "settings get global device_provisioned",
+  ).trim();
+  const userSetupComplete = shell(
+    adb,
+    serial,
+    "settings get secure user_setup_complete",
+  ).trim();
+  if (deviceProvisioned !== "1" || userSetupComplete !== "1") {
+    throw new Error(
+      `First-boot provisioning is incomplete: device_provisioned=${deviceProvisioned || "<empty>"}, user_setup_complete=${userSetupComplete || "<empty>"}`,
+    );
+  }
+  return { deviceProvisioned, userSetupComplete };
+}
+
 function validatePackagePath(adb, serial, brand) {
   const pmPath = shell(adb, serial, `pm path ${brand.packageName}`);
   assertIncludes(
@@ -479,6 +501,7 @@ export async function validateBootedDevice(options, brand) {
     serial,
     product: validateProductProperty(adb, serial, brand),
     bootProperties: validateBootProperties(adb, serial, brand),
+    provisioning: validateProvisioning(adb, serial),
     packagePath: validatePackagePath(adb, serial, brand),
     homeResolution: validateHomeResolution(adb, serial, brand),
     replacementIntents: validateReplacementIntents(adb, serial, brand),

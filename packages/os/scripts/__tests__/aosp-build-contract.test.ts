@@ -163,6 +163,22 @@ describe("AOSP build contracts", () => {
     );
   });
 
+  test("the Graphene-derived product removes upstream network services but retains safe provisioning", () => {
+    const vendorRoot = join(repositoryRoot, "packages/os/android/vendor/eliza");
+    const common = readFileSync(join(vendorRoot, "eliza_common.mk"), "utf8");
+    const appImport = readFileSync(
+      join(vendorRoot, "apps/Eliza/Android.bp"),
+      "utf8",
+    );
+
+    for (const moduleName of ["AppStore", "Auditor", "InfoApp", "Updater"]) {
+      expect(common).toContain(moduleName);
+      expect(appImport).toContain(`"${moduleName}"`);
+    }
+    expect(common).not.toContain("ro.setupwizard.mode=DISABLED");
+    expect(appImport).not.toContain('"SetupWizard2"');
+  });
+
   test("the product menu exposes only source-pinned physical targets", () => {
     const products = readFileSync(
       join(

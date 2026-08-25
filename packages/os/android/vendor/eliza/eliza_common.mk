@@ -11,8 +11,10 @@
 #      PRODUCT_PACKAGES so the resolver has a single answer for HOME,
 #      DIALER, SMS, ASSISTANT, contacts, browser, calendar, camera,
 #      gallery, music, deskclock, search.
-#   4. First-boot setup wizard / provisioning is disabled — the device
-#      must boot directly to Eliza, not to a Google "Welcome" flow.
+#   4. GrapheneOS SetupWizard2 is retained for one-time device provisioning.
+#      It has no INTERNET permission and writes the platform provisioning
+#      flags that Android otherwise leaves unset. After completion, Eliza is
+#      the sole HOME implementation.
 #   5. Brand properties land on /product/ where the product layer owns
 #      them, not on /system.
 #   6. The assistant/full-control capability manifest is baked into
@@ -27,10 +29,18 @@ PRODUCT_PACKAGES += \
     privapp-permissions-ai.elizaos.app.xml
 
 # Strip every stock app whose role Eliza owns. Trebuchet is LineageOS's
-# launcher; absent from AOSP but harmless to list. SetupWizard ships with
-# Pixel partner blobs only; stripping it here has no effect on Cuttlefish
-# and load-bearing on Pixel targets.
+# launcher; absent from AOSP but harmless to list. SetupWizard is the legacy
+# Google/AOSP module; GrapheneOS SetupWizard2 is intentionally retained until
+# it completes first-boot provisioning.
+#
+# The GrapheneOS service apps are deliberately excluded from this fork:
+# AppStore schedules repository checks, Updater contacts the GrapheneOS release
+# service in official builds, Auditor is tied to GrapheneOS attestation, and
+# InfoApp presents upstream branding. Keep these removals even for userdebug so
+# changing OFFICIAL_BUILD cannot silently re-enable a network updater.
 PRODUCT_PACKAGES -= \
+    AppStore \
+    Auditor \
     Browser2 \
     Calendar \
     Camera2 \
@@ -39,6 +49,7 @@ PRODUCT_PACKAGES -= \
     Dialer \
     Email \
     Gallery2 \
+    InfoApp \
     Launcher3 \
     Launcher3QuickStep \
     ManagedProvisioning \
@@ -48,7 +59,8 @@ PRODUCT_PACKAGES -= \
     Provision \
     QuickSearchBox \
     SetupWizard \
-    Trebuchet
+    Trebuchet \
+    Updater
 
 PRODUCT_PACKAGE_OVERLAYS += \
     vendor/eliza/overlays
@@ -64,7 +76,6 @@ PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += \
 PRODUCT_PRODUCT_PROPERTIES += \
     ro.elizaos.product=$(ELIZA_PRODUCT_TAG) \
     ro.elizaos.home=ai.elizaos.app \
-    ro.setupwizard.mode=DISABLED \
     persist.sys.fflag.override.settings_provider_model=false
 
 # Boot-time init: starts services, sets elizaOS-specific properties,

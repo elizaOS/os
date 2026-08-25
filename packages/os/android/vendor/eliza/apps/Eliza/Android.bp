@@ -60,5 +60,12 @@ android_app_import {
         "Provision",
         "ManagedProvisioning",
         "SetupWizard",
+        // GrapheneOS network/update and upstream-brand service apps. These
+        // duplicate the PRODUCT_PACKAGES -= guard so later inheritance or an
+        // OFFICIAL_BUILD change cannot put them back into the image.
+        "AppStore",
+        "Auditor",
+        "InfoApp",
+        "Updater",
     ],
 }
