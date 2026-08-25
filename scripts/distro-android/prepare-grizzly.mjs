@@ -170,8 +170,7 @@ function normalizeGeneratedF2fsMountOptions(aospRoot) {
     "/dev/block/platform/3c2d0000.ufs/by-name/userdata /data f2fs " +
     "noatime,nosuid,nodev,discard,reserve_root=32768,resgid=1065," +
     "fsync_mode=nobarrier,atgc,checkpoint_merge " +
-    "latemount,wait,check,quota,formattable," +
-    "sysfs_path=/dev/sys/block/bootdevice";
+    "latemount,wait,check,quota,formattable";
   for (const relativePath of relativePaths) {
     const filePath = path.join(aospRoot, relativePath);
     if (!fs.existsSync(filePath)) continue;
