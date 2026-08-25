@@ -105,7 +105,28 @@ export async function prepareGrizzly({
   }
   materializeExternalProjects(aospRoot, lock);
   assertPinnedAospCheckout(aospRoot, lock);
-  await materializeLockedSourceOverlays(aospRoot, lock);
+  const overlayResult = await materializeLockedSourceOverlays(aospRoot, lock);
+  const overlayStamp = JSON.stringify(
+    overlayResult.overlays.map(({ path: overlayPath, sha256 }) => ({
+      path: overlayPath,
+      sha256,
+    })),
+  );
+  const overlayStampPath = path.join(
+    aospRoot,
+    "out_adevtool_deps/.elizaos-source-overlay-stamp.json",
+  );
+  const existingOverlayStamp = fs.existsSync(overlayStampPath)
+    ? fs.readFileSync(overlayStampPath, "utf8")
+    : "";
+  if (overlayResult.changed || existingOverlayStamp !== overlayStamp) {
+    // adevtool's host tools are compiled from the AOSP tree. Invalidate only
+    // its disposable dependency output when a source overlay changes.
+    fs.rmSync(path.join(aospRoot, "out_adevtool_deps"), {
+      recursive: true,
+      force: true,
+    });
+  }
 
   const adevtoolRoot = path.join(aospRoot, "vendor/adevtool");
   if (!skipInstall) {
@@ -123,6 +144,8 @@ export async function prepareGrizzly({
     cwd: aospRoot,
     env: withSisoCompatibility(),
   });
+  fs.mkdirSync(path.dirname(overlayStampPath), { recursive: true });
+  fs.writeFileSync(overlayStampPath, overlayStamp);
   const files = assertGeneratedVendorTree(aospRoot, lock);
 
   const downloadRoot = path.join(adevtoolRoot, "dl");

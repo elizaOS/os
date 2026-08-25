@@ -476,6 +476,7 @@ export async function verifyLockedArtifact(
 
 /** Apply immutable source files required to reconcile pinned AOSP with adevtool. */
 export async function materializeLockedSourceOverlays(aospRoot, lock) {
+  let changed = false;
   for (const overlay of lock.sourceOverlays ?? []) {
     const destination = path.join(aospRoot, overlay.path);
     const currentSha = fs.existsSync(destination)
@@ -508,8 +509,9 @@ export async function materializeLockedSourceOverlays(aospRoot, lock) {
       );
     }
     fs.renameSync(partial, destination);
+    changed = true;
   }
-  return lock.sourceOverlays ?? [];
+  return { overlays: lock.sourceOverlays ?? [], changed };
 }
 
 export async function verifyProprietaryArchive(lock, archivePath) {
