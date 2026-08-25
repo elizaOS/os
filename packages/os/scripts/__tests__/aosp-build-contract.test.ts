@@ -358,9 +358,9 @@ describe("AOSP build contracts", () => {
         }),
         expect.objectContaining({
           path: "vendor/google_devices/grizzly/stock-kernel/dtbo.img",
-          sizeBytes: 16777216,
+          sizeBytes: 11415225,
           sha256:
-            "f906ba29c87ce26fed65f206119a147f8e810dab2be500a3470639fc4eef32ce",
+            "684473615efc85ffd63e377fe5428a88ce9a3e96ae6e33b26da93bd8ecb516c4",
         }),
       ]),
     );
