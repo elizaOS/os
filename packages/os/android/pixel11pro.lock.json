@@ -77,6 +77,41 @@
       "sourceCommit": "b2be3bb5f88bc5833dd4f9a11b3c295259ae733f",
       "baseSha256": "7bc19c0fcc8dc50ca95b6a2fbeb18f5fe2f5f7e00e06ac04b7f11af1ba31f73c",
       "sha256": "67b1441fc748881c6fc059a22e1a6ffacb1858d6a4cf64432f494e2d6c971b97"
+    },
+    {
+      "path": "tools/apksig/Android.bp",
+      "url": "https://raw.githubusercontent.com/GrapheneOS/platform_tools_apksig/ba4d984e1a360d427307d669d2f789212130e9e8/Android.bp",
+      "sourceCommit": "ba4d984e1a360d427307d669d2f789212130e9e8",
+      "baseSha256": "22f86ab11f2470d9e34861f7273dd92c0ba4e9b914710a71c22dc374ebbac2fb",
+      "sha256": "bd0d99efcab646fb4a39cab3da0b1c15c251169161010a9e8aac1b2d6f59b0c4"
+    },
+    {
+      "path": "tools/apksig/src/apksigner/java/com/android/apksigner/ApkSignerTool.java",
+      "url": "https://raw.githubusercontent.com/GrapheneOS/platform_tools_apksig/ba4d984e1a360d427307d669d2f789212130e9e8/src/apksigner/java/com/android/apksigner/ApkSignerTool.java",
+      "sourceCommit": "ba4d984e1a360d427307d669d2f789212130e9e8",
+      "baseSha256": "52e5771bc9768b38d3988c50ee34cde1e404fe692113ec5f0629af157968d68d",
+      "sha256": "8604499845681d82c69e25ed516127c8bb03ce2a7525e1cb5b1293bdf5aea7c7"
+    },
+    {
+      "path": "tools/apksig/src/main/java/com/android/apksig/internal/apk/Flags.java",
+      "url": "https://raw.githubusercontent.com/GrapheneOS/platform_tools_apksig/ba4d984e1a360d427307d669d2f789212130e9e8/src/main/java/com/android/apksig/internal/apk/Flags.java",
+      "sourceCommit": "ba4d984e1a360d427307d669d2f789212130e9e8",
+      "baseSha256": null,
+      "sha256": "b043cd0fb7a5d90d3561810583ed83796b17766795b88594cc545537d079ed62"
+    },
+    {
+      "path": "tools/apksig/src/main/java/com/android/apksig/internal/apk/v2/V2SchemeVerifier.java",
+      "url": "https://raw.githubusercontent.com/GrapheneOS/platform_tools_apksig/ba4d984e1a360d427307d669d2f789212130e9e8/src/main/java/com/android/apksig/internal/apk/v2/V2SchemeVerifier.java",
+      "sourceCommit": "ba4d984e1a360d427307d669d2f789212130e9e8",
+      "baseSha256": "c33606383a44f77189144acbefc777f53b42d48901f5c3cfae36b9ff91bc5799",
+      "sha256": "47db6b28f3de18b0dd9040cf4ab79f6e3c5c0e2843ca72072ecf3401073be590"
+    },
+    {
+      "path": "tools/apksig/src/main/java/com/android/apksig/internal/apk/v3/V3SchemeVerifier.java",
+      "url": "https://raw.githubusercontent.com/GrapheneOS/platform_tools_apksig/ba4d984e1a360d427307d669d2f789212130e9e8/src/main/java/com/android/apksig/internal/apk/v3/V3SchemeVerifier.java",
+      "sourceCommit": "ba4d984e1a360d427307d669d2f789212130e9e8",
+      "baseSha256": "ebbbe67189e0083c1403e766e0fc7d74682464e4c6e25859ff40d520d9c96173",
+      "sha256": "e3ce759333761b382379bbbda8a5df45e768372bd7661ab2fd3f7232dc2f71eb"
     }
   ],
   "requiredSourceFiles": [

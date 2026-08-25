@@ -299,6 +299,12 @@ describe("AOSP build contracts", () => {
           sha256:
             "1a0414d6af278aaf138d98c53d7fee10a185a480241d037e5748eb0465055518",
         }),
+        expect.objectContaining({
+          path: "tools/apksig/src/apksigner/java/com/android/apksigner/ApkSignerTool.java",
+          sourceCommit: "ba4d984e1a360d427307d669d2f789212130e9e8",
+          sha256:
+            "8604499845681d82c69e25ed516127c8bb03ce2a7525e1cb5b1293bdf5aea7c7",
+        }),
       ]),
     );
     expect(grizzlyLock.referenceFactoryImage).toMatchObject({
