@@ -125,7 +125,9 @@ function normalizeGeneratedSePolicy(aospRoot) {
     .replace(
       /^type preloads_copy_exec, file_type, exec_type, system_file_type;\n/gm,
       "",
-    );
+    )
+    .replace(/^type system_server_startup, domain, coredomain;\n/gm, "")
+    .replace(/^type system_server_startup_tmpfs, file_type;\n/gm, "");
   if (normalized !== contents) fs.writeFileSync(typesPath, normalized);
 }
 
