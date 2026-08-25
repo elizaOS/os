@@ -23,6 +23,26 @@ const defaultLockPath = path.join(
   "packages/os/android/pixel11pro.lock.json",
 );
 
+// The generated Pixel makefile carries the factory image's BUILD_ID guard.
+// Android 17's product configuration owns BUILD_ID as a readonly value and
+// uses a different source-tree release ID, so preserving the guard as a
+// warning is required for a custom AOSP build. The original guard text stays
+// in the file (and in the lock contract) for provenance and reviewability.
+function normalizeGeneratedBuildIdGuard(aospRoot) {
+  const makefilePath = path.join(
+    aospRoot,
+    "vendor/google_devices/grizzly/grizzly.mk",
+  );
+  if (!fs.existsSync(makefilePath)) return;
+  const contents = fs.readFileSync(makefilePath, "utf8");
+  const strictError =
+    "  $(error BUILD_ID: expected CD1A.260714.001.A9, got $(BUILD_ID))";
+  const warning =
+    "  $(warning BUILD_ID: factory CD1A.260714.001.A9; using AOSP $(BUILD_ID))";
+  if (!contents.includes(strictError) || contents.includes(warning)) return;
+  fs.writeFileSync(makefilePath, contents.replace(strictError, warning));
+}
+
 function fail(message) {
   throw new Error(`[distro-android:grizzly] ${message}`);
 }
@@ -138,6 +158,7 @@ export async function prepareGrizzly({
   let generatedTreeComplete = false;
   if (fs.existsSync(generatedRoot)) {
     try {
+      normalizeGeneratedBuildIdGuard(aospRoot);
       assertGeneratedVendorTree(aospRoot, lock);
       generatedTreeComplete = true;
     } catch {
@@ -159,6 +180,7 @@ export async function prepareGrizzly({
       cwd: aospRoot,
       env: withSisoCompatibility(),
     });
+    normalizeGeneratedBuildIdGuard(aospRoot);
   }
   const files = assertGeneratedVendorTree(aospRoot, lock);
 
