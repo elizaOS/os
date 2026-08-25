@@ -43,6 +43,28 @@ function normalizeGeneratedBuildIdGuard(aospRoot) {
   fs.writeFileSync(makefilePath, contents.replace(strictError, warning));
 }
 
+// Android 17's root dexpreopt check resolves the Malibu provider by its local
+// module name. adevtool emits the proprietary Android.bp in a private Soong
+// namespace, which makes that provider invisible to the root namespace. Keep
+// the generated modules global for this product-only vendor tree.
+function normalizeGeneratedProprietaryNamespace(aospRoot) {
+  const bpPath = path.join(
+    aospRoot,
+    "vendor/google_devices/grizzly/proprietary/Android.bp",
+  );
+  if (!fs.existsSync(bpPath)) return;
+  const contents = fs.readFileSync(bpPath, "utf8");
+  const namespace = "soong_namespace {}\n";
+  if (!contents.includes(namespace)) return;
+  fs.writeFileSync(
+    bpPath,
+    contents.replace(
+      namespace,
+      "// elizaOS: expose grizzly proprietary modules globally\n",
+    ),
+  );
+}
+
 function fail(message) {
   throw new Error(`[distro-android:grizzly] ${message}`);
 }
@@ -159,6 +181,7 @@ export async function prepareGrizzly({
   if (fs.existsSync(generatedRoot)) {
     try {
       normalizeGeneratedBuildIdGuard(aospRoot);
+      normalizeGeneratedProprietaryNamespace(aospRoot);
       assertGeneratedVendorTree(aospRoot, lock);
       generatedTreeComplete = true;
     } catch {
@@ -181,6 +204,7 @@ export async function prepareGrizzly({
       env: withSisoCompatibility(),
     });
     normalizeGeneratedBuildIdGuard(aospRoot);
+    normalizeGeneratedProprietaryNamespace(aospRoot);
   }
   const files = assertGeneratedVendorTree(aospRoot, lock);
 
