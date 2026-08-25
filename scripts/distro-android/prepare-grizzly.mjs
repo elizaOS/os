@@ -63,6 +63,15 @@ function normalizeGeneratedProprietaryNamespace(aospRoot) {
       contents.replace(flattenedMarker, "soong_namespace {}\n"),
     );
   }
+  const normalizedProprietary = fs.readFileSync(proprietaryBpPath, "utf8");
+  const malibuModule =
+    /\ndex_import \{\n {4}name: "malibu-plugin-provider",[\s\S]*?\n\}\n/;
+  if (malibuModule.test(normalizedProprietary)) {
+    fs.writeFileSync(
+      proprietaryBpPath,
+      normalizedProprietary.replace(malibuModule, "\n"),
+    );
+  }
 
   const shimDir = path.join(aospRoot, "vendor/google_devices/grizzly");
   const staleShimDir = path.join(shimDir, "malibu-plugin-provider");
