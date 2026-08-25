@@ -84,6 +84,28 @@ function normalizeGeneratedProprietaryNamespace(aospRoot) {
     jars: [ "proprietary/system_ext/framework/malibu-plugin-provider.jar" ],
     system_ext_specific: true,
 }
+
+// Android 17 already declares the preload-copy domain in
+// system/sepolicy/private/preloads_copy.te. The generated Pixel policy
+// carries the same two public declarations, which checkpolicy rejects as
+// duplicate types when the grizzly system_ext policy is assembled. Remove
+// only those generated duplicates; all generated allow rules and exec labels
+// remain intact.
+function normalizeGeneratedSePolicy(aospRoot) {
+  const typesPath = path.join(
+    aospRoot,
+    "vendor/google_devices/grizzly/sepolicy/system_ext/public/types.te",
+  );
+  if (!fs.existsSync(typesPath)) return;
+  const contents = fs.readFileSync(typesPath, "utf8");
+  const normalized = contents
+    .replace(/^type preloads_copy, domain, coredomain;\n/gm, "")
+    .replace(
+      /^type preloads_copy_exec, file_type, exec_type, system_file_type;\n/gm,
+      "",
+    );
+  if (normalized !== contents) fs.writeFileSync(typesPath, normalized);
+}
 `,
   );
 
@@ -223,6 +245,7 @@ export async function prepareGrizzly({
     try {
       normalizeGeneratedBuildIdGuard(aospRoot);
       normalizeGeneratedProprietaryNamespace(aospRoot);
+      normalizeGeneratedSePolicy(aospRoot);
       assertGeneratedVendorTree(aospRoot, lock);
       generatedTreeComplete = true;
     } catch {
@@ -246,6 +269,7 @@ export async function prepareGrizzly({
     });
     normalizeGeneratedBuildIdGuard(aospRoot);
     normalizeGeneratedProprietaryNamespace(aospRoot);
+    normalizeGeneratedSePolicy(aospRoot);
   }
   const files = assertGeneratedVendorTree(aospRoot, lock);
 
