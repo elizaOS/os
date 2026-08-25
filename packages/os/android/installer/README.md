@@ -51,14 +51,18 @@ android/installer/install-elizaos-android.sh \
 
 - `boot.img`
 - `vendor_boot.img`
+- `vendor_kernel_boot.img`
 - `dtbo.img`
+- `pvmfw.img`
 - `vbmeta.img`
 - `vbmeta_system.img`
+- `vbmeta_vendor.img`
 - `init_boot.img`
 - `super.img`
 - `product.img`
 - `system.img`
 - `system_ext.img`
+- `system_dlkm.img`
 - `vendor.img`
 - `vendor_dlkm.img`
 - `odm.img`
@@ -71,6 +75,7 @@ image:
 android/installer/install-elizaos-android.sh \
   --image boot=out/target/product/eliza_tegu_phone/boot.img \
   --image vendor_boot=out/target/product/eliza_tegu_phone/vendor_boot.img \
+  --image vendor_kernel_boot=out/target/product/eliza_tegu_phone/vendor_kernel_boot.img \
   --image super=out/target/product/eliza_tegu_phone/super.img
 ```
 

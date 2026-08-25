@@ -27,6 +27,7 @@
 
 ARCH    ?= x86_64
 AOSP_ROOT ?= $(HOME)/aosp
+AOSP_GRIZZLY_ROOT ?= $(HOME)/aosp-grizzly
 ARGS    ?=
 SUPPORTED_ARCHES := x86_64 arm64 riscv64
 
@@ -59,11 +60,14 @@ INFERENCE_TARGETS_arm64 := android-arm64-cpu-fused
 INFERENCE_TARGETS_riscv64 := android-arm64-cpu-fused android-riscv64-cpu-fused
 INFERENCE_TARGETS := $(INFERENCE_TARGETS_$(ARCH))
 
-.PHONY: help bootstrap provision-repo build native-inference sim splash bootanimation check-arch
+.PHONY: help bootstrap bootstrap-grizzly prepare-grizzly build build-grizzly native-inference native-inference-grizzly sim splash bootanimation check-arch
 
 help:
 	@echo "elizaOS Mobile (AOSP) targets:"
 	@echo "  make bootstrap                           # sync the pinned full AOSP checkout"
+	@echo "  make bootstrap-grizzly                  # sync the pinned Pixel 11 Pro AOSP checkout"
+	@echo "  make prepare-grizzly                    # generate grizzly vendor/device support from stock"
+	@echo "  make build-grizzly                      # build the Pixel 11 Pro image (does not flash)"
 	@echo "  make build ARCH=x86_64|arm64|riscv64   # build + launch + boot-validate"
 	@echo "  make sim   ARCH=<arch>                  # validate an already-built image"
 	@echo "  make splash                             # render elizaOS blue boot splash (uses sharp)"
@@ -81,12 +85,25 @@ $(REPO_LAUNCHER):
 bootstrap: provision-repo
 	node $(DISTRO)/bootstrap-aosp.mjs --repo-bin "$(REPO_LAUNCHER)" --aosp-root $(AOSP_ROOT) --jobs $(or $(JOBS),$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1))
 
+bootstrap-grizzly: provision-repo
+	node $(DISTRO)/bootstrap-aosp.mjs --lock "$(HERE)pixel11pro.lock.json" --repo-bin "$(REPO_LAUNCHER)" --aosp-root "$(AOSP_GRIZZLY_ROOT)" --jobs $(or $(JOBS),$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1))
+
+prepare-grizzly:
+	node $(DISTRO)/prepare-grizzly.mjs --lock "$(HERE)pixel11pro.lock.json" --aosp-root "$(AOSP_GRIZZLY_ROOT)"
+
 build: check-arch native-inference
 	ELIZAOS_ELIZA_ROOT="$(ELIZAOS_ELIZA_ROOT)" $(if $(filter riscv64,$(ARCH)),,ELIZA_BUN_RISCV64_OPTIONAL=1) node $(DISTRO)/build-aosp.mjs --brand-config $(BRAND_CONFIG) --aosp-root $(AOSP_ROOT) --rebuild-privileged-apk --launch --boot-validate $(ARGS)
 
 native-inference: check-arch
 	cd "$(ELIZAOS_ELIZA_ROOT)" && node packages/app-core/scripts/aosp/compile-libllama.mjs --assets-dir "$(ANDROID_AGENT_ASSETS)" $(foreach target,$(INFERENCE_TARGETS),--target $(target))
 	cd "$(ELIZAOS_ELIZA_ROOT)" && node packages/app-core/scripts/stage-elizavoice-lib.mjs --abi arm64-v8a --variant cpu
+
+native-inference-grizzly:
+	cd "$(ELIZAOS_ELIZA_ROOT)" && node packages/app-core/scripts/aosp/compile-libllama.mjs --assets-dir "$(ANDROID_AGENT_ASSETS)" --target android-arm64-cpu-fused
+	cd "$(ELIZAOS_ELIZA_ROOT)" && node packages/app-core/scripts/stage-elizavoice-lib.mjs --abi arm64-v8a --variant cpu
+
+build-grizzly: prepare-grizzly native-inference-grizzly bootanimation
+	ELIZAOS_ELIZA_ROOT="$(ELIZAOS_ELIZA_ROOT)" ELIZA_BUN_RISCV64_OPTIONAL=1 node $(DISTRO)/build-aosp.mjs --brand-config $(DISTRO)/brand.eliza-grizzly.json --aosp-root "$(AOSP_GRIZZLY_ROOT)" --rebuild-privileged-apk $(ARGS)
 
 sim: check-arch
 	node $(DISTRO)/sim.mjs --brand-config $(BRAND_CONFIG) --device-dir $(DEVICE_DIR) --aosp-root $(AOSP_ROOT) $(ARGS)

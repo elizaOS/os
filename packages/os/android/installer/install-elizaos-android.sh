@@ -276,14 +276,18 @@ collect_images() {
   local known_images=(
     boot
     vendor_boot
+    vendor_kernel_boot
     dtbo
+    pvmfw
     vbmeta
     vbmeta_system
+    vbmeta_vendor
     init_boot
     super
     product
     system
     system_ext
+    system_dlkm
     vendor
     vendor_dlkm
     odm

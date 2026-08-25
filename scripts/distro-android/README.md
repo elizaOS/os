@@ -100,6 +100,14 @@ lock. If it also contains a `proprietaryArchive` contract, the operator must
 accept and run the vendor's license-gated extractor themselves; the build only
 verifies the retained archive and extracted files. It never accepts a license.
 
+Targets without a published OEM device tree may use a lock with pinned
+`externalProjects` and a `generatedVendor` contract. Pixel 11 Pro uses this
+path: `prepare-grizzly.mjs` materializes sparse, exact-commit `adevtool` and
+`vendor_state` checkouts, generates `vendor/google_devices/grizzly`, verifies
+the pinned reference image and required generated files, and retains the exact
+stock rollback image. `build-aosp.mjs` refuses to continue if that generated
+tree is absent or incomplete.
+
 ### Pending ports (developer tooling, eliza-only for now)
 
 - `e2e-validate.mjs` — full e2e boot + interaction smoke

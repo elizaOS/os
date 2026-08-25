@@ -26,7 +26,8 @@ The default brand shipped here is **eliza** (`vendor/eliza/`). The brand
 configs live at `scripts/distro-android/brand.eliza*.json`: the three
 Cuttlefish architectures (`brand.eliza.json` = x86_64,
 `brand.eliza-arm64.json`, `brand.eliza-riscv64.json`) plus the pinned Pixel 9a
-hardware target (`brand.eliza-tegu.json`). All point at this package's
+and generated Pixel 11 Pro hardware targets (`brand.eliza-tegu.json`,
+`brand.eliza-grizzly.json`). All point at this package's
 `vendor/eliza/` overlay and a matching product makefile.
 
 ## Emulator + build entry point
@@ -131,6 +132,35 @@ rollback evidence bundle passes on real hardware. Use the release-manifest
 installer for flashing; do not sideload the product APK onto stock Android.
 See the AOSP [source download requirements](https://source.android.com/docs/setup/download#obtaining-proprietary-binaries)
 and Google's [Pixel driver binaries](https://developers.google.com/android/drivers).
+
+### Pixel 11 Pro (`grizzly`) generated device support
+
+Google has not published the traditional Pixel 11 device/kernel project set.
+`pixel11pro.lock.json` therefore pins a reproducible generated-device path:
+Android 17 r1, GrapheneOS `adevtool`, GrapheneOS `vendor_state`, and Google's
+A9 factory image matching the lab phone for both generation and rollback. The
+first bring-up deliberately uses the stock `spacecraft` kernel, modules, DTB,
+and DTBO extracted by `adevtool`; it does not treat the missing public kernel
+source as reconstructed source.
+
+Use a Linux x86_64 builder with at least 30 GB RAM and 600 GB free disk:
+
+```bash
+make -C packages/os/android bootstrap-grizzly \
+  AOSP_GRIZZLY_ROOT=/build/aosp-grizzly
+make -C packages/os/android prepare-grizzly \
+  AOSP_GRIZZLY_ROOT=/build/aosp-grizzly
+make -C packages/os/android build-grizzly \
+  AOSP_GRIZZLY_ROOT=/build/aosp-grizzly \
+  ELIZAOS_ELIZA_ROOT=/build/eliza
+```
+
+Preparation uses sparse exact-commit Git checkouts for the generation inputs,
+runs `adevtool generate-all -d grizzly`, verifies the required output, and
+retains and verifies both factory images. Downloads are governed by Google's
+Pixel factory-image terms, which `adevtool` displays before download. The
+result remains installer-ineligible until the exact image completes the full
+physical validation and rollback matrix.
 
 `scripts/aosp/` contains device deployment and Cuttlefish runtime smoke
 orchestration. App compilation and agent-payload staging remain in the

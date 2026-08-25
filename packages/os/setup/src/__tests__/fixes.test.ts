@@ -346,6 +346,24 @@ describe("downloadAndVerifyArtifacts", () => {
 });
 
 describe("Android hardware inventory", () => {
+  it("accepts generated source pins without making them installer-eligible", () => {
+    expect(
+      parseHardwareTargets({
+        schemaVersion: 1,
+        targets: [
+          {
+            targetId: "pixel11pro-grizzly",
+            codenames: ["grizzly"],
+            sourceStatus: "pinned-generated",
+            installerEligible: false,
+            productName: "eliza_grizzly_phone",
+            expectedFingerprintPrefix: "elizaOS/eliza_grizzly_phone/grizzly:",
+          },
+        ],
+      }),
+    ).toHaveLength(1);
+  });
+
   it("rejects duplicate codenames and blocked installer targets", () => {
     expect(() =>
       parseHardwareTargets({

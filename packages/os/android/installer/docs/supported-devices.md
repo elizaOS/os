@@ -37,6 +37,12 @@ requirement even when their retail model name matches a supported device.
   archive are pinned by `pixel9a.lock.json`; the `eliza_tegu_phone` lunch target
   is checked in. Installer eligibility remains blocked until a retained build,
   flash, post-boot validation, and rollback evidence bundle passes on hardware.
+- **Pixel 11 Pro (`grizzly`):** generated, source-pinned candidate. Android 17,
+  exact GrapheneOS generation inputs, the current A9 factory/rollback image,
+  and required generated outputs are pinned by
+  `pixel11pro.lock.json`. The product remains installer-ineligible until a
+  retained build, stock rollback, exact-confirmation flash, and full post-boot
+  hardware/Eliza validation bundle pass on the lab phone.
 - **Light Phone III (`TLP301`):** Eliza's application repository has a direct
   debug APK policy for this device. Light's official `light-sdk` now provides
   a sandboxed LightOS tool/application surface and emulator, but it is not a

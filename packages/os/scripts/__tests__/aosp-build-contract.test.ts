@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   loadPhysicalTargetContract,
@@ -15,15 +15,36 @@ import {
 import { parseSmokeArgs } from "../../../../scripts/aosp/smoke-cuttlefish.mjs";
 import {
   assertExtractedVendorTree,
+  assertGeneratedVendorTree,
   loadAospLock,
   parseBootstrapArgs,
   verifyProprietaryArchive,
 } from "../../../../scripts/distro-android/bootstrap-aosp.mjs";
 import { assertBuildHost } from "../../../../scripts/distro-android/build-aosp.mjs";
+import { parseArgs as parseGrizzlyArgs } from "../../../../scripts/distro-android/prepare-grizzly.mjs";
+import { withSisoCompatibility } from "../../../../scripts/distro-android/siso-env.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../../../..", import.meta.url));
 
 describe("AOSP build contracts", () => {
+  test("Android 17 Siso builds tolerate generated missing targets", () => {
+    expect(withSisoCompatibility({})).toMatchObject({
+      SISO_EXPERIMENTS: "ignore-missing-targets",
+    });
+    expect(
+      withSisoCompatibility({ SISO_EXPERIMENTS: "oom-score-adj" }),
+    ).toMatchObject({
+      SISO_EXPERIMENTS: "oom-score-adj,ignore-missing-targets",
+    });
+    expect(
+      withSisoCompatibility({
+        SISO_EXPERIMENTS: "ignore-missing-targets,oom-score-adj",
+      }),
+    ).toMatchObject({
+      SISO_EXPERIMENTS: "ignore-missing-targets,oom-score-adj",
+    });
+  });
+
   test("the Make front door rebuilds the privileged APK", () => {
     const makefile = readFileSync(
       join(repositoryRoot, "packages/os/android/Makefile"),
@@ -89,6 +110,11 @@ describe("AOSP build contracts", () => {
     expect(repoProvisioner).toContain(
       'repo_sha256="1211b57b57e4122a9c546295a59b37d24068f1164d0e87bef096d5323c413e4f"',
     );
+    const bootstrapSource = readFileSync(
+      join(repositoryRoot, "scripts/distro-android/bootstrap-aosp.mjs"),
+      "utf8",
+    );
+    expect(bootstrapSource).toContain('"--retry-fetches=5"');
   });
 
   test("licensed Pixel vendor inputs are verified by bytes, digest, and extraction", async () => {
@@ -179,9 +205,15 @@ describe("AOSP build contracts", () => {
       expect(products).not.toContain(absentTarget);
     }
     expect(products).toContain("eliza_tegu_phone");
+    expect(products).toContain("eliza_grizzly_phone");
     expect(
       existsSync(join(repositoryRoot, "packages/os/android/pixel9a.lock.json")),
     ).toBe(true);
+    const grizzlyLockPath = join(
+      repositoryRoot,
+      "packages/os/android/pixel11pro.lock.json",
+    );
+    expect(existsSync(grizzlyLockPath)).toBe(true);
     const inventory = JSON.parse(
       readFileSync(
         join(repositoryRoot, "packages/os/android/hardware-targets.json"),
@@ -198,6 +230,13 @@ describe("AOSP build contracts", () => {
       expect.objectContaining({
         targetId: "pixel9a-tegu",
         sourceStatus: "pinned",
+        installerEligible: false,
+      }),
+    );
+    expect(inventory.targets).toContainEqual(
+      expect.objectContaining({
+        targetId: "pixel11pro-grizzly",
+        sourceStatus: "pinned-generated",
         installerEligible: false,
       }),
     );
@@ -240,6 +279,111 @@ describe("AOSP build contracts", () => {
     expect(pixelLock.device.expectedFingerprintPrefix).toBe(
       `${pixelLock.device.productBrand}/${pixelLock.device.productName}/${pixelLock.device.codename}:`,
     );
+    const grizzlyLock = loadAospLock(grizzlyLockPath);
+    expect(grizzlyLock.device).toMatchObject({
+      targetId: "pixel11pro-grizzly",
+      codename: "grizzly",
+      buildId: "CD1A.260714.001.A9",
+      productName: "eliza_grizzly_phone",
+    });
+    expect(grizzlyLock.externalProjects).toHaveLength(3);
+    expect(grizzlyLock.externalProjects).toContainEqual(
+      expect.objectContaining({
+        path: "tools/arsclib",
+        commit: "a67388430c8319f4c7066626e340b5c4d7f27882",
+      }),
+    );
+    expect(grizzlyLock.sourceOverlays).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "frameworks/base/tools/aapt2/BriefPackageInfo.proto",
+          sourceCommit: "b2be3bb5f88bc5833dd4f9a11b3c295259ae733f",
+          baseSha256: null,
+        }),
+        expect.objectContaining({
+          path: "frameworks/base/tools/aapt2/Configuration.proto",
+          sha256:
+            "9161de5a4711e574e8e38457938ab3b10ba5445874106a0bf1b22dcd739f51ed",
+        }),
+        expect.objectContaining({
+          path: "frameworks/base/tools/aapt2/cmd/Convert.cpp",
+          sha256:
+            "df70b3a1420e5d0e4e8407714cee5cbee14f91c7f6dc6f41f5b08910a88858ad",
+        }),
+        expect.objectContaining({
+          path: "frameworks/base/tools/aapt2/format/proto/ProtoSerialize.cpp",
+          sha256:
+            "b348a29437cbe7974c7fd10dc22227c903d3866c9f4184ce5c6a87f5692cdf46",
+        }),
+        expect.objectContaining({
+          path: "frameworks/base/tools/aapt2/cmd/Dump.cpp",
+          sha256:
+            "1a0414d6af278aaf138d98c53d7fee10a185a480241d037e5748eb0465055518",
+        }),
+        expect.objectContaining({
+          path: "tools/apksig/src/apksigner/java/com/android/apksigner/ApkSignerTool.java",
+          sourceCommit: "ba4d984e1a360d427307d669d2f789212130e9e8",
+          sha256:
+            "8604499845681d82c69e25ed516127c8bb03ce2a7525e1cb5b1293bdf5aea7c7",
+        }),
+      ]),
+    );
+    expect(grizzlyLock.referenceFactoryImage).toMatchObject({
+      sizeBytes: 15363261784,
+      sha256:
+        "86fb81516d54a21c28487745e748aee8e36847dc400a6ab40ef2458146b0becb",
+    });
+    expect(grizzlyLock.rollbackFactoryImage).toMatchObject({
+      buildId: "CD1A.260714.001.A9",
+      sha256:
+        "86fb81516d54a21c28487745e748aee8e36847dc400a6ab40ef2458146b0becb",
+    });
+    expect(grizzlyLock.generatedVendor?.requiredFiles).toEqual(
+      expect.arrayContaining([
+        "vendor/google_devices/grizzly/proprietary/Android.bp",
+        "vendor/google_devices/grizzly/stock-kernel/Image.lz4",
+        "vendor/google_devices/grizzly/stock-kernel/modules.load",
+        "vendor/google_devices/grizzly/stock-kernel/system_dlkm.modules.load",
+        "vendor/google_devices/grizzly/stock-kernel/vendor_dlkm.modules.load",
+        "vendor/google_devices/grizzly/stock-kernel/vendor_kernel_boot.modules.load",
+      ]),
+    );
+    expect(grizzlyLock.generatedVendor?.requiredArtifacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "vendor/google_devices/grizzly/stock-kernel/Image.lz4",
+          sizeBytes: 20230712,
+          sha256:
+            "b456e2b874e4cc2a2fd208d4c7e4bd2fd52dc29c6727fb81052d16bc8da86ae3",
+        }),
+        expect.objectContaining({
+          path: "vendor/google_devices/grizzly/stock-kernel/dtbo.img",
+          sizeBytes: 11415225,
+          sha256:
+            "684473615efc85ffd63e377fe5428a88ce9a3e96ae6e33b26da93bd8ecb516c4",
+        }),
+      ]),
+    );
+    const grizzlyProduct = readFileSync(
+      join(
+        repositoryRoot,
+        "packages/os/android/vendor/eliza/products/eliza_grizzly_phone.mk",
+      ),
+      "utf8",
+    );
+    expect(grizzlyProduct).toContain("USE_STOCK_KERNEL := true");
+    expect(grizzlyProduct).toContain(
+      "vendor/google_devices/grizzly/grizzly.mk",
+    );
+    expect(grizzlyProduct).toContain("PRODUCT_NAME := eliza_grizzly_phone");
+    expect(
+      parseGrizzlyArgs(["--aosp-root", "/tmp/aosp-grizzly"]),
+    ).toMatchObject({
+      aospRoot: "/tmp/aosp-grizzly",
+      lockPath: grizzlyLockPath,
+      skipInstall: false,
+      skipRollbackDownload: false,
+    });
     expect(
       existsSync(
         join(repositoryRoot, "scripts/distro-android/brand.openagent.json"),
@@ -253,6 +397,56 @@ describe("AOSP build contracts", () => {
         ),
       ),
     ).toBe(false);
+  });
+
+  test("generated Pixel support verifies pinned firmware text invariants", async () => {
+    const root = await mkdtemp(join(tmpdir(), "elizaos-grizzly-contract-"));
+    try {
+      const lock = loadAospLock(
+        join(repositoryRoot, "packages/os/android/pixel11pro.lock.json"),
+      );
+      const fixtureLock = structuredClone(lock);
+      const generatedFixture = "generated fixture\n";
+      fixtureLock.generatedVendor.requiredArtifacts = [
+        {
+          path: "vendor/google_devices/grizzly/stock-kernel/Image.lz4",
+          sizeBytes: Buffer.byteLength(generatedFixture),
+          sha256: createHash("sha256").update(generatedFixture).digest("hex"),
+        },
+      ];
+      for (const requiredPath of lock.generatedVendor.requiredFiles) {
+        const destination = join(root, requiredPath);
+        await mkdir(dirname(destination), { recursive: true });
+        await writeFile(destination, "generated fixture\n");
+      }
+      for (const entry of lock.generatedVendor.requiredTextFiles) {
+        await writeFile(
+          join(root, entry.path),
+          `${entry.includes.join("\n")}\n`,
+        );
+      }
+      expect(assertGeneratedVendorTree(root, fixtureLock)).toHaveLength(
+        lock.generatedVendor.requiredFiles.length,
+      );
+      const firmwareContract = lock.generatedVendor.requiredTextFiles[0];
+      await writeFile(join(root, firmwareContract.path), "wrong firmware\n");
+      expect(() => assertGeneratedVendorTree(root, fixtureLock)).toThrow(
+        /generated vendor contract mismatch/,
+      );
+      await writeFile(
+        join(root, firmwareContract.path),
+        `${firmwareContract.includes.join("\n")}\n`,
+      );
+      await writeFile(
+        join(root, fixtureLock.generatedVendor.requiredArtifacts[0].path),
+        "wrong artifact\n",
+      );
+      expect(() => assertGeneratedVendorTree(root, fixtureLock)).toThrow(
+        /generated vendor artifact mismatch/,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test("Pixel deployment uses the OS brand contract accepted by build-aosp", () => {
@@ -388,23 +582,17 @@ describe("AOSP build contracts", () => {
     expect(driver).toContain(
       'QJL_RVV="-DQJL_RVV_COMPILE_OPTIONS=-mcpu=generic_rv64+v+m+a+f+d+c"',
     );
-    expect(driver).not.toContain(
-      "QJL_RVV_COMPILE_OPTIONS=-mcpu=sifive_x280",
-    );
+    expect(driver).not.toContain("QJL_RVV_COMPILE_OPTIONS=-mcpu=sifive_x280");
 
     const checker = readFileSync(
       join(repositoryRoot, "scripts/check-riscv64-artifacts.sh"),
       "utf8",
     );
-    expect(checker).toContain(
-      'verify_artifact "$artifact" "$fork_ggml"',
-    );
+    expect(checker).toContain('verify_artifact "$artifact" "$fork_ggml"');
     expect(checker).toContain(
       'LD_LIBRARY_PATH="$(dirname "$fork_ggml")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"',
     );
-    expect(checker).toContain(
-      '"$(basename "$exe")" = "qjl_fork_parity"',
-    );
+    expect(checker).toContain('"$(basename "$exe")" = "qjl_fork_parity"');
     expect(checker).toContain("Dynamic loading not supported");
     expect(checker).toContain(
       "qemu fork parity unavailable (static musl has no dlopen)",

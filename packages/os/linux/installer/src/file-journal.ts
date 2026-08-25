@@ -1,11 +1,5 @@
 import { constants, type Stats } from "node:fs";
-import {
-  type FileHandle,
-  lstat,
-  open,
-  realpath,
-  unlink,
-} from "node:fs/promises";
+import { type FileHandle, lstat, open, unlink } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { type InstallJournal, InstallRecoveryRequiredError } from "./executor";
 import type { InstallJournalEntry } from "./types";
@@ -55,12 +49,19 @@ export class DurableFileInstallJournal implements InstallJournal {
         `directory is unavailable: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+    // `lstat(this.directory)` is the security boundary: the journal directory
+    // itself must be a real, owner-controlled directory.  Do not compare the
+    // spelling of its realpath to `this.directory`, because macOS exposes
+    // temporary directories through the trusted `/var -> /private/var`
+    // symlink (and Linux systems may have equivalent administrator-managed
+    // mount aliases).  Ancestor aliases do not let an attacker replace the
+    // already-opened journal directory entry; a symlink at the directory
+    // boundary is rejected by `stats.isSymbolicLink()` above.
     if (
       !stats.isDirectory() ||
       stats.isSymbolicLink() ||
       stats.uid !== operatingUid() ||
-      (stats.mode & 0o077) !== 0 ||
-      (await realpath(this.directory)) !== this.directory
+      (stats.mode & 0o077) !== 0
     ) {
       throw recoveryRequired(
         "directory must be canonical, owner-controlled, and inaccessible to group/other users.",

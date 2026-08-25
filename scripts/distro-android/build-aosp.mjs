@@ -21,11 +21,13 @@ import { fileURLToPath } from "node:url";
 import {
   aospLockPath,
   assertExtractedVendorTree,
+  assertGeneratedVendorTree,
   assertPinnedAospCheckout,
   loadAospLock,
   verifyProprietaryArchive,
 } from "./bootstrap-aosp.mjs";
 import { loadBrandFromArgv } from "./brand-config.mjs";
+import { withSisoCompatibility } from "./siso-env.mjs";
 import { main as syncToAospMain } from "./sync-to-aosp.mjs";
 import { main as validateMain } from "./validate.mjs";
 
@@ -180,7 +182,7 @@ function runAospBuild(aospRoot, jobs, brand) {
       "-lc",
       `source build/envsetup.sh && lunch ${brand.lunchTarget} && m -j${jobs}`,
     ],
-    { cwd: aospRoot },
+    { cwd: aospRoot, env: withSisoCompatibility() },
   );
 }
 
@@ -254,6 +256,9 @@ export async function main(argv = process.argv.slice(2)) {
     }
     await verifyProprietaryArchive(lock, archivePath);
     assertExtractedVendorTree(args.aospRoot, lock);
+  }
+  if (lock.generatedVendor) {
+    assertGeneratedVendorTree(args.aospRoot, lock);
   }
 
   const brandConfigArgs = ["--brand-config", brand.brandConfigPath];

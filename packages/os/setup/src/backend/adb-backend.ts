@@ -29,7 +29,7 @@ import type {
 interface HardwareTarget {
   targetId: string;
   codenames: string[];
-  sourceStatus: "pinned" | "blocked";
+  sourceStatus: "pinned" | "pinned-generated" | "blocked";
   installerEligible: boolean;
   productName?: string;
   expectedFingerprintPrefix?: string;
@@ -62,10 +62,17 @@ export function parseHardwareTargets(value: unknown): HardwareTarget[] {
           !/^[A-Za-z0-9._-]+$/.test(codename) ||
           codenames.has(codename),
       ) ||
-      !["pinned", "blocked"].includes(String(candidate.sourceStatus)) ||
+      !["pinned", "pinned-generated", "blocked"].includes(
+        String(candidate.sourceStatus),
+      ) ||
       typeof candidate.installerEligible !== "boolean" ||
-      (candidate.installerEligible && candidate.sourceStatus !== "pinned") ||
-      (candidate.sourceStatus === "pinned" &&
+      (candidate.installerEligible &&
+        !["pinned", "pinned-generated"].includes(
+          String(candidate.sourceStatus),
+        )) ||
+      (["pinned", "pinned-generated"].includes(
+        String(candidate.sourceStatus),
+      ) &&
         (typeof candidate.productName !== "string" ||
           !/^[A-Za-z0-9._-]+$/.test(candidate.productName) ||
           typeof candidate.expectedFingerprintPrefix !== "string" ||
