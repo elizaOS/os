@@ -196,7 +196,10 @@ function normalizeGeneratedUsbConfigfs(aospRoot) {
     /setprop sys\.usb\.configfs 2/g,
     "setprop sys.usb.configfs 1",
   );
-  if (normalized !== contents) fs.writeFileSync(filePath, normalized);
+  if (normalized !== contents) {
+    fs.chmodSync(filePath, 0o644);
+    fs.writeFileSync(filePath, normalized);
+  }
 }
 
 function fail(message) {
