@@ -78,6 +78,20 @@
       "sha256": "1a0414d6af278aaf138d98c53d7fee10a185a480241d037e5748eb0465055518"
     },
     {
+      "path": "frameworks/base/tools/aapt2/cmd/Convert.cpp",
+      "url": "https://raw.githubusercontent.com/GrapheneOS/platform_frameworks_base/b2be3bb5f88bc5833dd4f9a11b3c295259ae733f/tools/aapt2/cmd/Convert.cpp",
+      "sourceCommit": "b2be3bb5f88bc5833dd4f9a11b3c295259ae733f",
+      "baseSha256": "11a19bcd5ae30dc3e459d893b400f9ae34c868bbcdfb7212549e60ec285b22cf",
+      "sha256": "df70b3a1420e5d0e4e8407714cee5cbee14f91c7f6dc6f41f5b08910a88858ad"
+    },
+    {
+      "path": "frameworks/base/tools/aapt2/cmd/Convert.h",
+      "url": "https://raw.githubusercontent.com/GrapheneOS/platform_frameworks_base/b2be3bb5f88bc5833dd4f9a11b3c295259ae733f/tools/aapt2/cmd/Convert.h",
+      "sourceCommit": "b2be3bb5f88bc5833dd4f9a11b3c295259ae733f",
+      "baseSha256": "d782589b86a08cfd19bd5ca1e4cb5da50fa2bbfa56e52cb2a9d67e3d4c9c35ef",
+      "sha256": "e0abe22f1ba50702c963a395b961fcc5db16674b0022ca37419cda305b97cfeb"
+    },
+    {
       "path": "frameworks/base/tools/aapt2/cmd/Dump.h",
       "url": "https://raw.githubusercontent.com/GrapheneOS/platform_frameworks_base/b2be3bb5f88bc5833dd4f9a11b3c295259ae733f/tools/aapt2/cmd/Dump.h",
       "sourceCommit": "b2be3bb5f88bc5833dd4f9a11b3c295259ae733f",
