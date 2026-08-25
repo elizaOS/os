@@ -102,7 +102,7 @@ native-inference-grizzly:
 	cd "$(ELIZAOS_ELIZA_ROOT)" && node packages/app-core/scripts/aosp/compile-libllama.mjs --assets-dir "$(ANDROID_AGENT_ASSETS)" --target android-arm64-cpu-fused
 	cd "$(ELIZAOS_ELIZA_ROOT)" && node packages/app-core/scripts/stage-elizavoice-lib.mjs --abi arm64-v8a --variant cpu
 
-build-grizzly: prepare-grizzly native-inference-grizzly
+build-grizzly: prepare-grizzly native-inference-grizzly bootanimation
 	ELIZAOS_ELIZA_ROOT="$(ELIZAOS_ELIZA_ROOT)" ELIZA_BUN_RISCV64_OPTIONAL=1 node $(DISTRO)/build-aosp.mjs --brand-config $(DISTRO)/brand.eliza-grizzly.json --aosp-root "$(AOSP_GRIZZLY_ROOT)" --rebuild-privileged-apk $(ARGS)
 
 sim: check-arch
