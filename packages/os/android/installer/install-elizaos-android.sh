@@ -278,13 +278,16 @@ collect_images() {
     vendor_boot
     vendor_kernel_boot
     dtbo
+    pvmfw
     vbmeta
     vbmeta_system
+    vbmeta_vendor
     init_boot
     super
     product
     system
     system_ext
+    system_dlkm
     vendor
     vendor_dlkm
     odm

@@ -53,13 +53,16 @@ android/installer/install-elizaos-android.sh \
 - `vendor_boot.img`
 - `vendor_kernel_boot.img`
 - `dtbo.img`
+- `pvmfw.img`
 - `vbmeta.img`
 - `vbmeta_system.img`
+- `vbmeta_vendor.img`
 - `init_boot.img`
 - `super.img`
 - `product.img`
 - `system.img`
 - `system_ext.img`
+- `system_dlkm.img`
 - `vendor.img`
 - `vendor_dlkm.img`
 - `odm.img`
