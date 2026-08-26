@@ -196,156 +196,103 @@ function normalizeGeneratedUsbConfigfs(aospRoot) {
     /setprop sys\.usb\.configfs 2/g,
     "setprop sys.usb.configfs 1",
   );
-  const withAdbDefault = normalized.replace(
-    /on boot\n {4}# Use USB Gadget HAL\n {4}setprop sys\.usb\.configfs 1/,
-    "on boot\n    # Use USB Gadget HAL\n    setprop sys.usb.controller a210000.dwc3\n    setprop sys.usb.configfs 1\n    # Keep the unlocked userdebug bring-up reachable before framework USB policy.\n    setprop persist.sys.usb.config adb\n    setprop sys.usb.config adb",
-  );
-  if (withAdbDefault !== contents) {
+  if (normalized !== contents) {
     fs.chmodSync(filePath, 0o644);
-    fs.writeFileSync(filePath, withAdbDefault);
+    fs.writeFileSync(filePath, normalized);
   }
 }
 
-// The extracted Pixel 11 vendor defaults route SurfaceFlinger through ANGLE.
-// Keep that stock EGL selection, but force the threaded Skia Vulkan renderer.
-// The GL renderer reaches SkiaGLRenderEngine::chooseEglConfig() and aborts on
-// grizzly before ADB or the launcher can become observable; the Vulkan path
-// avoids that EGLConfig contract while still using the stock PowerVR Vulkan
-// driver exposed by the vendor image.
-function normalizeGeneratedGraphicsProperties(aospRoot) {
-  const filePath = path.join(
+// Google's stock Android 17 grizzly image enables SurfaceFlinger's Graphite
+// Vulkan RenderEngine. The extracted proprietary PowerVR EGL implementation
+// does not expose an EGL_RECORDABLE_ANDROID RGBA_8888 window+pbuffer config
+// accepted by the Android 17 SkiaGL RenderEngine, while the same stock stack
+// exposes a working Vulkan 1.4 device with protected-memory support. Preserve
+// the stock render path through SurfaceFlinger's supported flag override; do
+// not force a backend, so RenderEngine::canSupport(Vk) remains authoritative.
+export function normalizeGeneratedRenderEngine(aospRoot) {
+  const makefilePath = path.join(
     aospRoot,
-    "vendor/google_devices/grizzly/sysprop/vendor.prop",
+    "vendor/google_devices/grizzly/grizzly.mk",
   );
-  if (!fs.existsSync(filePath)) return;
-  const contents = fs.readFileSync(filePath, "utf8");
-  const normalized = contents.replace(
-    /^debug\.renderengine\.graphite=true$/m,
-    "debug.renderengine.backend=skiavkthreaded\ndebug.renderengine.graphite=true",
+  if (!fs.existsSync(makefilePath)) return;
+  const contents = fs.readFileSync(makefilePath, "utf8");
+  if (contents.includes("debug.renderengine.graphite=true")) return;
+  fs.writeFileSync(
+    makefilePath,
+    `${contents.trimEnd()}\n\n# Match the stock Pixel 11 Pro Android 17 RenderEngine path.\nPRODUCT_SYSTEM_PROPERTIES += \\\n    debug.renderengine.graphite=true\n`,
   );
-  if (normalized !== contents) fs.writeFileSync(filePath, normalized);
 }
 
-// The extracted stock grizzly init waits synchronously for every proprietary
-// kernel module before proceeding through early-boot.  During bring-up a
-// missing optional module must not strand init (and therefore USB/adbd) on the
-// splash screen; the module loader remains started asynchronously below.
-function normalizeGeneratedEarlyBootModuleWait(aospRoot) {
-  const filePath = path.join(
-    aospRoot,
-    "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.grizzly.rc",
+// Keep bring-up observability separate from the extracted stock init actions.
+// The diagnostics are packaged explicitly, gated to debuggable builds, and do
+// not alter module readiness, storage, or Android's canonical boot triggers.
+export function stageGeneratedBringupDiagnostics(aospRoot) {
+  const generatedRoot = path.join(aospRoot, "vendor/google_devices/grizzly");
+  const stockInitPath = path.join(
+    generatedRoot,
+    "proprietary/vendor/etc/init/hw/init.grizzly.rc",
   );
-  if (!fs.existsSync(filePath)) return;
-  const contents = fs.readFileSync(filePath, "utf8");
-  const normalized = contents.replace(
-    /on early-boot\n {4}# Wait for insmod_sh to finish all common modules\n {4}wait_for_prop vendor\.common\.modules\.ready 1\n {4}start insmod_sh_grizzly/,
-    "on early-boot\n    # elizaOS: keep bring-up non-blocking when an optional module is absent\n    start insmod_sh_grizzly",
-  );
-  const withMarker = normalized
-    .replace(
-      /^# grizzly specific init\.rc$/m,
-      "# grizzly specific init.rc\nimport /vendor/etc/init/hw/init.elizaos-debug.rc",
-    )
-    .replace(
-      /^on early-boot/m,
-      "on early-init\n    # elizaOS: prove vendor init reached the earliest normal-boot phase\n    write /metadata/elizaos_vendor_init.marker 1\n    setprop sys.usb.controller a210000.dwc3\n    setprop sys.usb.configfs 1\n    setprop persist.sys.usb.config adb\n    setprop sys.usb.config adb\n    # elizaOS: expose a root debug shell before vendor post-fs-data actions\n    start adbd\n\non early-boot",
-    );
-  if (withMarker !== contents) {
-    fs.chmodSync(filePath, 0o644);
-    fs.writeFileSync(filePath, withMarker);
-  }
-}
-
-function normalizeGeneratedDebugInit(aospRoot) {
-  const filePath = path.join(
-    aospRoot,
-    "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.elizaos-debug.rc",
-  );
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const contents = `# elizaOS bring-up ordering probe; remove after normal boot is proven.\n\non post-fs\n    write /metadata/elizaos_debug_postfs.marker 1\n    setprop sys.usb.controller a210000.dwc3\n    setprop sys.usb.config adb\n    start adbd\n\non post-fs-data\n    write /metadata/elizaos_debug_postfs_data.marker 1\n`;
-  fs.chmodSync(filePath, 0o644);
-  fs.writeFileSync(filePath, contents);
-}
-
-function normalizeGeneratedModuleWaits(aospRoot) {
-  const relativePaths = [
-    "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.malibu.rc",
-    "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.modem.rc",
-    "vendor/google_devices/grizzly/proprietary/vendor/etc/init/dump_power.rc",
-  ];
-  for (const relativePath of relativePaths) {
-    const filePath = path.join(aospRoot, relativePath);
-    if (!fs.existsSync(filePath)) continue;
-    const contents = fs.readFileSync(filePath, "utf8");
-    const normalized = contents.replace(
-      /^\s*wait_for_prop vendor\.common\.modules\.ready 1\s*$/gm,
-      "    # elizaOS: do not block boot on optional module readiness",
-    );
-    if (normalized !== contents) {
-      fs.chmodSync(filePath, 0o644);
-      fs.writeFileSync(filePath, normalized);
+  const makefilePath = path.join(generatedRoot, "grizzly.mk");
+  for (const requiredPath of [stockInitPath, makefilePath]) {
+    if (!fs.existsSync(requiredPath)) {
+      fail(`generated bring-up diagnostics require ${requiredPath}`);
     }
   }
-}
 
-// The stock storage proxy action waits synchronously for the secure-storage
-// SCSI node.  On an unlocked bring-up device that node can be late (or absent)
-// while the rest of init is healthy; blocking post-fs here prevents bootanim,
-// framework startup, and normal-boot ADB from ever becoming observable.  Keep
-// the service start, but let its own retry/error handling deal with readiness.
-function normalizeGeneratedStorageProxyWait(aospRoot) {
-  const filePath = path.join(
-    aospRoot,
-    "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.malibu.rc",
-  );
-  if (!fs.existsSync(filePath)) return;
-  const contents = fs.readFileSync(filePath, "utf8");
-  const normalized = contents.replace(
-    /^ {4}wait \/dev\/sg1\n {4}start storageproxyd$/m,
-    "    # elizaOS: do not block post-fs on optional secure-storage enumeration\n    start storageproxyd",
-  );
-  if (normalized !== contents) {
-    fs.chmodSync(filePath, 0o644);
-    fs.writeFileSync(filePath, normalized);
-  }
-}
-
-function normalizeGeneratedInitPhaseMarkers(aospRoot) {
-  const filePath = path.join(
-    aospRoot,
-    "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.malibu.rc",
-  );
-  if (!fs.existsSync(filePath)) return;
-  const contents = fs.readFileSync(filePath, "utf8");
-  const normalized = contents
-    .replace(
-      /^on post-fs$/m,
-      "on post-fs\n    write /metadata/elizaos_postfs.marker 1",
-    )
-    .replace(
-      /^on post-fs-data$/m,
-      "on post-fs-data\n    write /metadata/elizaos_postfs_data.marker 1",
-    )
-    .replace(
-      /^on late-fs$/m,
-      "on late-fs\n    write /metadata/elizaos_latefs.marker 1",
-    )
-    .replace(
-      /^ {4}mount_all --late$/m,
-      "    mount_all --late\n    write /metadata/elizaos_latefs_done.marker 1\n    # elizaOS: continue init even if fs_mgr does not emit the next event\n    trigger post-fs-data",
-    )
-    .replace(
-      /^on post-fs\n {4}write \/metadata\/elizaos_bootanim\.marker 1$/m,
-      "on post-fs\n    write /metadata/elizaos_bootanim.marker 1\n    # elizaOS: expose ADB before vendor post-fs-data actions\n    start adbd\n    setprop sys.usb.controller a210000.dwc3\n    setprop sys.usb.config adb",
-    )
-    .replace(/^on boot$/m, "on boot\n    write /metadata/elizaos_boot.marker 1")
-    .replace(
-      /^on property:vendor\.common\.modules\.ready=1$/m,
-      "on post-fs\n    write /metadata/elizaos_bootanim.marker 1",
+  const importLine = "import /vendor/etc/init/hw/init.elizaos-debug.rc";
+  const stockInit = fs.readFileSync(stockInitPath, "utf8");
+  if (!stockInit.includes(importLine)) {
+    const normalized = stockInit.replace(
+      /^# grizzly specific init\.rc$/m,
+      `# grizzly specific init.rc\n${importLine}`,
     );
-  if (normalized !== contents) {
-    fs.chmodSync(filePath, 0o644);
-    fs.writeFileSync(filePath, normalized);
+    if (normalized === stockInit) {
+      fail("generated init.grizzly.rc is missing its expected header");
+    }
+    fs.chmodSync(stockInitPath, 0o644);
+    fs.writeFileSync(stockInitPath, normalized);
+  }
+
+  const debugInitRelative =
+    "proprietary/vendor/etc/init/hw/init.elizaos-debug.rc";
+  const debugInitPath = path.join(generatedRoot, debugInitRelative);
+  fs.mkdirSync(path.dirname(debugInitPath), { recursive: true });
+  fs.writeFileSync(
+    debugInitPath,
+    `# elizaOS userdebug bring-up diagnostics; remove after hardware qualification.
+
+on early-init && property:ro.debuggable=1
+    write /metadata/elizaos_vendor_early_init.marker 1
+    setprop sys.usb.controller a210000.dwc3
+    setprop sys.usb.configfs 1
+    setprop persist.sys.usb.config adb
+    setprop sys.usb.config adb
+    start adbd
+
+on post-fs && property:ro.debuggable=1
+    write /metadata/elizaos_vendor_post_fs.marker 1
+
+on late-fs && property:ro.debuggable=1
+    write /metadata/elizaos_vendor_late_fs.marker 1
+
+on post-fs-data && property:ro.debuggable=1
+    write /metadata/elizaos_vendor_post_fs_data.marker 1
+
+on boot && property:ro.debuggable=1
+    write /metadata/elizaos_vendor_boot.marker 1
+`,
+  );
+  fs.chmodSync(debugInitPath, 0o644);
+
+  const copyDestination =
+    "$(TARGET_COPY_OUT_VENDOR)/etc/init/hw/init.elizaos-debug.rc";
+  const copyEntry = `    vendor/google_devices/grizzly/${debugInitRelative}:${copyDestination}`;
+  const makefile = fs.readFileSync(makefilePath, "utf8");
+  if (!makefile.includes(copyDestination)) {
+    fs.writeFileSync(
+      makefilePath,
+      `${makefile.trimEnd()}\n\n# elizaOS userdebug bring-up diagnostics\nPRODUCT_COPY_FILES += \\\n${copyEntry}\n`,
+    );
   }
 }
 
@@ -360,8 +307,8 @@ function run(command, args, options = {}) {
     encoding: "utf8",
     stdio: "inherit",
   });
-  if (result.error) fail(`${command} failed: ${result.error.message}`);
   if (result.status !== 0) {
+    if (result.error) fail(`${command} failed: ${result.error.message}`);
     fail(`${command} ${args.join(" ")} exited ${result.status}`);
   }
 }
@@ -470,12 +417,8 @@ export async function prepareGrizzly({
       normalizeGeneratedVintf(aospRoot);
       normalizeGeneratedF2fsMountOptions(aospRoot);
       normalizeGeneratedUsbConfigfs(aospRoot);
-      normalizeGeneratedGraphicsProperties(aospRoot);
-      normalizeGeneratedEarlyBootModuleWait(aospRoot);
-      normalizeGeneratedDebugInit(aospRoot);
-      normalizeGeneratedModuleWaits(aospRoot);
-      normalizeGeneratedStorageProxyWait(aospRoot);
-      normalizeGeneratedInitPhaseMarkers(aospRoot);
+      normalizeGeneratedRenderEngine(aospRoot);
+      stageGeneratedBringupDiagnostics(aospRoot);
       assertGeneratedVendorTree(aospRoot, lock);
       generatedTreeComplete = true;
     } catch {
@@ -503,12 +446,8 @@ export async function prepareGrizzly({
     normalizeGeneratedVintf(aospRoot);
     normalizeGeneratedF2fsMountOptions(aospRoot);
     normalizeGeneratedUsbConfigfs(aospRoot);
-    normalizeGeneratedGraphicsProperties(aospRoot);
-    normalizeGeneratedEarlyBootModuleWait(aospRoot);
-    normalizeGeneratedDebugInit(aospRoot);
-    normalizeGeneratedModuleWaits(aospRoot);
-    normalizeGeneratedStorageProxyWait(aospRoot);
-    normalizeGeneratedInitPhaseMarkers(aospRoot);
+    normalizeGeneratedRenderEngine(aospRoot);
+    stageGeneratedBringupDiagnostics(aospRoot);
   }
   const files = assertGeneratedVendorTree(aospRoot, lock);
 
