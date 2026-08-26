@@ -1,6 +1,7 @@
 /** Verifies Android build-host and clean-checkout front-door contracts. */
 
 import { describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -16,6 +17,7 @@ import { parseSmokeArgs } from "../../../../scripts/aosp/smoke-cuttlefish.mjs";
 import {
   assertExtractedVendorTree,
   assertGeneratedVendorTree,
+  assertPinnedAospCheckout,
   loadAospLock,
   parseBootstrapArgs,
   verifyProprietaryArchive,
@@ -25,6 +27,45 @@ import { parseArgs as parseGrizzlyArgs } from "../../../../scripts/distro-androi
 import { withSisoCompatibility } from "../../../../scripts/distro-android/siso-env.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../../../..", import.meta.url));
+
+function activeProductCompositionLines(source: string): string[] {
+  return source
+    .split("\n")
+    .map((line) => line.replace(/#.*/, "").trim())
+    .filter(
+      (line) =>
+        /\binherit-product(?:-if-exists)?\b/.test(line) ||
+        /^-?include(?:\s|$)/.test(line),
+    );
+}
+
+async function createGitFixture(root: string, files: string[]) {
+  await mkdir(root, { recursive: true });
+  for (const file of files) {
+    const destination = join(root, file);
+    await mkdir(dirname(destination), { recursive: true });
+    await writeFile(destination, "fixture\n");
+  }
+  execFileSync("git", ["init", "-q"], { cwd: root });
+  execFileSync("git", ["add", "."], { cwd: root });
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=elizaOS test",
+      "-c",
+      "user.email=test@elizaos.ai",
+      "commit",
+      "-qm",
+      "fixture",
+    ],
+    { cwd: root },
+  );
+  return execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: root,
+    encoding: "utf8",
+  }).trim();
+}
 
 describe("AOSP build contracts", () => {
   test("Android 17 Siso builds tolerate generated missing targets", () => {
@@ -69,6 +110,98 @@ describe("AOSP build contracts", () => {
     expect(makefile).not.toContain("ELIZA_MTP_ANDROID_LIBDIR");
   });
 
+  test("canonical Cuttlefish products use only pinned product inputs", () => {
+    const productsRoot = join(
+      repositoryRoot,
+      "packages/os/android/vendor/eliza/products",
+    );
+    const commonProduct = readFileSync(
+      join(repositoryRoot, "packages/os/android/vendor/eliza/eliza_common.mk"),
+      "utf8",
+    );
+    expect(activeProductCompositionLines(commonProduct)).toEqual([]);
+    expect(commonProduct).not.toMatch(/device\/eliza\/|cuttlefish_e1/);
+    const deviceProducts = {
+      x86_64: "vsoc_x86_64_only",
+      arm64: "vsoc_arm64",
+      riscv64: "vsoc_riscv64",
+    } as const;
+    for (const [architecture, deviceProduct] of Object.entries(
+      deviceProducts,
+    )) {
+      const product = readFileSync(
+        join(productsRoot, `eliza_cf_${architecture}_phone.mk`),
+        "utf8",
+      );
+      expect(product).not.toMatch(/device\/eliza\/|cuttlefish_e1/);
+      const expectedComposition = [
+        `$(call inherit-product, device/google/cuttlefish/${deviceProduct}/phone/aosp_cf.mk)`,
+        "$(call inherit-product, vendor/eliza/eliza_common.mk)",
+      ];
+      expect(activeProductCompositionLines(product)).toEqual(
+        expectedComposition,
+      );
+      for (const forbiddenDirective of [
+        "$(call inherit-product-if-exists, device/eliza/cuttlefish_e1/eliza_e1_cuttlefish.mk)",
+        "include device/eliza/cuttlefish_e1/eliza_e1_cuttlefish.mk",
+        "-include device/eliza/cuttlefish_e1/eliza_e1_cuttlefish.mk",
+      ]) {
+        expect(
+          activeProductCompositionLines(`${product}\n${forbiddenDirective}`),
+        ).toEqual([...expectedComposition, forbiddenDirective]);
+      }
+    }
+  });
+
+  test("the Cuttlefish source lock fails closed on project or path drift", async () => {
+    const root = await mkdtemp(join(tmpdir(), "elizaos-cuttlefish-lock-"));
+    try {
+      const manifestCommit = await createGitFixture(
+        join(root, ".repo/manifests"),
+        ["default.xml"],
+      );
+      const projectPath = "device/google/cuttlefish";
+      const requiredSourceFiles = [
+        `${projectPath}/vsoc_arm64/phone/aosp_cf.mk`,
+        `${projectPath}/vsoc_x86_64_only/phone/aosp_cf.mk`,
+        `${projectPath}/vsoc_riscv64/phone/aosp_cf.mk`,
+      ];
+      const projectCommit = await createGitFixture(
+        join(root, projectPath),
+        requiredSourceFiles.map((file) => file.slice(projectPath.length + 1)),
+      );
+      const lock = {
+        manifestCommit,
+        manifestRevision: "fixture",
+        projects: [{ path: projectPath, commit: projectCommit }],
+        requiredSourceFiles,
+      };
+
+      expect(assertPinnedAospCheckout(root, lock)).toBe(manifestCommit);
+      expect(() =>
+        assertPinnedAospCheckout(root, {
+          ...lock,
+          projects: [{ path: projectPath, commit: "0".repeat(40) }],
+        }),
+      ).toThrow("AOSP project mismatch");
+      expect(() =>
+        assertPinnedAospCheckout(root, {
+          ...lock,
+          requiredSourceFiles: [
+            ...requiredSourceFiles,
+            `${projectPath}/missing/aosp_cf.mk`,
+          ],
+        }),
+      ).toThrow("missing required AOSP source path");
+      await writeFile(join(root, requiredSourceFiles[0]), "locally modified\n");
+      expect(() => assertPinnedAospCheckout(root, lock)).toThrow(
+        "locked AOSP project is dirty",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("the full AOSP checkout has an immutable bootstrap lock", () => {
     expect(loadAospLock()).toEqual({
       schemaVersion: 1,
@@ -76,6 +209,19 @@ describe("AOSP build contracts", () => {
       manifestRevision: "android-17.0.0_r1",
       manifestTagObject: "7a9e46ba6ed424f922a3457f4964e67e0b966201",
       manifestCommit: "5bc9a7ce1cd78dd53613bbfd0ebf506e1e4adb0f",
+      projects: [
+        {
+          path: "device/google/cuttlefish",
+          name: "device/google/cuttlefish",
+          tagObject: "fc81d4d790cf71b00c17dbcb476c9cf05279f3ff",
+          commit: "283645aacf6cdb56cc31a9362f54d412dbc132a1",
+        },
+      ],
+      requiredSourceFiles: [
+        "device/google/cuttlefish/vsoc_arm64/phone/aosp_cf.mk",
+        "device/google/cuttlefish/vsoc_x86_64_only/phone/aosp_cf.mk",
+        "device/google/cuttlefish/vsoc_riscv64/phone/aosp_cf.mk",
+      ],
     });
     expect(
       parseBootstrapArgs([

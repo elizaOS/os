@@ -9,6 +9,19 @@
         "tagObject": "7a9e46ba6ed424f922a3457f4964e67e0b966201",
         "commit": "5bc9a7ce1cd78dd53613bbfd0ebf506e1e4adb0f"
       },
+      "projects": [
+        {
+          "path": "device/google/cuttlefish",
+          "name": "device/google/cuttlefish",
+          "tagObject": "fc81d4d790cf71b00c17dbcb476c9cf05279f3ff",
+          "commit": "283645aacf6cdb56cc31a9362f54d412dbc132a1"
+        }
+      ],
+      "requiredSourceFiles": [
+        "device/google/cuttlefish/vsoc_arm64/phone/aosp_cf.mk",
+        "device/google/cuttlefish/vsoc_x86_64_only/phone/aosp_cf.mk",
+        "device/google/cuttlefish/vsoc_riscv64/phone/aosp_cf.mk"
+      ],
       "supportedProducts": [
         "eliza_cf_arm64_phone",
         "eliza_cf_x86_64_phone",

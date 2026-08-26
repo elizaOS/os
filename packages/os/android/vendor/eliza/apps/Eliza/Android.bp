@@ -1,7 +1,7 @@
 // Privileged system import of the Eliza APK (built by `bun run build:android:system`).
 //
 // The imported APK is expected to carry the complete local-agent payload for
-// chip/AOSP bring-up, including the selected product ABI payload,
+// AOSP/Cuttlefish bring-up, including the selected product ABI payload,
 // `assets/agent/android-agent-runtime-provenance.json`, and
 // `META-INF/eliza/aosp-build-provenance.json`. x86_64 and arm64 products omit
 // the unavailable RISC-V Bun slice; a riscv64 product fails closed unless that

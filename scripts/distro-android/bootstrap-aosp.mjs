@@ -30,6 +30,8 @@ export function loadAospLock(filePath = aospLockPath) {
         manifestRevision: cuttlefishProfile.manifest?.tag,
         manifestTagObject: cuttlefishProfile.manifest?.tagObject,
         manifestCommit: cuttlefishProfile.manifest?.commit,
+        projects: cuttlefishProfile.projects,
+        requiredSourceFiles: cuttlefishProfile.requiredSourceFiles,
       }
     : document;
   if (
@@ -311,6 +313,13 @@ export function assertPinnedAospCheckout(
         fail(
           `AOSP project mismatch for ${project.path}: expected ${project.commit}, got ${projectHead}`,
         );
+      }
+      const dirty = run("git", ["status", "--porcelain"], {
+        cwd: projectRoot,
+        capture: true,
+      });
+      if (dirty) {
+        fail(`locked AOSP project is dirty: ${project.path}`);
       }
     }
     for (const project of lock.externalProjects ?? []) {
