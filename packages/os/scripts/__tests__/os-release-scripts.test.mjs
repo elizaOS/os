@@ -292,7 +292,9 @@ releaseFixtureTest(
       sourceManifest.artifacts.find(
         (artifact) => artifact.kind === "raw-image",
       ),
-      sourceManifest.artifacts.find((artifact) => artifact.kind === "signature"),
+      sourceManifest.artifacts.find(
+        (artifact) => artifact.kind === "signature",
+      ),
       sourceManifest.artifacts.find((artifact) => artifact.kind === "package"),
     ];
 

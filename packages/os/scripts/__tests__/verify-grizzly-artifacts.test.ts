@@ -74,8 +74,15 @@ function scaffoldAospRoot(options: {
       'on post-fs\n    write /dev/kmsg "elizaos-init: post-fs reached"\n',
     );
   }
+  // The full core set: attesting a partial build is refused outright, so the
+  // scaffold must stage everything a real `m` produces.
   writeFileSync(join(productDir, "system.img"), "system-image-bytes");
+  writeFileSync(join(productDir, "system_ext.img"), "system-ext-image-bytes");
+  writeFileSync(join(productDir, "product.img"), "product-image-bytes");
   writeFileSync(join(productDir, "vendor.img"), "vendor-image-bytes");
+  writeFileSync(join(productDir, "vendor_dlkm.img"), "vendor-dlkm-image-bytes");
+  writeFileSync(join(productDir, "system_dlkm.img"), "system-dlkm-image-bytes");
+  writeFileSync(join(productDir, "vbmeta.img"), "vbmeta-image-bytes");
   return { root, productDir };
 }
 
@@ -181,6 +188,21 @@ describe("verify-grizzly-artifacts attest", () => {
   });
 });
 
+function copyAttestedImages(productDir: string, artifactDir: string) {
+  const manifest = JSON.parse(
+    require("node:fs").readFileSync(
+      join(productDir, "grizzly-artifacts.json"),
+      "utf8",
+    ),
+  );
+  for (const name of Object.keys(manifest.images)) {
+    require("node:fs").copyFileSync(
+      join(productDir, name),
+      join(artifactDir, name),
+    );
+  }
+}
+
 describe("verify-grizzly-artifacts check", () => {
   test("verifies matching images and refuses tampered bytes", () => {
     const { root, productDir } = scaffoldAospRoot({});
@@ -188,8 +210,7 @@ describe("verify-grizzly-artifacts check", () => {
     try {
       expect(run(["attest", "--aosp-root", root]).status).toBe(0);
       const manifestPath = join(productDir, "grizzly-artifacts.json");
-      writeFileSync(join(artifactDir, "system.img"), "system-image-bytes");
-      writeFileSync(join(artifactDir, "vendor.img"), "vendor-image-bytes");
+      copyAttestedImages(productDir, artifactDir);
       const ok = run([
         "check",
         "--manifest",
@@ -210,6 +231,40 @@ describe("verify-grizzly-artifacts check", () => {
       ]);
       expect(tampered.status).toBe(1);
       expect(tampered.stderr).toContain("NOT the attested build");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(artifactDir, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses to attest a partial build", () => {
+    const { root, productDir } = scaffoldAospRoot({});
+    try {
+      rmSync(join(productDir, "vendor.img"));
+      const result = run(["attest", "--aosp-root", root]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("core images missing");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses unattested stray images beside the attested set", () => {
+    const { root, productDir } = scaffoldAospRoot({});
+    const artifactDir = mkdtempSync(join(tmpdir(), "elizaos-grizzly-stray-"));
+    try {
+      expect(run(["attest", "--aosp-root", root]).status).toBe(0);
+      copyAttestedImages(productDir, artifactDir);
+      writeFileSync(join(artifactDir, "boot.img"), "week-old-stray-bytes");
+      const result = run([
+        "check",
+        "--manifest",
+        join(productDir, "grizzly-artifacts.json"),
+        "--artifact-dir",
+        artifactDir,
+      ]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("does not attest");
     } finally {
       rmSync(root, { recursive: true, force: true });
       rmSync(artifactDir, { recursive: true, force: true });

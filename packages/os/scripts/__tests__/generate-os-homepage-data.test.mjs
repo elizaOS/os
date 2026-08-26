@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "../../../..");
@@ -12,7 +12,9 @@ const script = path.join(
 );
 
 test("homepage data contains only candidate end-user downloads", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "elizaos-homepage-data-"));
+  const directory = await mkdtemp(
+    path.join(tmpdir(), "elizaos-homepage-data-"),
+  );
   try {
     const manifest = path.join(directory, "manifest.json");
     const output = path.join(directory, "downloads.json");

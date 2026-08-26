@@ -27,6 +27,7 @@ import {
   verifyProprietaryArchive,
 } from "./bootstrap-aosp.mjs";
 import { loadBrandFromArgv } from "./brand-config.mjs";
+import { isMainModule } from "./is-main.mjs";
 import { provisionCuttlefishE1 } from "./provision-cuttlefish-e1.mjs";
 import { withSisoCompatibility } from "./siso-env.mjs";
 import { main as syncToAospMain } from "./sync-to-aosp.mjs";
@@ -328,9 +329,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 }
 
-const isMain =
-  process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isMain = isMainModule(import.meta);
 
 if (isMain) {
   await main();

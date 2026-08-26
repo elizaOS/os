@@ -18,6 +18,7 @@ import {
   REQUIRED_GRIZZLY_ARTIFACTS,
 } from "../../../../scripts/aosp/build-grizzly-bundle.mjs";
 import {
+  deriveProductOutDir,
   loadPhysicalTargetContract,
   parseArgs as parseDeployArgs,
   resolveBuiltPrivilegedApk,
@@ -49,7 +50,14 @@ import {
   probeSucceeded,
 } from "../../../../scripts/distro-android/collect-grizzly-graphics.mjs";
 import {
+  assertPreparedTreeMatchesEnv,
+  currentPrepareStamp,
+  generatedTreeHasBringupProbes,
+  generatedTreeHasEglOverride,
+  generatedTreeHasF2fsFallback,
   normalizeGeneratedBringupProbes,
+  normalizeGeneratedF2fsMountOptions,
+  normalizeGeneratedGraphicsProperties,
   normalizeGeneratedRenderEngine,
   parseArgs as parseGrizzlyArgs,
 } from "../../../../scripts/distro-android/prepare-grizzly.mjs";
@@ -842,6 +850,163 @@ describe("AOSP build contracts", () => {
       ).toHaveLength(1);
       expect(makefile).not.toContain("debug.renderengine.backend");
       expect(makefile).not.toContain("debug.renderengine.vulkan");
+      // Trees touched by either compatibility shim must read as contaminated
+      // so a default prepare regenerates them instead of shipping the edits.
+      expect(generatedTreeHasBringupProbes(root)).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("Pixel renderer overrides are opt-in and control Graphite honestly", async () => {
+    const root = await mkdtemp(join(tmpdir(), "elizaos-grizzly-render-"));
+    const vendorProp = join(
+      root,
+      "vendor/google_devices/grizzly/sysprop/vendor.prop",
+    );
+    const previousBackend = process.env.ELIZAOS_GRIZZLY_RENDERENGINE_BACKEND;
+    const previousGraphite = process.env.ELIZAOS_GRIZZLY_RENDERENGINE_GRAPHITE;
+    try {
+      await mkdir(dirname(vendorProp), { recursive: true });
+      await writeFile(
+        vendorProp,
+        "persist.graphics.egl=angle\ndebug.renderengine.graphite=true\n",
+      );
+      delete process.env.ELIZAOS_GRIZZLY_RENDERENGINE_BACKEND;
+      delete process.env.ELIZAOS_GRIZZLY_RENDERENGINE_GRAPHITE;
+      normalizeGeneratedGraphicsProperties(root);
+      expect(readFileSync(vendorProp, "utf8")).not.toContain(
+        "debug.renderengine.backend=",
+      );
+
+      // A backend probe must switch Graphite off: while graphite=true, AOSP
+      // routes to GraphiteVkRenderEngine unconditionally and the GL/VK axis
+      // of debug.renderengine.backend is ignored.
+      process.env.ELIZAOS_GRIZZLY_RENDERENGINE_BACKEND = "skiavkthreaded";
+      normalizeGeneratedGraphicsProperties(root);
+      expect(readFileSync(vendorProp, "utf8")).toContain(
+        "debug.renderengine.backend=skiavkthreaded\ndebug.renderengine.graphite=false\n",
+      );
+
+      // Explicit Graphite-on-Vulkan stays possible; Graphite + GL is refused.
+      process.env.ELIZAOS_GRIZZLY_RENDERENGINE_GRAPHITE = "1";
+      normalizeGeneratedGraphicsProperties(root);
+      expect(readFileSync(vendorProp, "utf8")).toContain(
+        "debug.renderengine.backend=skiavkthreaded\ndebug.renderengine.graphite=true\n",
+      );
+      expect(() => {
+        process.env.ELIZAOS_GRIZZLY_RENDERENGINE_BACKEND = "skiaglthreaded";
+        normalizeGeneratedGraphicsProperties(root);
+      }).toThrow(/Vulkan-only/);
+      delete process.env.ELIZAOS_GRIZZLY_RENDERENGINE_GRAPHITE;
+      expect(() => {
+        process.env.ELIZAOS_GRIZZLY_RENDERENGINE_BACKEND = "invalid";
+        normalizeGeneratedGraphicsProperties(root);
+      }).toThrow(/must be one of/);
+
+      // Clearing the env restores the stock renderer selection in place.
+      delete process.env.ELIZAOS_GRIZZLY_RENDERENGINE_BACKEND;
+      normalizeGeneratedGraphicsProperties(root);
+      const restored = readFileSync(vendorProp, "utf8");
+      expect(restored).not.toContain("debug.renderengine.backend=");
+      expect(restored).toContain("debug.renderengine.graphite=true\n");
+    } finally {
+      if (previousBackend === undefined) {
+        delete process.env.ELIZAOS_GRIZZLY_RENDERENGINE_BACKEND;
+      } else {
+        process.env.ELIZAOS_GRIZZLY_RENDERENGINE_BACKEND = previousBackend;
+      }
+      if (previousGraphite === undefined) {
+        delete process.env.ELIZAOS_GRIZZLY_RENDERENGINE_GRAPHITE;
+      } else {
+        process.env.ELIZAOS_GRIZZLY_RENDERENGINE_GRAPHITE = previousGraphite;
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("Pixel disposable-edit detection catches fstab and EGL edits", async () => {
+    const root = await mkdtemp(join(tmpdir(), "elizaos-grizzly-detect-"));
+    const usbInit = join(
+      root,
+      "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.malibu.usb.rc",
+    );
+    const fstab = join(
+      root,
+      "vendor/google_devices/grizzly/proprietary/vendor/etc/fstab.malibu",
+    );
+    const vendorProp = join(
+      root,
+      "vendor/google_devices/grizzly/sysprop/vendor.prop",
+    );
+    try {
+      await mkdir(dirname(usbInit), { recursive: true });
+      await mkdir(dirname(vendorProp), { recursive: true });
+      await writeFile(
+        usbInit,
+        "on boot\n    # Use USB Gadget HAL\n    setprop sys.usb.configfs 2\n",
+      );
+      await writeFile(
+        fstab,
+        "/dev/block/platform/3c2d0000.ufs/by-name/userdata /data f2fs stock-flags latemount,wait,check,quota,fileencryption=::inlinecrypt_optimized,metadata_encryption=:wrappedkey_v0,keydirectory=/metadata/vold/metadata_encryption\n",
+      );
+      await writeFile(
+        vendorProp,
+        "# elizaOS: native PowerVR EGL override\ndebug.renderengine.graphite=true\nro.hardware.egl=powervr\n",
+      );
+      expect(generatedTreeHasBringupProbes(root)).toBe(false);
+      expect(generatedTreeHasF2fsFallback(root)).toBe(false);
+      expect(generatedTreeHasEglOverride(root)).toBe(true);
+
+      normalizeGeneratedF2fsMountOptions(root);
+      expect(generatedTreeHasF2fsFallback(root)).toBe(true);
+      const rewritten = readFileSync(fstab, "utf8");
+      expect(rewritten).not.toContain("fileencryption=");
+      // Applying twice must not duplicate the provenance header.
+      normalizeGeneratedF2fsMountOptions(root);
+      expect(
+        readFileSync(fstab, "utf8").match(/# elizaOS: use kernel-supported/g),
+      ).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("Pixel prepare stamp fails closed on renderer/probe env drift", async () => {
+    const root = await mkdtemp(join(tmpdir(), "elizaos-grizzly-stamp-"));
+    try {
+      await mkdir(join(root, "vendor/google_devices/grizzly"), {
+        recursive: true,
+      });
+      const stamp = currentPrepareStamp({});
+      expect(stamp).toEqual({
+        renderengineBackend: null,
+        renderengineGraphite: true,
+        eglSelection: null,
+        earlyBootProbes: false,
+        conservativeF2fs: false,
+      });
+      expect(() =>
+        currentPrepareStamp({ ELIZAOS_GRIZZLY_EGL: "invalid" }),
+      ).toThrow(/angle or native/);
+      expect(() => assertPreparedTreeMatchesEnv(root, {})).toThrow(
+        /no prepare stamp/,
+      );
+      await writeFile(
+        join(root, "vendor/google_devices/grizzly/.elizaos-prepare-stamp.json"),
+        `${JSON.stringify(stamp, null, 2)}\n`,
+      );
+      expect(() => assertPreparedTreeMatchesEnv(root, {})).not.toThrow();
+      for (const env of [
+        { ELIZAOS_GRIZZLY_RENDERENGINE_BACKEND: "skiavkthreaded" },
+        { ELIZAOS_GRIZZLY_EARLY_BOOT_PROBES: "1" },
+        { ELIZAOS_GRIZZLY_CONSERVATIVE_F2FS: "1" },
+        { ELIZAOS_GRIZZLY_EGL: "native" },
+      ]) {
+        expect(() => assertPreparedTreeMatchesEnv(root, env)).toThrow(
+          /different environment/,
+        );
+      }
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -964,6 +1129,32 @@ describe("AOSP build contracts", () => {
     ).toBe(
       "/build/aosp-out/target/product/eliza_cf_arm64_phone/system/priv-app/Eliza/Eliza.apk",
     );
+
+    // The build writes into out/target/product/<PRODUCT_DEVICE>, not
+    // <PRODUCT_NAME>: Cuttlefish products build into vsoc_* and the grizzly
+    // product into grizzly.
+    expect(
+      deriveProductOutDir({
+        productName: "eliza_cf_arm64_phone",
+        aospDeviceTreePaths: [
+          "device/google/cuttlefish/vsoc_arm64/phone/aosp_cf.mk",
+        ],
+      }),
+    ).toBe("vsoc_arm64");
+    expect(
+      deriveProductOutDir({
+        productName: "eliza_grizzly_phone",
+        aospDeviceTreePaths: ["vendor/google_devices/grizzly/grizzly.mk"],
+      }),
+    ).toBe("grizzly");
+    expect(
+      resolveBuiltPrivilegedApk({
+        aospRoot: "/aosp",
+        productName: "eliza_grizzly_phone",
+        deviceDir: "grizzly",
+        env: {},
+      }),
+    ).toBe("/aosp/out/target/product/grizzly/system/priv-app/Eliza/Eliza.apk");
 
     const deploySource = readFileSync(
       join(repositoryRoot, "scripts/aosp/deploy-pixel.mjs"),

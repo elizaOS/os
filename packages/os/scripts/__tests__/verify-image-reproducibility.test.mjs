@@ -104,8 +104,7 @@ async function buildFixture(
     gate: {
       name: "confidential-image-manifest-check",
       blockedOn: "build host",
-      provingCommand:
-        "node scripts/verify-image-reproducibility.mjs",
+      provingCommand: "node scripts/verify-image-reproducibility.mjs",
     },
   };
 }

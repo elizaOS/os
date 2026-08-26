@@ -13,6 +13,7 @@ import {
   assertPinnedAospCheckout,
   loadAospLock,
 } from "../distro-android/bootstrap-aosp.mjs";
+import { isMainModule } from "../distro-android/is-main.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(here, "../..");
@@ -64,6 +65,31 @@ function run(command, args, options = {}) {
           : ` with exit ${result.status}`
       }${result.stderr ? `\n${result.stderr}` : ""}`,
     );
+  }
+  // stdout only: callers JSON.parse or hash this value, and a benign stderr
+  // warning (unzip is fond of them) must never corrupt it. Version probes
+  // that print to stderr (java -version) use captureToolVersion instead.
+  return `${result.stdout ?? ""}`.trim();
+}
+
+// Tool-version capture for the provenance record. `required` distinguishes
+// tools the bundle build actually invokes (missing one must fail the build)
+// from flash-host tools recorded purely for provenance (missing ones are
+// recorded as absent rather than aborting a build that never needed them).
+function captureToolVersion(command, args, { required = false } = {}) {
+  const result = spawnSync(command, args, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.error || result.status !== 0) {
+    if (required) {
+      fail(
+        `required tool ${command} is unavailable: ${
+          result.error?.message ?? `exit ${result.status}`
+        }`,
+      );
+    }
+    return `unavailable: ${result.error?.message ?? `exit ${result.status}`}`;
   }
   return `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
 }
@@ -331,19 +357,22 @@ function assertOutputOutsideSource(outputDir, sourceRoot, label) {
 function captureBuilderEnvironment({ aospRoot, outRoot, repoLauncher }) {
   const toolVersions = Object.fromEntries(
     [
-      ["git", "git", ["--version"]],
-      ["java", "java", ["-version"]],
-      ["python", "python3", ["--version"]],
-      ["go", "go", ["version"]],
-      ["rust", "rustc", ["--version"]],
-      ["bun", "bun", ["--version"]],
-      ["node", "node", ["--version"]],
-      ["adb", "adb", ["version"]],
-      ["fastboot", "fastboot", ["--version"]],
-      ["repo", repoLauncher, ["version"]],
-    ].map(([name, command, args]) => [
+      // Tools the bundle build itself needs — missing one fails the build.
+      ["git", "git", ["--version"], true],
+      ["java", "java", ["-version"], true],
+      ["python", "python3", ["--version"], true],
+      ["node", "node", ["--version"], true],
+      ["repo", repoLauncher, ["version"], true],
+      // Provenance-only: flash-host and app-toolchain tools a vanilla AOSP
+      // builder legitimately lacks; record absence instead of aborting.
+      ["go", "go", ["version"], false],
+      ["rust", "rustc", ["--version"], false],
+      ["bun", "bun", ["--version"], false],
+      ["adb", "adb", ["version"], false],
+      ["fastboot", "fastboot", ["--version"], false],
+    ].map(([name, command, args, required]) => [
       name,
-      run(command, args, { capture: true }),
+      captureToolVersion(command, args, { required }),
     ]),
   );
   return {
@@ -546,4 +575,4 @@ function main(argv = process.argv.slice(2)) {
   process.stdout.write(`[grizzly-bundle] complete: ${args.outputDir}\n`);
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) main();
+if (isMainModule(import.meta)) main();

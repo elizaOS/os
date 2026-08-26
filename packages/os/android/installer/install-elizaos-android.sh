@@ -14,10 +14,11 @@ MANIFEST=""
 SLOT=""
 ANDROID_INFO=""
 ALLOW_STALE_ARTIFACTS=0
-# Loose images selected by filename can silently mix build generations; a
-# coherent image set is written within one packaging pass. One hour absorbs a
-# long target-files packaging step while still catching day-old strays.
-MAX_ARTIFACT_MTIME_SPREAD_SECONDS=3600
+# Loose images selected by filename can silently mix build generations. A
+# single clean `m` legitimately writes boot.img early and super.img hours
+# later, so the window must absorb one full build while still catching
+# day-old strays; byte-exact coherence is verify-grizzly-artifacts' job.
+MAX_ARTIFACT_MTIME_SPREAD_SECONDS=86400
 FLASH_SUPPORTED_CODENAMES=""
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 POST_FLASH_VALIDATOR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/validate-post-flash.sh"
@@ -241,6 +242,9 @@ parse_args() {
   if [[ "$REBOOT_AFTER_FLASH" -eq 1 && -z "$MANIFEST" ]]; then
     die "--reboot-after-flash requires --manifest for post-flash validation"
   fi
+  if [[ "$CONFIRM_FLASH" -eq 1 && -z "$ANDROID_INFO" ]]; then
+    log "WARNING: flashing without --android-info; bootloader/baseband compatibility will not be verified against the build's requirements"
+  fi
 }
 
 validate_release_inputs() {
@@ -416,6 +420,15 @@ collect_images() {
     done
   fi
 
+  # Remember which partitions the operator overrode explicitly before the
+  # spec lists are merged; those are deliberate choices the coherence guard
+  # must not judge.
+  local explicit_partitions=" "
+  local explicit_spec
+  for explicit_spec in ${IMAGE_SPECS[@]+"${IMAGE_SPECS[@]}"}; do
+    explicit_partitions+="${explicit_spec%%=*} "
+  done
+
   if [[ "${#IMAGE_SPECS[@]}" -gt 0 ]]; then
     specs+=("${IMAGE_SPECS[@]}")
   fi
@@ -443,11 +456,19 @@ collect_images() {
       seen_partitions+="$partition "
     fi
   done
-  # Apply the coherence check to the final deduplicated set so an explicit
-  # --image override is honored instead of being rejected because the
-  # superseded artifact-dir file is stale.
+  # Apply the coherence check only to images discovered from the artifact
+  # dir: an explicit --image override (for example a deliberately old stock
+  # dtbo) is an operator decision, not accidental staleness.
   if [[ -n "$ARTIFACT_DIR" ]]; then
-    assert_artifact_coherence "${IMAGE_SPECS[@]}"
+    local discovered=()
+    for spec in "${IMAGE_SPECS[@]}"; do
+      partition="${spec%%=*}"
+      [[ "$explicit_partitions" == *" $partition "* ]] && continue
+      discovered+=("$spec")
+    done
+    if [[ "${#discovered[@]}" -ge 2 ]]; then
+      assert_artifact_coherence "${discovered[@]}"
+    fi
   fi
 }
 
@@ -470,6 +491,22 @@ build_plan() {
   for spec in "${IMAGE_SPECS[@]}"; do
     partition="${spec%%=*}"
     image="${spec#*=}"
+    # Keep the dry-run plan identical to what a confirmed flash would accept:
+    # the release-manifest validator refuses undeclared images on the confirm
+    # path, so rehearsals must refuse them too instead of planning them in a
+    # guessed mode.
+    if [[ -n "$MANIFEST" ]]; then
+      local declared=0 index
+      for index in "${!MANIFEST_PARTITIONS[@]}"; do
+        if [[ "${MANIFEST_PARTITIONS[$index]}" == "$partition" ]]; then
+          declared=1
+          break
+        fi
+      done
+      if [[ "$declared" -eq 0 ]]; then
+        die "image for partition '$partition' is not declared by the release manifest; remove it or add it to the manifest"
+      fi
+    fi
     mode="$(flash_mode_for_partition "$partition")"
     if [[ "$mode" != "bootloader" && "$mode" != "fastbootd" ]]; then
       die "manifest artifact '$partition' has unsupported fastboot mode '$mode'"
@@ -542,8 +579,29 @@ fastboot_preflight() {
 
   run_cmd "${fastboot_cmd[@]}" devices
 
+  # Every getvar below runs inside command substitution and blocks forever at
+  # "waiting for any device" when nothing is in fastboot mode — so establish
+  # the device inventory first, and pin the serial when exactly one answers so
+  # a second fastboot-mode device can never receive part of the plan.
+  local fastboot_serials
+  fastboot_serials="$("${fastboot_cmd[@]}" devices 2>/dev/null | awk 'NF >= 2 {print $1}')"
+  local fastboot_count
+  fastboot_count="$(echo "$fastboot_serials" | awk 'NF > 0 {count++} END {print count + 0}')"
+  if [[ "$fastboot_count" -eq 0 ]]; then
+    die "no device is in fastboot mode; boot the bootloader (or drop --assume-bootloader) before preflight"
+  fi
+  if [[ -z "$DEVICE_SERIAL" ]]; then
+    if [[ "$fastboot_count" -gt 1 ]]; then
+      echo "$fastboot_serials" >&2
+      die "multiple fastboot devices are attached; pass --device SERIAL"
+    fi
+    DEVICE_SERIAL="$(echo "$fastboot_serials" | awk 'NF > 0 {print $1; exit}')"
+    log "selected fastboot device $DEVICE_SERIAL"
+    read -r -a fastboot_cmd <<<"$(fastboot_base)"
+  fi
+
   local unlocked
-  unlocked="$("${fastboot_cmd[@]}" getvar unlocked 2>&1 | awk -F': ' '/unlocked:/ {print $2; exit}' | tr -d '\r' || true)"
+  unlocked="$("${fastboot_cmd[@]}" getvar unlocked 2>&1 | sed -n 's/^unlocked:[[:space:]]*//p' | head -1 | tr -d '\r' || true)"
   if [[ "$unlocked" != "yes" && "$unlocked" != "true" ]]; then
     die "bootloader does not report unlocked=yes; unlock it manually before flashing"
   fi
@@ -563,7 +621,8 @@ fastboot_preflight() {
 fastboot_getvar_value() {
   local fastboot_cmd
   read -r -a fastboot_cmd <<<"$(fastboot_base)"
-  "${fastboot_cmd[@]}" getvar "$1" 2>&1 | awk -F': ' -v key="$1" '$0 ~ key": " {print $2; exit}' | tr -d '\r' || true
+  # Tolerate both "key: value" and "key:value" bootloader output shapes.
+  "${fastboot_cmd[@]}" getvar "$1" 2>&1 | sed -n "s/^$1:[[:space:]]*//p" | head -1 | tr -d '\r' || true
 }
 
 # Vendor blobs are built against the bootloader/baseband recorded in the
@@ -593,6 +652,9 @@ enforce_android_info() {
         ;;
       *) continue ;;
     esac
+    if [[ -z "$actual" ]]; then
+      die "could not read $key from the bootloader (fastboot getvar returned nothing); cannot verify the android-info requirement '$values' — check the fastboot connection before treating this as a firmware mismatch"
+    fi
     matched=0
     local IFS='|'
     for value in $values; do
@@ -632,6 +694,11 @@ execute_plan() {
     eval "run_cmd $command"
     if [[ "$command" == *" reboot bootloader" ]]; then
       sleep 3
+      fastboot_preflight
+    elif [[ "$command" == *" reboot fastboot" ]]; then
+      # fastbootd takes noticeably longer than the bootloader to re-enumerate;
+      # give it time and re-verify the device before the dynamic partitions.
+      sleep 5
       fastboot_preflight
     fi
   done

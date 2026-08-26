@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isMainModule } from "./is-main.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(here, "../..");
@@ -99,7 +100,9 @@ function assertRequiredFiles(root, lock) {
 }
 
 function materializeSourceCheckout(lock) {
-  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), "elizaos-cuttlefish-e1-"));
+  const checkout = fs.mkdtempSync(
+    path.join(os.tmpdir(), "elizaos-cuttlefish-e1-"),
+  );
   run("git", ["init", "--quiet"], { cwd: checkout });
   run("git", ["remote", "add", "origin", lock.source.url], { cwd: checkout });
   run("git", ["sparse-checkout", "init", "--no-cone"], { cwd: checkout });
@@ -119,7 +122,10 @@ function materializeSourceCheckout(lock) {
     { cwd: checkout },
   );
   run("git", ["checkout", "--detach", "FETCH_HEAD"], { cwd: checkout });
-  const head = run("git", ["rev-parse", "HEAD"], { cwd: checkout, capture: true });
+  const head = run("git", ["rev-parse", "HEAD"], {
+    cwd: checkout,
+    capture: true,
+  });
   if (head !== lock.source.commit) {
     fail(`source HEAD ${head} does not match locked ${lock.source.commit}`);
   }
@@ -142,17 +148,26 @@ export function provisionCuttlefishE1({
     ? path.resolve(sourceCheckout)
     : materializeSourceCheckout(lock);
   assertRequiredFiles(sourceRoot, lock);
-  const markerPath = path.join(root, "device/eliza/.elizaos-cuttlefish-e1-source.json");
+  const markerPath = path.join(
+    root,
+    "device/eliza/.elizaos-cuttlefish-e1-source.json",
+  );
   if (check) {
-    if (!fs.existsSync(markerPath)) fail(`missing E1 source marker ${markerPath}`);
+    if (!fs.existsSync(markerPath))
+      fail(`missing E1 source marker ${markerPath}`);
     const marker = JSON.parse(fs.readFileSync(markerPath, "utf8"));
-    if (marker.commit !== lock.source.commit || marker.url !== lock.source.url) {
+    if (
+      marker.commit !== lock.source.commit ||
+      marker.url !== lock.source.url
+    ) {
       fail("AOSP E1 source marker does not match the lock");
     }
     for (const tree of lock.trees) {
       for (const requiredFile of tree.requiredFiles) {
         if (!fs.existsSync(path.join(root, tree.destination, requiredFile))) {
-          fail(`AOSP checkout is missing imported E1 file ${tree.destination}/${requiredFile}`);
+          fail(
+            `AOSP checkout is missing imported E1 file ${tree.destination}/${requiredFile}`,
+          );
         }
       }
     }
@@ -171,11 +186,15 @@ export function provisionCuttlefishE1({
       fs.rmSync(destination, { recursive: true, force: true });
     }
     fs.mkdirSync(path.dirname(destination), { recursive: true });
-    fs.cpSync(path.join(sourceRoot, lock.source.root, tree.source), destination, {
-      recursive: true,
-      force: true,
-      errorOnExist: true,
-    });
+    fs.cpSync(
+      path.join(sourceRoot, lock.source.root, tree.source),
+      destination,
+      {
+        recursive: true,
+        force: true,
+        errorOnExist: true,
+      },
+    );
   }
   fs.mkdirSync(path.dirname(markerPath), { recursive: true });
   fs.writeFileSync(
@@ -193,7 +212,9 @@ function parseArgs(argv) {
     else if (arg === "--lock") args.lockPath = path.resolve(argv[++i] ?? "");
     else if (arg === "--check") args.check = true;
     else if (arg === "--help" || arg === "-h") {
-      console.log("Usage: node scripts/distro-android/provision-cuttlefish-e1.mjs --aosp-root <PATH> [--lock <PATH>] [--check]");
+      console.log(
+        "Usage: node scripts/distro-android/provision-cuttlefish-e1.mjs --aosp-root <PATH> [--lock <PATH>] [--check]",
+      );
       return null;
     } else fail(`unknown argument ${arg}`);
   }
@@ -201,10 +222,12 @@ function parseArgs(argv) {
   return args;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta)) {
   const args = parseArgs(process.argv.slice(2));
   if (args) {
     const result = provisionCuttlefishE1(args);
-    console.log(`[cuttlefish-e1] ${result.checked ? "verified" : "imported"} ${result.commit}`);
+    console.log(
+      `[cuttlefish-e1] ${result.checked ? "verified" : "imported"} ${result.commit}`,
+    );
   }
 }

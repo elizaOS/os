@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { isMainModule } from "./is-main.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../..");
@@ -25,7 +26,9 @@ export function parseArgs(argv) {
     const argument = argv[index];
     const value = argv[index + 1];
     if (argument === "--adb" && value) {
-      options.adb = path.resolve(value);
+      // Only resolve paths; a bare command name ("adb") must stay a PATH
+      // lookup instead of becoming $PWD/adb.
+      options.adb = value.includes(path.sep) ? path.resolve(value) : value;
       index += 1;
     } else if ((argument === "--serial" || argument === "-s") && value) {
       options.serial = value;
@@ -87,14 +90,14 @@ export const GRAPHICS_PROBES = [
     name: "graphics-properties",
     args: [
       "shell",
-      "getprop | grep -Ei '(^|\\[)(ro\\.hardware\\.(egl|vulkan)|ro\\.board\\.platform|debug\\.renderengine|ro\\.surface_flinger|ro\\.gfx|graphics|gralloc|composer|vulkan|egl)'",
+      "getprop | grep -Ei '(^|\\[)(ro\\.hardware\\.(egl|vulkan)|ro\\.board\\.platform|debug\\.renderengine|ro\\.surface_flinger|ro\\.gfx|graphics|gralloc|composer|vulkan|egl)' || true",
     ],
   },
   {
     name: "graphics-libraries",
     args: [
       "shell",
-      "find /vendor/lib64 /system/lib64 -maxdepth 3 -type f 2>/dev/null | grep -Ei '/(egl|hw)/|vulkan|gralloc|mapper|composer' | sort",
+      "find /vendor/lib64 /system/lib64 -maxdepth 3 -type f 2>/dev/null | grep -Ei '/(egl|hw)/|vulkan|gralloc|mapper|composer' | sort; true",
     ],
   },
   {
@@ -119,21 +122,32 @@ export const GRAPHICS_PROBES = [
   { name: "vulkan-json", args: ["shell", "cmd gpu vkjson"] },
   {
     name: "vendor-vintf",
+    // Per-fragment failures must be visible without masking the probe: an
+    // unreadable fragment prints READ-FAILED, an unexpanded glob prints
+    // ABSENT, and the loop always exits 0 so partial evidence is recorded
+    // rather than declared incomplete.
     args: [
       "shell",
-      "for f in /vendor/etc/vintf/manifest.xml /vendor/etc/vintf/manifest/*.xml; do echo ===$f; cat $f; done",
+      'for f in /vendor/etc/vintf/manifest.xml /vendor/etc/vintf/manifest/*.xml; do if [ -e "$f" ]; then echo "===$f"; cat "$f" || echo "READ-FAILED $f"; else echo "ABSENT $f"; fi; done; true',
     ],
   },
   {
     name: "graphics-processes",
+    // grep exits 1 on no match; an empty match set is recorded evidence, not
+    // a collection failure.
     args: [
       "shell",
-      "ps -AZ | grep -Ei 'surfaceflinger|composer|allocator|mapper|gpu'",
+      "ps -AZ | grep -Ei 'surfaceflinger|composer|allocator|mapper|gpu' || true",
     ],
   },
   {
     name: "kernel-graphics",
-    args: ["shell", "dmesg | grep -Ei 'drm|gpu|vulkan|mali|gralloc|display'"],
+    // dmesg is root-only on a booted userdebug device; the denial lands in
+    // stderr as evidence and must not abort the collection as incomplete.
+    args: [
+      "shell",
+      "dmesg | grep -Ei 'drm|gpu|vulkan|mali|gralloc|display' || true",
+    ],
   },
   {
     name: "logcat-all",
@@ -192,8 +206,6 @@ export function main(argv = process.argv.slice(2)) {
   }
 }
 
-const isMain =
-  process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isMain = isMainModule(import.meta);
 
 if (isMain) main();

@@ -581,7 +581,9 @@ describe("OS release workflow authority", () => {
     expect(source).toContain("sign-image-release.mjs");
     expect(source).toContain("verify-image-release.mjs");
     expect(source).toContain("ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256");
-    expect(source).toContain("ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S");
+    expect(source).toContain(
+      "ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S",
+    );
     expect(source).toContain(
       'boot_evidence="mkosi-release-build,qemu-uefi-usb,persistent-reboot,usb-expanded-readback,slsa-provenance"',
     );
@@ -846,11 +848,7 @@ describe("OS release workflow authority", () => {
     for (const obsolete of ["install", "postinst", "prerm"]) {
       expect(
         existsSync(
-          join(
-            repositoryRoot,
-            "packages/os/linux/packaging/debian",
-            obsolete,
-          ),
+          join(repositoryRoot, "packages/os/linux/packaging/debian", obsolete),
         ),
       ).toBe(false);
     }

@@ -8,7 +8,8 @@ const requiredClass = "ai.elizaos.app.ElizaAssistantSurfaceInstrumentedTest";
 test("requires a non-skipped retail assistant suite", () => {
   const cases = Array.from(
     { length: 6 },
-    (_, index) => `<testcase classname="${requiredClass}" name="case${index}"/>`,
+    (_, index) =>
+      `<testcase classname="${requiredClass}" name="case${index}"/>`,
   ).join("");
   const verdict = verifyInstrumentationXml(
     [`<testsuite tests="6" failures="0" errors="0">${cases}</testsuite>`],

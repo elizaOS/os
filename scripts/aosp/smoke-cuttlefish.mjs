@@ -33,6 +33,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { isMainModule } from "../distro-android/is-main.mjs";
 import {
   loadAospVariantConfig,
   resolveAppConfigPath,
@@ -769,9 +770,7 @@ export async function main(argv = process.argv.slice(2)) {
   process.exit(allPassed ? 0 : 1);
 }
 
-const isMain =
-  process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isMain = isMainModule(import.meta);
 
 if (isMain) {
   await main();

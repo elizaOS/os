@@ -7,10 +7,7 @@ import test from "node:test";
 import { checkDstackPins } from "../check-dstack-pins.mjs";
 import { readJson, repoRoot } from "../os-release-lib.mjs";
 
-const pinsPath = path.join(
-  repoRoot,
-  "linux/confidential/dstack-pins.json",
-);
+const pinsPath = path.join(repoRoot, "linux/confidential/dstack-pins.json");
 const schemaPath = path.join(
   repoRoot,
   "release/schema/dstack-pins.schema.json",

@@ -14,6 +14,7 @@ import {
   materializeLockedSourceOverlays,
   verifyLockedArtifact,
 } from "./bootstrap-aosp.mjs";
+import { isMainModule } from "./is-main.mjs";
 import { lintInitRc } from "./lint-init-rc.mjs";
 import { withSisoCompatibility } from "./siso-env.mjs";
 
@@ -230,8 +231,7 @@ export function resolveRenderEngineOverrides(env = process.env) {
   }
   // Stock keeps Graphite on; a backend override needs Graphite off to be
   // honored unless the probe explicitly asks for Graphite-on-Vulkan.
-  const graphite =
-    graphiteRaw !== null ? graphiteRaw === "1" : backend ? false : true;
+  const graphite = graphiteRaw !== null ? graphiteRaw === "1" : !backend;
   return { backend, graphite };
 }
 
@@ -328,9 +328,20 @@ export function generatedTreeHasBringupProbes(aospRoot) {
     if (!fs.existsSync(filePath)) return false;
     const contents = fs.readFileSync(filePath, "utf8");
     if (relativePath.endsWith("grizzly.mk")) {
-      // grizzly.mk legitimately contains no probe text by default; only the
-      // probe copy-rule marks it.
-      return contents.includes("init.elizaos-debug.rc");
+      // grizzly.mk legitimately contains no probe text by default; the probe
+      // copy-rule marks it, and so does the compatibility renderengine shim's
+      // system-side graphite append (normalizeGeneratedRenderEngine) — that
+      // line is otherwise invisible to vendor.prop-based checks and would
+      // silently survive into a "stock" build. Match the shim's distinctive
+      // comment, not "debug.renderengine." broadly: a stock adevtool makefile
+      // that legitimately mentioned the property would otherwise trip an
+      // expensive rm -rf + adevtool regeneration on every default prepare.
+      return (
+        contents.includes("init.elizaos-debug.rc") ||
+        contents.includes(
+          "Match the stock Pixel 11 Pro Android 17 RenderEngine path",
+        )
+      );
     }
     return PROBE_SENTINELS.some((sentinel) => sentinel.test(contents));
   });
@@ -768,6 +779,6 @@ export async function prepareGrizzly({
   return { lock, files };
 }
 
-if (import.meta.main) {
+if (isMainModule(import.meta)) {
   await prepareGrizzly(parseArgs(process.argv.slice(2)));
 }

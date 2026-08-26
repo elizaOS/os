@@ -125,6 +125,15 @@ STALE_OVERRIDE_OUT="$TMP_DIR/stale-override.out"
 assert_contains "$STALE_OVERRIDE_OUT" "Dry-run only. No commands were executed."
 pass "installer refuses mixed-generation artifact dirs"
 
+# An explicit --image override of the stale partition is an operator decision;
+# the coherence guard must only judge artifact-dir-discovered images.
+EXPLICIT_OVERRIDE_OUT="$TMP_DIR/explicit-override.out"
+"$ROOT/install-elizaos-android.sh" \
+  --artifact-dir "$STALE_ARTIFACT_DIR" \
+  --image "vendor_boot=$STALE_ARTIFACT_DIR/vendor_boot.img" >"$EXPLICIT_OVERRIDE_OUT"
+assert_contains "$EXPLICIT_OVERRIDE_OUT" "Dry-run only. No commands were executed."
+pass "installer honors explicit stale-image overrides"
+
 ANDROID_INFO_FILE="$TMP_DIR/android-info.txt"
 cat >"$ANDROID_INFO_FILE" <<'INFO'
 require board=tegu

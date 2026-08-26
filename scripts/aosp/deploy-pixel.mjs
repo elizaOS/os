@@ -246,13 +246,26 @@ function adbArgs(device, rest) {
 function listAdbDevices() {
   const res = spawnSync("adb", ["devices"], { encoding: "utf8" });
   if (res.status !== 0) return [];
-  return res.stdout
+  const rows = res.stdout
     .split("\n")
     .slice(1)
     .map((l) => l.trim())
     .filter((l) => l && !l.startsWith("*"))
-    .map((l) => l.split(/\s+/)[0])
-    .filter(Boolean);
+    .map((l) => l.split(/\s+/))
+    .filter((fields) => fields.length >= 2);
+  const unauthorized = rows.filter(([, state]) => state === "unauthorized");
+  if (unauthorized.length > 0) {
+    console.warn(
+      `[deploy-pixel] ignoring unauthorized adb device(s) ${unauthorized
+        .map(([serial]) => serial)
+        .join(", ")} — accept the USB debugging prompt on the device`,
+    );
+  }
+  // Only fully usable devices are deploy candidates; auto-selecting an
+  // unauthorized/offline serial just fails later on a raw shell command.
+  return rows
+    .filter(([, state]) => state === "device")
+    .map(([serial]) => serial);
 }
 
 async function main(argv = process.argv.slice(2)) {

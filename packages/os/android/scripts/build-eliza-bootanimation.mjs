@@ -28,6 +28,7 @@ import {
   buildBootAnimationZip,
   inspectBootAnimationDir,
 } from "../../../../scripts/distro-android/build-bootanimation.mjs";
+import { isMainModule } from "../../../../scripts/distro-android/is-main.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_FRAMES = path.resolve(here, "../vendor/eliza/bootanimation");
@@ -78,9 +79,7 @@ function main(argv = process.argv.slice(2)) {
   buildBootAnimationZip(args);
 }
 
-const isMain =
-  process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isMain = isMainModule(import.meta);
 if (isMain) {
   main();
 }

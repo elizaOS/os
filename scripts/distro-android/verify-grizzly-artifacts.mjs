@@ -50,9 +50,10 @@ import process from "node:process";
 const PRODUCT_DEVICE = "grizzly";
 const STAMP_RELATIVE_PATH =
   "vendor/google_devices/grizzly/.elizaos-prepare-stamp.json";
-// Partitions we build and flash for grizzly bring-up. boot-chain partitions
-// stay stock (factory kernel), so they are intentionally absent.
-const ATTESTED_IMAGES = [
+// Partitions we build and flash for grizzly bring-up. The core set must all
+// exist — a missing core image means the build is incomplete and attesting a
+// partial set is exactly the stale-mix hazard this tool exists to prevent.
+const REQUIRED_ATTESTED_IMAGES = [
   "system.img",
   "system_ext.img",
   "product.img",
@@ -60,8 +61,23 @@ const ATTESTED_IMAGES = [
   "vendor_dlkm.img",
   "system_dlkm.img",
   "vbmeta.img",
+];
+// Attested when present: chained vbmeta split varies by board config, and the
+// boot chain is stock (factory kernel) but still ships in the flash set — its
+// bytes must be pinned so the flash host proves one coherent generation.
+// vendor_boot additionally carries the vendor_ramdisk fstab, so it is
+// promoted to required whenever the conservative-f2fs stance is stamped.
+const OPTIONAL_ATTESTED_IMAGES = [
   "vbmeta_system.img",
   "vbmeta_vendor.img",
+  "boot.img",
+  "init_boot.img",
+  "vendor_boot.img",
+  "vendor_kernel_boot.img",
+  "dtbo.img",
+  "pvmfw.img",
+  "super_empty.img",
+  "system_other.img",
 ];
 
 function fail(message) {
@@ -124,8 +140,14 @@ function newestMtimeUnder(dir, filterRegex = null) {
       const full = path.join(current, entry.name);
       if (entry.isDirectory()) stack.push(full);
       else if (!filterRegex || filterRegex.test(full)) {
-        const mtime = fs.statSync(full).mtimeMs;
-        if (mtime > newest) newest = mtime;
+        // lstat: staged AOSP trees contain dangling/absolute symlinks (odm,
+        // module links); following them would abort attestation on ENOENT.
+        try {
+          const mtime = fs.lstatSync(full).mtimeMs;
+          if (mtime > newest) newest = mtime;
+        } catch {
+          // A file that vanished mid-walk cannot be newer evidence.
+        }
       }
     }
   }
@@ -193,30 +215,57 @@ function assertStagedRenderEngine(stagedVendorDir, stamp) {
   );
 }
 
-function assertStagedFstab(stagedVendorDir, stamp) {
-  const fstab = path.join(stagedVendorDir, "etc", "fstab.malibu");
-  if (!fs.existsSync(fstab)) {
-    fail(`staged vendor fstab missing: ${fstab}`);
-  }
-  const contents = fs.readFileSync(fstab, "utf8");
+function assertOneFstabStance(fstabPath, stamp, label) {
+  const contents = fs.readFileSync(fstabPath, "utf8");
   const userdataLine = contents
     .split("\n")
     .find((line) => /\s\/data\s/.test(line) && !line.trim().startsWith("#"));
-  if (!userdataLine) fail("staged fstab has no /data entry");
+  if (!userdataLine) fail(`staged ${label} fstab has no /data entry`);
   const rewritten = /elizaos/i.test(contents);
   if (stamp.conservativeF2fs !== rewritten) {
     fail(
-      `staged fstab stance (rewritten=${rewritten}) does not match prepare stamp (conservativeF2fs=${stamp.conservativeF2fs}); rebuild after re-running prepare-grizzly`,
+      `staged ${label} fstab stance (rewritten=${rewritten}) does not match prepare stamp (conservativeF2fs=${stamp.conservativeF2fs}); rebuild after re-running prepare-grizzly`,
     );
   }
   if (!stamp.conservativeF2fs) {
     for (const required of ["fileencryption=", "metadata_encryption="]) {
       if (!userdataLine.includes(required)) {
         fail(
-          `stock fstab stance selected but staged /data entry lacks ${required} — the factory encryption contract is broken: ${userdataLine.trim()}`,
+          `stock fstab stance selected but staged ${label} /data entry lacks ${required} — the factory encryption contract is broken: ${userdataLine.trim()}`,
         );
       }
     }
+  }
+}
+
+function assertStagedFstab(productDir, stagedVendorDir, stamp) {
+  const fstab = path.join(stagedVendorDir, "etc", "fstab.malibu");
+  if (!fs.existsSync(fstab)) {
+    fail(`staged vendor fstab missing: ${fstab}`);
+  }
+  assertOneFstabStance(fstab, stamp, "vendor");
+  // The same fstab ships in vendor_boot's vendor_ramdisk; first-stage init
+  // reads that copy, so a stance split between the two partitions is the
+  // exact unattributable mount wedge this tool exists to prevent.
+  const ramdiskCandidates = [
+    path.join(productDir, "vendor_ramdisk", "system", "etc", "fstab.malibu"),
+    path.join(productDir, "vendor_ramdisk", "etc", "fstab.malibu"),
+    path.join(
+      productDir,
+      "vendor_ramdisk",
+      "first_stage_ramdisk",
+      "fstab.malibu",
+    ),
+  ];
+  const stagedRamdiskFstab = ramdiskCandidates.find((candidate) =>
+    fs.existsSync(candidate),
+  );
+  if (stagedRamdiskFstab) {
+    assertOneFstabStance(stagedRamdiskFstab, stamp, "vendor_ramdisk");
+  } else {
+    warn(
+      "no staged vendor_ramdisk fstab found to verify; confirm vendor_boot.img carries the same /data stance as vendor.img",
+    );
   }
   info(
     `staged fstab stance verified (conservativeF2fs=${stamp.conservativeF2fs})`,
@@ -315,28 +364,50 @@ function attest({ aospRoot, out }) {
   }
   const stagedVendorDir = path.join(productDir, "vendor");
   assertStagedRenderEngine(stagedVendorDir, stamp);
-  assertStagedFstab(stagedVendorDir, stamp);
+  assertStagedFstab(productDir, stagedVendorDir, stamp);
   assertStagedProbes(stagedVendorDir, stamp);
   checkElfAlignment(aospRoot, productDir);
 
-  // A vendor.img older than any staged vendor file is definitionally stale.
-  const vendorImage = path.join(productDir, "vendor.img");
-  if (fs.existsSync(vendorImage)) {
-    const imageMtime = fs.statSync(vendorImage).mtimeMs;
-    const newestStaged = newestMtimeUnder(stagedVendorDir);
+  // The conservative-f2fs stance ships inside vendor_boot's vendor_ramdisk;
+  // an attestation that omits vendor_boot in that stance cannot prove the
+  // first-stage and vendor fstabs agree.
+  const requiredImages = stamp.conservativeF2fs
+    ? [...REQUIRED_ATTESTED_IMAGES, "vendor_boot.img"]
+    : REQUIRED_ATTESTED_IMAGES;
+  const missingRequired = requiredImages.filter(
+    (name) => !fs.existsSync(path.join(productDir, name)),
+  );
+  if (missingRequired.length > 0) {
+    fail(
+      `core images missing from ${productDir}: ${missingRequired.join(", ")} — attesting a partial set is exactly the stale-mix hazard this tool prevents; rebuild first`,
+    );
+  }
+
+  // An image older than any file staged into it is definitionally stale.
+  // (fail-closed: an incremental build that restats a staged file without
+  // rebuilding the image reads as stale — rebuild rather than rationalize.)
+  for (const [imageName, stagedDir] of [
+    ["vendor.img", stagedVendorDir],
+    ["system.img", path.join(productDir, "system")],
+  ]) {
+    const imagePath = path.join(productDir, imageName);
+    const imageMtime = fs.statSync(imagePath).mtimeMs;
+    const newestStaged = newestMtimeUnder(stagedDir);
     if (newestStaged > imageMtime) {
       fail(
-        `vendor.img is older than the staged vendor tree (image ${new Date(imageMtime).toISOString()} < staged ${new Date(newestStaged).toISOString()}); rebuild before attesting`,
+        `${imageName} is older than its staged tree (image ${new Date(imageMtime).toISOString()} < staged ${new Date(newestStaged).toISOString()}); rebuild before attesting`,
       );
     }
   }
 
   const images = {};
-  for (const name of ATTESTED_IMAGES) {
+  for (const name of [...requiredImages, ...OPTIONAL_ATTESTED_IMAGES]) {
     const imagePath = path.join(productDir, name);
     if (!fs.existsSync(imagePath)) {
-      // vbmeta_vendor and some dlkm images legitimately vary by target.
-      warn(`image absent, not attested: ${name}`);
+      if (!requiredImages.includes(name)) {
+        // Chained-vbmeta split and boot-chain packaging vary by board config.
+        warn(`optional image absent, not attested: ${name}`);
+      }
       continue;
     }
     const stat = fs.statSync(imagePath);
@@ -346,9 +417,6 @@ function attest({ aospRoot, out }) {
       mtime: new Date(stat.mtimeMs).toISOString(),
     };
     info(`attested ${name} sha256=${images[name].sha256.slice(0, 16)}…`);
-  }
-  if (Object.keys(images).length === 0) {
-    fail("no images found to attest");
   }
   const manifest = {
     schemaVersion: 1,
@@ -369,7 +437,8 @@ function check({ manifest: manifestPath, artifactDir }) {
   if (!manifestPath || !artifactDir) {
     fail("check requires --manifest and --artifact-dir");
   }
-  if (!fs.existsSync(manifestPath)) fail(`manifest does not exist: ${manifestPath}`);
+  if (!fs.existsSync(manifestPath))
+    fail(`manifest does not exist: ${manifestPath}`);
   if (!fs.existsSync(artifactDir) || !fs.statSync(artifactDir).isDirectory()) {
     fail(`artifact dir does not exist or is not a directory: ${artifactDir}`);
   }
@@ -406,6 +475,16 @@ function check({ manifest: manifestPath, artifactDir }) {
       );
     }
     checked += 1;
+  }
+  // A stray unattested image beside the attested set is exactly the mixed
+  // build-generation the installer would happily flash by filename.
+  const unattested = fs
+    .readdirSync(artifactDir)
+    .filter((name) => name.endsWith(".img") && !names.includes(name));
+  if (unattested.length > 0) {
+    fail(
+      `artifact dir contains images the manifest does not attest: ${unattested.join(", ")} — remove them or re-attest; a filename-driven flash would mix build generations`,
+    );
   }
   info(
     `verified ${checked} image(s) against attestation from ${manifest.attestedAt}`,

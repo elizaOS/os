@@ -19,7 +19,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
+import { isMainModule } from "./is-main.mjs";
 
 export function parseArgs(argv) {
   const args = { framesDir: null, outPath: null, check: false };
@@ -131,9 +131,7 @@ async function main(argv = process.argv.slice(2)) {
   buildBootAnimationZip(args);
 }
 
-const isMain =
-  process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isMain = isMainModule(import.meta);
 if (isMain) {
   await main();
 }

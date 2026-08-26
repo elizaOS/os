@@ -21,6 +21,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { isMainModule } from "./is-main.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../..");
@@ -94,6 +95,7 @@ export function captureEvidence({ device = "", outRoot = "" } = {}) {
       "fastboot-getvar-all",
       "fastboot",
       fastbootArgs(device, ["getvar", "all"]),
+      { timeoutMs: 120_000 },
     );
     // Tensor abl exposes read-only OEM debug commands; enumerate what this
     // bootloader offers, then pull the previous boot's kernel console.
@@ -107,22 +109,71 @@ export function captureEvidence({ device = "", outRoot = "" } = {}) {
       ["fastboot-oem-uart-status", ["oem", "uart", "status"]],
     ];
     for (const [name, rest] of oemCaptures) {
-      capture(outDir, name, "fastboot", fastbootArgs(device, rest));
+      // last_dmesg can stream megabytes over USB; do not truncate the single
+      // most valuable capture with the default timeout.
+      capture(outDir, name, "fastboot", fastbootArgs(device, rest), {
+        timeoutMs: 120_000,
+      });
     }
   }
 
-  // ADB surface: normal boot, recovery, or sideload all answer here.
+  // ADB surface: normal boot, recovery, or sideload all answer here. Parse
+  // the state column strictly — matching anywhere in the line also matches
+  // the `device:<board>` descriptor field, and an un-scoped capture on a
+  // multi-device host (grizzly hung + a Cuttlefish attached) would record
+  // the WRONG device's logs as boot evidence for this flash attempt.
   const adbDevices = capture(outDir, "adb-devices", "adb", ["devices", "-l"]);
-  const hasAdb = /\b(device|recovery)\b/.test(
-    adbDevices.stdout.split("\n").slice(1).join("\n"),
-  );
-  if (!hasAdb) {
+  const candidates = adbDevices.stdout
+    .split("\n")
+    .slice(1)
+    .map((line) => line.trim().split(/\s+/))
+    .filter(
+      (fields) =>
+        fields.length >= 2 &&
+        ["device", "recovery", "sideload"].includes(fields[1]),
+    )
+    .map((fields) => fields[0]);
+  let scopedDevice = device;
+  if (scopedDevice && !candidates.includes(scopedDevice)) {
     console.log(
-      "[grizzly-evidence] no adb surface; bootloader evidence only. " +
-        "For a hung boot: force-reboot to recovery (Power ~30s, then Vol-Down+Power) and rerun to pull pstore.",
+      `[grizzly-evidence] requested device ${scopedDevice} has no usable adb state; bootloader evidence only.`,
     );
     return outDir;
   }
+  if (!scopedDevice) {
+    if (candidates.length === 0) {
+      console.log(
+        "[grizzly-evidence] no adb surface; bootloader evidence only. " +
+          "For a hung boot: force-reboot to recovery (Power ~30s, then Vol-Down+Power) and rerun to pull pstore.",
+      );
+      return outDir;
+    }
+    if (candidates.length > 1) {
+      console.log(
+        `[grizzly-evidence] multiple adb devices (${candidates.join(", ")}); rerun with --device <serial> so evidence is attributable. Bootloader evidence only.`,
+      );
+      return outDir;
+    }
+    scopedDevice = candidates[0];
+    console.log(`[grizzly-evidence] capturing from adb device ${scopedDevice}`);
+  }
+  device = scopedDevice;
+
+  // Best-effort root: pstore, dmesg, and /data are root-only on a normally
+  // booted userdebug device. Failure is recorded evidence, never fatal
+  // (recovery adbd is already root; user builds refuse — both are fine).
+  capture(outDir, "adb-root", "adb", adbArgs(device, ["root"]), {
+    timeoutMs: 15_000,
+  });
+  capture(
+    outDir,
+    "adb-wait-after-root",
+    "adb",
+    adbArgs(device, ["wait-for-device"]),
+    {
+      timeoutMs: 15_000,
+    },
+  );
 
   const shellCaptures = [
     ["adb-state", ["get-state"]],
@@ -131,8 +182,8 @@ export function captureEvidence({ device = "", outRoot = "" } = {}) {
     // future QPR 16 KiB migration cannot silently invalidate that premise.
     ["page-size", ["shell", "getconf", "PAGE_SIZE"]],
     ["getprop", ["shell", "getprop"]],
-    ["dmesg", ["shell", "dmesg"]],
-    ["logcat", ["shell", "logcat", "-b", "all", "-d"]],
+    ["dmesg", ["shell", "dmesg"], 60_000],
+    ["logcat", ["shell", "logcat", "-b", "all", "-d"], 180_000],
     ["pstore-list", ["shell", "ls", "-l", "/sys/fs/pstore/"]],
     // Kernel/init console of the PREVIOUS boot — the single most valuable
     // artifact for a G-logo hang (includes our elizaos-init kmsg markers).
@@ -167,12 +218,14 @@ export function captureEvidence({ device = "", outRoot = "" } = {}) {
     ["mounts", ["shell", "cat", "/proc/mounts"]],
     ["metadata-markers", ["shell", "ls", "-l", "/metadata/"]],
   ];
-  for (const [name, rest] of shellCaptures) {
-    capture(outDir, name, "adb", adbArgs(device, rest));
+  for (const [name, rest, timeoutMs] of shellCaptures) {
+    capture(outDir, name, "adb", adbArgs(device, rest), {
+      timeoutMs: timeoutMs ?? 30_000,
+    });
   }
   return outDir;
 }
 
-if (import.meta.main) {
+if (isMainModule(import.meta)) {
   captureEvidence(parseArgs(process.argv.slice(2)));
 }
