@@ -40,14 +40,25 @@ and encryption classifications. Unmounted ext4 filesystems are checked with
 read-only `dumpe2fs`, `e2fsck -f -n`, and `resize2fs -P` probes. Clean 4 KiB
 filesystems receive bounded minimum-size evidence; dirty and unhealthy ext4
 filesystems protect the disk, while missing, malformed, non-4-KiB, or failed
-probe output emits no shrink claim. Windows-native health, encryption,
-hibernation, and minimum-size probes remain required, as does a separately
-reviewed btrfs minimum-size boundary.
+probe output emits no shrink claim. Windows-native encryption/preparation
+evidence and a separately reviewed btrfs minimum-size boundary remain required.
 Unmounted btrfs filesystems are classified with `btrfs check --readonly`; only
 an exit-zero report containing the clean marker and no failure diagnostics is
 healthy. This deliberately emits no resize minimum because the native
 minimum-device-size command requires a mounted path, which would violate this
 probe's unmounted safety boundary.
+Unmounted NTFS uses `ntfsresize --info --no-action --no-progress-bar`, whose
+info path opens with the upstream read-only forensic flag. Successful output
+must bind the exact device size before it supplies health, dirty-off, and
+byte-exact minimum-size evidence. The read-only mount path does not perform the
+upstream hibernation-file check, so successful output never fabricates a
+hibernation-off or Fast-Startup-off claim. It also does not infer that BitLocker
+is off from an NTFS signature. The planner requires independent explicit
+hibernation-off evidence for any alongside plan and BitLocker-off or suspended
+evidence before shrinking. Detected hibernation and dirty-journal diagnostics
+remain explicit refusal state; missing tooling, malformed output, or failed
+probes supply no resize claim. Opaque BitLocker volumes are classified as
+Windows and refused because they cannot supply NTFS evidence.
 The GPT verifier parses diagnostics as well as exit status because `sgdisk`
 may report exit zero after reconstructing a corrupt backup header in memory.
 The provider also resolves `/` with `findmnt` and walks its complete inverse

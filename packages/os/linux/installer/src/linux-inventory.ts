@@ -22,6 +22,7 @@ const DUMPE2FS = "/usr/sbin/dumpe2fs";
 const E2FSCK = "/usr/sbin/e2fsck";
 const RESIZE2FS = "/usr/sbin/resize2fs";
 const BTRFS = "/usr/bin/btrfs";
+const NTFSRESIZE = "/usr/sbin/ntfsresize";
 
 interface LsblkDevice {
   path?: unknown;
@@ -109,6 +110,75 @@ export async function probeLinuxBtrfsFilesystem(options: {
   }
   return {
     filesystemHealth: BTRFS_CLEAN_PATTERN.test(report) ? "healthy" : "unknown",
+  };
+}
+
+export interface LinuxNtfsProbeEvidence {
+  filesystemHealth: NonNullable<PartitionInventory["filesystemHealth"]>;
+  hibernated?: boolean;
+  dirty?: boolean;
+  minimumBytes?: number;
+}
+
+const NTFS_DEVICE_SIZE_PATTERN = /^Current device size:\s*(\d+) bytes\b/m;
+const NTFS_MINIMUM_PATTERN = /^You might resize at (\d+) bytes\b/m;
+const NTFS_HIBERNATED_PATTERN =
+  /\b(?:NTFS partition|Windows|volume)\s+is\s+hibernated\b/i;
+const NTFS_DIRTY_PATTERN =
+  /\b(?:not cleanly unmounted|journal file is unclean|volume is scheduled for check)\b/i;
+const NTFS_FAILURE_PATTERN =
+  /\b(?:warning|error|corrupt(?:ed|ion)?|invalid|failed|failure|bad sectors?)\b/i;
+
+/**
+ * `ntfsresize --info --no-action` opens the unmounted volume read-only with
+ * NTFS_MNT_FORENSIC, checks consistency, and reports a byte-exact minimum.
+ * Hibernation and dirty-journal diagnostics remain typed refusal evidence.
+ */
+export async function probeLinuxNtfsFilesystem(options: {
+  runner: LinuxInventoryCommandRunner;
+  devicePath: string;
+  partitionSizeBytes: number;
+}): Promise<LinuxNtfsProbeEvidence> {
+  if (!isSafeDevicePath(options.devicePath)) {
+    throw new Error("Linux NTFS probe device path is invalid.");
+  }
+  const result = await options.runner.run(NTFSRESIZE, [
+    "--info",
+    "--no-action",
+    "--no-progress-bar",
+    options.devicePath,
+  ]);
+  const report = `${result.stdout}\n${result.stderr}`;
+  if (NTFS_HIBERNATED_PATTERN.test(report)) {
+    return { filesystemHealth: "unknown", hibernated: true };
+  }
+  if (NTFS_DIRTY_PATTERN.test(report)) {
+    return { filesystemHealth: "dirty", dirty: true };
+  }
+  if (result.exitCode === 127) {
+    return { filesystemHealth: "unknown" };
+  }
+  if (result.exitCode !== 0 || NTFS_FAILURE_PATTERN.test(report)) {
+    return { filesystemHealth: "unhealthy" };
+  }
+  const deviceSizeText = NTFS_DEVICE_SIZE_PATTERN.exec(report)?.[1];
+  if (
+    !deviceSizeText ||
+    Number(deviceSizeText) !== options.partitionSizeBytes
+  ) {
+    return { filesystemHealth: "unhealthy" };
+  }
+  const minimumText = NTFS_MINIMUM_PATTERN.exec(report)?.[1];
+  const minimumBytes = minimumText ? Number(minimumText) : undefined;
+  return {
+    filesystemHealth: "healthy",
+    dirty: false,
+    ...(minimumBytes !== undefined &&
+    Number.isSafeInteger(minimumBytes) &&
+    minimumBytes > 0 &&
+    minimumBytes < options.partitionSizeBytes
+      ? { minimumBytes }
+      : {}),
   };
 }
 
@@ -417,12 +487,17 @@ function partition(
     mounted,
     role: partitionRole(device),
     filesystem: detectedFilesystem,
+    ...(detectedFilesystem === "ntfs" || detectedType === "bitlocker"
+      ? { osFamily: "windows" as const }
+      : {}),
     encryption:
       detectedType === "crypto_luks"
         ? "luks"
         : detectedType === "bitlocker"
           ? "bitlocker"
-          : detectedFilesystem === "unknown" || detectedFilesystem === "apfs"
+          : detectedFilesystem === "unknown" ||
+              detectedFilesystem === "apfs" ||
+              detectedFilesystem === "ntfs"
             ? "unknown"
             : "none",
   };
@@ -487,7 +562,11 @@ export async function probeLinuxPartitionFilesystems(options: {
   const devicePaths = partitionDevicePaths(options.serialized);
   return Promise.all(
     options.inventory.partitions.map(async (partition) => {
-      if (partition.filesystem !== "ext4" && partition.filesystem !== "btrfs") {
+      if (
+        partition.filesystem !== "ext4" &&
+        partition.filesystem !== "btrfs" &&
+        partition.filesystem !== "ntfs"
+      ) {
         return partition;
       }
       const partitionPath = devicePaths.get(partition.id);
@@ -507,6 +586,31 @@ export async function probeLinuxPartitionFilesystems(options: {
         return {
           ...partition,
           filesystemHealth: evidence.filesystemHealth,
+        };
+      }
+      if (partition.filesystem === "ntfs") {
+        const evidence = await probeLinuxNtfsFilesystem({
+          runner: options.runner,
+          devicePath: partitionPath,
+          partitionSizeBytes: partition.endBytes - partition.startBytes,
+        });
+        return {
+          ...partition,
+          filesystemHealth: evidence.filesystemHealth,
+          ...(evidence.hibernated !== undefined
+            ? { hibernated: evidence.hibernated }
+            : {}),
+          ...(evidence.dirty !== undefined ? { dirty: evidence.dirty } : {}),
+          ...(evidence.minimumBytes !== undefined
+            ? {
+                resize: {
+                  filesystemHealthy: true,
+                  mounted: false,
+                  minimumBytes: evidence.minimumBytes,
+                  dirty: false,
+                },
+              }
+            : {}),
         };
       }
       const evidence = await probeLinuxExt4Filesystem({

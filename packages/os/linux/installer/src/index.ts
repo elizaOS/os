@@ -18,6 +18,7 @@ export type {
   LinuxInstallInventoryProviderOptions,
   LinuxInventoryCommandResult,
   LinuxInventoryCommandRunner,
+  LinuxNtfsProbeEvidence,
 } from "./linux-inventory";
 export {
   isSgdiskRedundancyVerified,
@@ -27,6 +28,7 @@ export {
   parseLinuxRootBlockSource,
   probeLinuxBtrfsFilesystem,
   probeLinuxExt4Filesystem,
+  probeLinuxNtfsFilesystem,
   probeLinuxPartitionFilesystems,
 } from "./linux-inventory";
 export {

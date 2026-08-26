@@ -19,11 +19,15 @@ package never changes a partition table.
   Redundant GPT main/backup integrity is now report-parsed, required, and
   plan-bound; an exit-zero in-memory recovery is rejected. Root-device ancestry
   is now resolved through `findmnt` plus inverse `lsblk` dependencies and is
-  also plan-bound; unresolved or stacked boot targets fail closed. Add the
-  Windows-native filesystem health, encryption, hibernation, and shrink-minimum
-  probes, plus a separately reviewed btrfs minimum-size boundary, before
-  connecting it to the root service. Unmounted ext4 now uses fixed-argv,
-  read-only native health and minimum-size probes;
+  also plan-bound; unresolved or stacked boot targets fail closed. Add
+  Windows-native encryption probes plus a separately reviewed btrfs
+  minimum-size boundary before connecting it to the root service. Unmounted
+  NTFS now uses the native read-only forensic info path to bind health, detected
+  hibernation/dirty refusal state, exact device size, and a byte-exact shrink
+  minimum. That read-only path cannot prove hibernation/Fast Startup is off, so
+  the planner still requires independent explicit evidence. Unmounted ext4 now
+  uses fixed-argv, read-only native health
+  and minimum-size probes;
   only clean 4 KiB filesystems receive resize evidence, while dirty/unhealthy
   filesystems protect the target. Mount state already propagates through
   stacked descendants and must agree with any resize evidence. Unmounted btrfs
