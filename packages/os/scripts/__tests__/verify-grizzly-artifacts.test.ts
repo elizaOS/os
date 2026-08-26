@@ -74,8 +74,26 @@ function scaffoldAospRoot(options: {
       'on post-fs\n    write /dev/kmsg "elizaos-init: post-fs reached"\n',
     );
   }
-  writeFileSync(join(productDir, "system.img"), "system-image-bytes");
-  writeFileSync(join(productDir, "vendor.img"), "vendor-image-bytes");
+  const requiredImages = [
+    "boot.img",
+    "init_boot.img",
+    "dtbo.img",
+    "vendor_kernel_boot.img",
+    "pvmfw.img",
+    "vendor_boot.img",
+    "vbmeta.img",
+    "system.img",
+    "system_ext.img",
+    "product.img",
+    "vendor.img",
+    "vendor_dlkm.img",
+    "system_dlkm.img",
+    "system_other.img",
+    "super_empty.img",
+  ];
+  for (const image of requiredImages) {
+    writeFileSync(join(productDir, image), image === "vendor.img" ? "vendor-image-bytes" : `${image}-bytes`);
+  }
   return { root, productDir };
 }
 
@@ -188,8 +206,10 @@ describe("verify-grizzly-artifacts check", () => {
     try {
       expect(run(["attest", "--aosp-root", root]).status).toBe(0);
       const manifestPath = join(productDir, "grizzly-artifacts.json");
-      writeFileSync(join(artifactDir, "system.img"), "system-image-bytes");
-      writeFileSync(join(artifactDir, "vendor.img"), "vendor-image-bytes");
+      const manifest = JSON.parse(require("node:fs").readFileSync(manifestPath, "utf8"));
+      for (const image of Object.keys(manifest.images)) {
+        writeFileSync(join(artifactDir, image), require("node:fs").readFileSync(join(productDir, image)));
+      }
       const ok = run([
         "check",
         "--manifest",
