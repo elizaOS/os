@@ -24,6 +24,8 @@ import {
 } from "../../../../scripts/distro-android/bootstrap-aosp.mjs";
 import { assertBuildHost } from "../../../../scripts/distro-android/build-aosp.mjs";
 import { parseArgs as parseGrizzlyArgs } from "../../../../scripts/distro-android/prepare-grizzly.mjs";
+import { loadBrandConfig } from "../../../../scripts/distro-android/brand-config.mjs";
+import { loadCuttlefishE1Lock } from "../../../../scripts/distro-android/provision-cuttlefish-e1.mjs";
 import { withSisoCompatibility } from "../../../../scripts/distro-android/siso-env.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../../../..", import.meta.url));
@@ -311,6 +313,63 @@ describe("AOSP build contracts", () => {
         join(repositoryRoot, "packages/os/android/system-ui/package.json"),
       ),
     ).toBe(false);
+  });
+
+  test("the E1 Cuttlefish simulator is a separately locked product", () => {
+    const lockPath = join(
+      repositoryRoot,
+      "packages/os/android/cuttlefish-e1.lock.json",
+    );
+    const lock = loadCuttlefishE1Lock(lockPath);
+    expect(lock.source).toMatchObject({
+      url: "https://github.com/elizaOS/research.git",
+      ref: "refs/heads/main",
+      commit: "2296b67262e629286a2df7ff5087bf141a66c83f",
+      root: "chip/sw/aosp-device",
+    });
+    expect(lock.trees).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "device/eliza/eliza_ai_soc",
+          destination: "device/eliza/eliza_ai_soc",
+        }),
+        expect.objectContaining({
+          source: "device/eliza/cuttlefish_e1",
+          destination: "device/eliza/cuttlefish_e1",
+          requiredFiles: expect.arrayContaining(["eliza_e1_cuttlefish.mk"]),
+        }),
+      ]),
+    );
+    expect(lock.license.requiredFiles).toContain(
+      "device/eliza/eliza_ai_soc/hal/e1_npu_sim/Android.bp",
+    );
+
+    const e1Brand = loadBrandConfig(
+      join(repositoryRoot, "scripts/distro-android/brand.eliza-riscv64-e1.json"),
+    );
+    expect(e1Brand).toMatchObject({
+      productName: "eliza_cf_riscv64_e1_phone",
+      aospDeviceOverlay: "packages/os/android/cuttlefish-e1.lock.json",
+    });
+    const products = readFileSync(
+      join(
+        repositoryRoot,
+        "packages/os/android/vendor/eliza/AndroidProducts.mk",
+      ),
+      "utf8",
+    );
+    expect(products).toContain("eliza_cf_riscv64_e1_phone.mk");
+    for (const architecture of ["arm64", "x86_64", "riscv64"]) {
+      const canonical = readFileSync(
+        join(
+          repositoryRoot,
+          `packages/os/android/vendor/eliza/products/eliza_cf_${architecture}_phone.mk`,
+        ),
+        "utf8",
+      );
+      expect(canonical).not.toContain("cuttlefish_e1");
+      expect(canonical).not.toContain("ELIZA_ENABLE_E1_NPU_SIM");
+    }
   });
 
   test("the AOSP product does not ship placeholder confidential-compute claims", () => {
