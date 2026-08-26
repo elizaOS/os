@@ -96,7 +96,12 @@ class ArtifactVerificationTest(unittest.TestCase):
         MODULE.verify(self.manifest, "x86_64", self.key, pin or self.pin)
 
     def make_signed_tar(
-        self, unsafe: bool = False, desktop_machine: int = 62
+        self,
+        unsafe: bool = False,
+        desktop_machine: int = 62,
+        agent_machine: int | None = None,
+        doctor_machine: int | None = None,
+        invalid_role: str | None = None,
     ) -> tuple[object, str]:
         private_key = Ed25519PrivateKey.generate()
         self.archive = self.root / "desktop.tar.zst"
@@ -105,13 +110,21 @@ class ArtifactVerificationTest(unittest.TestCase):
                 member = tarfile.TarInfo("../escape")
                 member.size = 1
                 archive.addfile(member, io.BytesIO(b"x"))
+            native_machines = {
+                MODULE.ENTRYPOINTS["desktop"]: desktop_machine,
+                MODULE.ENTRYPOINTS["agent"]: agent_machine,
+                MODULE.ENTRYPOINTS["doctor"]: doctor_machine,
+            }
             for relative in MODULE.ENTRYPOINTS.values():
                 member = tarfile.TarInfo(relative)
-                if relative == MODULE.ENTRYPOINTS["desktop"]:
+                machine = native_machines[relative]
+                if invalid_role and relative == MODULE.ENTRYPOINTS[invalid_role]:
+                    content = b"not-a-script-or-native-elf\n"
+                elif machine is not None:
                     content = (
                         b"\x7fELF\x02\x01\x01"
                         + b"\x00" * 11
-                        + desktop_machine.to_bytes(2, "little")
+                        + machine.to_bytes(2, "little")
                     )
                 else:
                     content = b"#!/bin/sh\nexit 0\n"
@@ -308,6 +321,72 @@ class ArtifactVerificationTest(unittest.TestCase):
                 digest,
                 "x86_64",
             )
+
+    def test_signed_native_entrypoints_for_image_architecture_are_installed(self) -> None:
+        public_key, pin = self.make_signed_tar(agent_machine=62, doctor_machine=62)
+        archive, _, signature, digest = MODULE.verify(
+            self.manifest, "x86_64", self.key, pin
+        )
+        uncompressed_archive = self.root / "desktop.tar"
+        uncompressed_archive.write_bytes(archive.read_bytes())
+        destination = self.root / "installed"
+        MODULE.extract_verified_archive(
+            uncompressed_archive,
+            destination,
+            public_key,
+            signature,
+            digest,
+            "x86_64",
+        )
+        for relative in MODULE.ENTRYPOINTS.values():
+            self.assertTrue((destination / relative).is_file())
+
+    def test_signed_wrong_architecture_native_helper_is_rejected(self) -> None:
+        for role in ("agent", "doctor"):
+            with self.subTest(role=role):
+                machine_arguments = {f"{role}_machine": 183}
+                public_key, pin = self.make_signed_tar(**machine_arguments)
+                archive, _, signature, digest = MODULE.verify(
+                    self.manifest, "x86_64", self.key, pin
+                )
+                uncompressed_archive = self.root / f"desktop-{role}.tar"
+                uncompressed_archive.write_bytes(archive.read_bytes())
+                destination = self.root / f"installed-{role}"
+                with self.assertRaisesRegex(
+                    MODULE.VerificationError,
+                    rf"{role} architecture does not match",
+                ):
+                    MODULE.extract_verified_archive(
+                        uncompressed_archive,
+                        destination,
+                        public_key,
+                        signature,
+                        digest,
+                        "x86_64",
+                    )
+                self.assertFalse(destination.exists())
+
+    def test_signed_non_script_non_elf_helper_is_rejected(self) -> None:
+        public_key, pin = self.make_signed_tar(invalid_role="agent")
+        archive, _, signature, digest = MODULE.verify(
+            self.manifest, "x86_64", self.key, pin
+        )
+        uncompressed_archive = self.root / "desktop-invalid-helper.tar"
+        uncompressed_archive.write_bytes(archive.read_bytes())
+        destination = self.root / "installed-invalid-helper"
+        with self.assertRaisesRegex(
+            MODULE.VerificationError,
+            r"agent must be a script or a native ELF",
+        ):
+            MODULE.extract_verified_archive(
+                uncompressed_archive,
+                destination,
+                public_key,
+                signature,
+                digest,
+                "x86_64",
+            )
+        self.assertFalse(destination.exists())
 
 
 if __name__ == "__main__":
