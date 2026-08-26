@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { createHash, generateKeyPairSync } from "node:crypto";
+import { realpathSync } from "node:fs";
 import {
   chmod,
   link,
@@ -13,7 +14,6 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
