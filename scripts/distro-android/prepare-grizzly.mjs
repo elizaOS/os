@@ -206,6 +206,26 @@ function normalizeGeneratedUsbConfigfs(aospRoot) {
   }
 }
 
+// The extracted Pixel 11 vendor defaults route SurfaceFlinger through ANGLE.
+// Keep that stock EGL selection, but force the threaded Skia Vulkan renderer.
+// The GL renderer reaches SkiaGLRenderEngine::chooseEglConfig() and aborts on
+// grizzly before ADB or the launcher can become observable; the Vulkan path
+// avoids that EGLConfig contract while still using the stock PowerVR Vulkan
+// driver exposed by the vendor image.
+function normalizeGeneratedGraphicsProperties(aospRoot) {
+  const filePath = path.join(
+    aospRoot,
+    "vendor/google_devices/grizzly/sysprop/vendor.prop",
+  );
+  if (!fs.existsSync(filePath)) return;
+  const contents = fs.readFileSync(filePath, "utf8");
+  const normalized = contents.replace(
+    /^debug\.renderengine\.graphite=true$/m,
+    "debug.renderengine.backend=skiavkthreaded\ndebug.renderengine.graphite=true",
+  );
+  if (normalized !== contents) fs.writeFileSync(filePath, normalized);
+}
+
 // The extracted stock grizzly init waits synchronously for every proprietary
 // kernel module before proceeding through early-boot.  During bring-up a
 // missing optional module must not strand init (and therefore USB/adbd) on the
@@ -450,6 +470,7 @@ export async function prepareGrizzly({
       normalizeGeneratedVintf(aospRoot);
       normalizeGeneratedF2fsMountOptions(aospRoot);
       normalizeGeneratedUsbConfigfs(aospRoot);
+      normalizeGeneratedGraphicsProperties(aospRoot);
       normalizeGeneratedEarlyBootModuleWait(aospRoot);
       normalizeGeneratedDebugInit(aospRoot);
       normalizeGeneratedModuleWaits(aospRoot);
@@ -482,6 +503,7 @@ export async function prepareGrizzly({
     normalizeGeneratedVintf(aospRoot);
     normalizeGeneratedF2fsMountOptions(aospRoot);
     normalizeGeneratedUsbConfigfs(aospRoot);
+    normalizeGeneratedGraphicsProperties(aospRoot);
     normalizeGeneratedEarlyBootModuleWait(aospRoot);
     normalizeGeneratedDebugInit(aospRoot);
     normalizeGeneratedModuleWaits(aospRoot);
