@@ -158,6 +158,32 @@ class QualificationPreflightTest(unittest.TestCase):
             self.assertNotIn("inputs", document)
             self.assertIn("no_login_agent_computer_control_or_hardware_claim", document["claimBoundary"])
 
+    def test_qemu_evidence_publication_never_clobbers_an_existing_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            evidence = root / "qemu.json"
+            original = b"existing evidence must survive\n"
+            evidence.write_bytes(original)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(HERE / "mkosi-qemu-qualify.py"),
+                    "--architecture", "amd64",
+                    "--image", str(root / "missing.raw"),
+                    "--firmware-code", str(root / "missing-code.fd"),
+                    "--firmware-vars", str(root / "missing-vars.fd"),
+                    "--transcript", str(root / "transcript.log"),
+                    "--evidence", str(evidence),
+                    "--preflight-only",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(evidence.read_bytes(), original)
+            self.assertIn("evidence publication failed", result.stderr)
+
     def test_qemu_rejects_double_firmware_topology(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -214,6 +240,113 @@ class QualificationPreflightTest(unittest.TestCase):
             self.assertIn(
                 "Reached target Graphical Interface", document["requiredMarkers"]
             )
+
+    def test_qemu_recovery_mode_selects_hotkey_and_requires_boundary_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            emulator = fake_bin / "qemu-system-x86_64"
+            emulator.write_text(
+                "#!/usr/bin/env python3\n"
+                "import socket, sys, time\n"
+                "monitor = sys.argv[sys.argv.index('-monitor') + 1]\n"
+                "path = monitor.removeprefix('unix:').split(',', 1)[0]\n"
+                "with socket.socket(socket.AF_UNIX) as server:\n"
+                "    server.bind(path)\n"
+                "    server.listen(1)\n"
+                "    connection, _ = server.accept()\n"
+                "    with connection:\n"
+                "        command = connection.recv(1024)\n"
+                "if command != b'sendkey r\\n':\n"
+                "    raise SystemExit(2)\n"
+                "print('Linux version 6.12 fixture', flush=True)\n"
+                "print('elizaOS recovery boundary verified: Eliza agent and privileged "
+                "broker unavailable', flush=True)\n"
+                "time.sleep(10)\n"
+            )
+            emulator.chmod(0o755)
+            image = root / "disk.raw"
+            bios = root / "bios.fd"
+            image.write_bytes(b"immutable image fixture")
+            bios.write_bytes(b"firmware fixture")
+            evidence = root / "recovery.json"
+            environment = os.environ.copy()
+            environment["PATH"] = f"{fake_bin}{os.pathsep}{environment['PATH']}"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(HERE / "mkosi-qemu-qualify.py"),
+                    "--architecture", "amd64",
+                    "--boot-mode", "recovery",
+                    "--image", str(image),
+                    "--firmware-mode", "bios",
+                    "--bios", str(bios),
+                    "--transcript", str(root / "recovery.log"),
+                    "--evidence", str(evidence),
+                    "--timeout", "30",
+                    "--memory-mib", "1024",
+                    "--cpus", "1",
+                ],
+                env=environment,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            document = json.loads(evidence.read_text())
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(document["success"])
+            self.assertEqual(document["bootMode"], "recovery")
+            self.assertEqual(document["selectionMethod"], "grub-hotkey-r")
+            self.assertGreater(document["selectionAttempts"], 0)
+            self.assertIn("service_unavailability", document["claimBoundary"])
+
+    def test_qemu_recovery_mode_requires_an_accepted_hotkey(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            emulator = fake_bin / "qemu-system-x86_64"
+            emulator.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' 'Linux version 6.12 fixture' "
+                "'elizaOS recovery boundary verified: Eliza agent and privileged "
+                "broker unavailable'\n"
+                "sleep 10\n"
+            )
+            emulator.chmod(0o755)
+            image = root / "disk.raw"
+            bios = root / "bios.fd"
+            image.write_bytes(b"immutable image fixture")
+            bios.write_bytes(b"firmware fixture")
+            evidence = root / "recovery.json"
+            environment = os.environ.copy()
+            environment["PATH"] = f"{fake_bin}{os.pathsep}{environment['PATH']}"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(HERE / "mkosi-qemu-qualify.py"),
+                    "--architecture", "amd64",
+                    "--boot-mode", "recovery",
+                    "--image", str(image),
+                    "--firmware-mode", "bios",
+                    "--bios", str(bios),
+                    "--transcript", str(root / "recovery.log"),
+                    "--evidence", str(evidence),
+                    "--timeout", "30",
+                    "--memory-mib", "1024",
+                    "--cpus", "1",
+                ],
+                env=environment,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            document = json.loads(evidence.read_text())
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(document["success"])
+            self.assertEqual(document["selectionAttempts"], 0)
+            self.assertIn("hotkey was never accepted", " ".join(document["errors"]))
 
     def test_persistence_preflight_never_invents_write_or_reboot_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
