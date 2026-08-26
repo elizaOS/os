@@ -24,6 +24,10 @@ import {
 } from "../../../../scripts/aosp/deploy-pixel.mjs";
 import { parseSmokeArgs } from "../../../../scripts/aosp/smoke-cuttlefish.mjs";
 import {
+  parseAdbDevicesOutput,
+  selectBrandDeviceSerial,
+} from "../../../../scripts/distro-android/boot-validate.mjs";
+import {
   assertExtractedVendorTree,
   assertGeneratedVendorTree,
   assertPinnedAospCheckout,
@@ -79,6 +83,53 @@ async function createGitFixture(root: string, files: string[]) {
 }
 
 describe("AOSP build contracts", () => {
+  test("boot validation selects the branded Cuttlefish device, not an attached stock phone", () => {
+    expect(
+      parseAdbDevicesOutput(
+        "List of devices attached\n66010DLKX00E5X\tdevice product:grizzly\n0.0.0.0:6520\tdevice product:vsoc_x86_64\noffline-cvd\toffline\n",
+      ),
+    ).toEqual([
+      { serial: "66010DLKX00E5X", state: "device" },
+      { serial: "0.0.0.0:6520", state: "device" },
+      { serial: "offline-cvd", state: "offline" },
+    ]);
+
+    expect(
+      selectBrandDeviceSerial(
+        [
+          {
+            serial: "66010DLKX00E5X",
+            state: "device",
+            product: null,
+          },
+          {
+            serial: "0.0.0.0:6520",
+            state: "device",
+            product: "eliza_cf_x86_64_phone",
+          },
+        ],
+        "eliza_cf_x86_64_phone",
+      ),
+    ).toBe("0.0.0.0:6520");
+    expect(() =>
+      selectBrandDeviceSerial(
+        [
+          {
+            serial: "0.0.0.0:6520",
+            state: "device",
+            product: "eliza_cf_x86_64_phone",
+          },
+          {
+            serial: "0.0.0.0:6521",
+            state: "device",
+            product: "eliza_cf_x86_64_phone",
+          },
+        ],
+        "eliza_cf_x86_64_phone",
+      ),
+    ).toThrow("Multiple booted devices");
+  });
+
   test("Android 17 Siso builds tolerate generated missing targets", () => {
     expect(withSisoCompatibility({})).toMatchObject({
       SISO_EXPERIMENTS: "ignore-missing-targets",
