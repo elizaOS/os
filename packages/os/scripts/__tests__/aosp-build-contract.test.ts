@@ -24,6 +24,7 @@ import {
   assertClosedAospSourceRoot,
   assertSafeFlashMetadata,
   collectGrizzlyArtifacts,
+  hashDirectoryTree,
   parseArgs as parseBundleArgs,
   parseFastbootInfoArtifacts,
   REQUIRED_APK_PROVENANCE,
@@ -1614,6 +1615,42 @@ describe("AOSP build contracts", () => {
           ],
         }),
       ).toThrow("invalid root entry");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the grizzly handoff rejects vendor symlinks into repo metadata or output", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eliza-grizzly-source-links-"));
+    try {
+      const vendor = join(root, "vendor/eliza");
+      const repoMetadata = join(root, ".repo/project-objects");
+      const out = join(root, "out/target/product/grizzly");
+      await mkdir(vendor, { recursive: true });
+      await mkdir(repoMetadata, { recursive: true });
+      await mkdir(out, { recursive: true });
+      await writeFile(join(repoMetadata, "metadata.bp"), "metadata\n");
+      await writeFile(join(out, "generated.bp"), "generated\n");
+
+      await symlink(
+        join(repoMetadata, "metadata.bp"),
+        join(vendor, "metadata.bp"),
+      );
+      expect(() =>
+        hashDirectoryTree(vendor, root, [
+          join(root, ".repo"),
+          join(root, "out"),
+        ]),
+      ).toThrow("targets excluded AOSP metadata or output");
+
+      await rm(join(vendor, "metadata.bp"));
+      await symlink(join(out, "generated.bp"), join(vendor, "generated.bp"));
+      expect(() =>
+        hashDirectoryTree(vendor, root, [
+          join(root, ".repo"),
+          join(root, "out"),
+        ]),
+      ).toThrow("targets excluded AOSP metadata or output");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

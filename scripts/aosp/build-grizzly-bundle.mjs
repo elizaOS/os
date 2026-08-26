@@ -918,8 +918,17 @@ function artifactSourceSnapshot(productOut, filenames) {
   );
 }
 
-function hashDirectoryTree(root, allowedRoot = root) {
+export function hashDirectoryTree(root, allowedRoot = root, deniedRoots = []) {
   const canonicalAllowedRoot = fs.realpathSync(allowedRoot);
+  const canonicalDeniedRoots = deniedRoots.map((deniedRoot) => {
+    const existing = existingFilesystemPath(deniedRoot);
+    return fs.existsSync(deniedRoot)
+      ? fs.realpathSync(deniedRoot)
+      : path.join(
+          fs.realpathSync(existing),
+          path.relative(existing, deniedRoot),
+        );
+  });
   const hash = createHash("sha256");
   const visit = (directory, prefix = "") => {
     for (const entry of fs
@@ -945,6 +954,17 @@ function hashDirectoryTree(root, allowedRoot = root) {
           path.isAbsolute(targetRelative)
         ) {
           fail(`source-tree symlink escapes the AOSP checkout: ${absolute}`);
+        }
+        if (
+          canonicalDeniedRoots.some(
+            (deniedRoot) =>
+              target === deniedRoot ||
+              target.startsWith(`${deniedRoot}${path.sep}`),
+          )
+        ) {
+          fail(
+            `source-tree symlink targets excluded AOSP metadata or output: ${absolute}`,
+          );
         }
         hash.update(
           `l ${relative}\0${fs.readlinkSync(absolute)}\0${targetRelative}\0`,
@@ -1758,10 +1778,12 @@ function sourceSnapshot({ aospRoot, outRoot, elizaRoot, lock, lockPath }) {
     generatedVendorSha256: hashDirectoryTree(
       path.join(aospRoot, "vendor/google_devices/grizzly"),
       aospRoot,
+      [path.join(aospRoot, ".repo"), outRoot],
     ),
     elizaVendorSha256: hashDirectoryTree(
       path.join(aospRoot, "vendor/eliza"),
       aospRoot,
+      [path.join(aospRoot, ".repo"), outRoot],
     ),
   };
 }
