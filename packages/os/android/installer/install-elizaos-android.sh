@@ -344,8 +344,16 @@ preflight_adb() {
 }
 
 file_mtime() {
-  # BSD stat (macOS) first, GNU stat fallback.
-  stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null
+  # GNU stat accepts BSD's -f flag as a filesystem-format query and exits 0,
+  # so checking it first yields labels rather than an epoch on Linux. Prefer
+  # the numeric GNU form and use BSD stat only when that probe is unavailable.
+  local mtime=""
+  mtime="$(stat -c %Y "$1" 2>/dev/null || true)"
+  if [[ "$mtime" =~ ^[0-9]+$ ]]; then
+    echo "$mtime"
+    return 0
+  fi
+  stat -f %m "$1" 2>/dev/null
 }
 
 # Images discovered by filename accumulate across builds in a shared out/
