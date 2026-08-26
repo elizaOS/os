@@ -148,6 +148,25 @@ against a fresh GUI artifact such as
 `out/elizaos-linux-riscv64-default-20260524T030430Z.iso` matrix entry for GUI
 kiosk validation.
 
+Each candidate row in `evidence/multiarch_boot_matrix.json` must point to an
+`eliza.os.linux.multiarch_boot_evidence.v1` JSON record emitted by the boot
+harness. The contract binds the architecture, clean OS and application-source
+commits, runtime version, ISO bytes, QEMU identity/version, firmware bytes and
+version, and transcript bytes. Runtime, QEMU, and firmware fields must also
+match the exact adjacent `<evidence-name>.tool-inputs.json` retained-input lock;
+the lock uses schema `eliza.os.linux.runtime_tool_inputs.v1`, its byte digest
+must be recorded by the evidence, and that digest must be authorized by the
+tracked, clean-at-HEAD `config/multiarch-runtime-tool-inputs.lock.json` policy.
+The checked-in policy starts with empty per-architecture authorization sets, so
+release remains blocked until reviewed builder profiles are committed. The OS
+repository must also be clean at its recorded `HEAD`: staged, unstaged, and
+non-ignored untracked source/configuration changes invalidate the evidence.
+The transcript itself must contain the Linux,
+first-boot, health, agent, and terminal-TUI readiness markers (plus GNU GRUB on
+riscv64), with empty missing/forbidden marker lists. The contract checker only
+verifies retained bytes and metadata; passing it is not a claim that the check
+launched QEMU, booted physical hardware, or qualified silicon.
+
 `make build` runs `lb config` → `lb build` → verify → checksum → manifest
 inside the builder container (`Dockerfile`). A clean build pulls multi-GB
 from Debian mirrors and takes 30+ minutes; do not run it from an
