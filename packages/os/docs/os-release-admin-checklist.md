@@ -63,9 +63,26 @@ comma-separated list of revoked SPKI digests. A matching signing key is denied
 before release metadata or image inputs are inspected and before any release
 signature or manifest is written. Key rotation must update the private key,
 public SPKI, and independently reviewed SPKI digest as one
-protected-environment change; the signer rejects a stale private key before it
-writes output. Removing a digest requires the same protected-environment review
-as changing the active public key or its pin.
+protected-environment change. Add the old digest to the revocation list in that
+same reviewed change when compromise is possible. The signer rejects a stale
+private key before it writes output, and production USB Installer packaging now
+rejects a public key that does not match the independent pin or appears in the
+revocation list. Removing a digest requires the same protected-environment
+review as changing the active public key or its pin.
+
+The current manifest format has one signing trust root, not an old-key/new-key
+transition signature. A planned rotation therefore requires distributing and
+verifying a platform-signed USB Installer update containing the new compiled
+policy before publishing manifests signed only by the new key. If the private
+key is lost, do not claim continuity or reconstruct it: stop image publication,
+retain the last known-good signed release, replace the protected private key,
+public SPKI, and independent pin together, rebuild the signed installers, and
+resume only after clean-client verification. If loss might be compromise, also
+retain the old fingerprint in the revocation list. Already shipped installers
+that contain only the old key cannot learn a revocation from the image manifest;
+their recovery is an authenticated application update or manual installation
+of a newly verified installer. Repository tooling cannot perform that human,
+platform-signing, and distribution ceremony.
 
 The desktop workflows import certificates into temporary runner storage,
 verify Apple notarization or Windows Authenticode after packaging, and remove

@@ -8,9 +8,19 @@ import {
 
 export const RELEASE_PUBLIC_KEY_ENV =
   "ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64";
+export const RELEASE_PUBLIC_KEY_FINGERPRINT_ENV =
+  "ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256";
+export const RELEASE_REVOKED_KEY_FINGERPRINTS_ENV =
+  "ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S";
 export const RELEASE_PUBLIC_KEY_BUILD_DEFINE =
   "__ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64__";
 declare const __ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64__:
+  | string
+  | undefined;
+declare const __ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256__:
+  | string
+  | undefined;
+declare const __ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S__:
   | string
   | undefined;
 const ED25519_SIGNATURE_BYTES = 64;
@@ -31,12 +41,49 @@ function decodeStrictBase64(value: string, label: string): Buffer {
   return decoded;
 }
 
+function canonicalFingerprint(
+  value: string | undefined,
+  label: string,
+): string {
+  if (!value || !/^[a-f0-9]{64}$/.test(value) || value === "0".repeat(64)) {
+    throw new Error(`${label} must be a nonzero lowercase SHA-256 digest.`);
+  }
+  return value;
+}
+
+function revokedFingerprints(value: string | undefined): Set<string> {
+  if (value === undefined || value === "") return new Set();
+  const fingerprints = value
+    .split(",")
+    .map((fingerprint) =>
+      canonicalFingerprint(fingerprint, RELEASE_REVOKED_KEY_FINGERPRINTS_ENV),
+    );
+  if (
+    new Set(fingerprints).size !== fingerprints.length ||
+    [...fingerprints].sort().join(",") !== value
+  ) {
+    throw new Error(
+      `${RELEASE_REVOKED_KEY_FINGERPRINTS_ENV} must be a sorted, unique comma-separated digest list.`,
+    );
+  }
+  return new Set(fingerprints);
+}
+
 export function loadPinnedEd25519PublicKey(
   env: NodeJS.ProcessEnv = process.env,
 ): KeyObject {
   const compiledKey =
     typeof __ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64__ === "string"
       ? __ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64__
+      : undefined;
+  const compiledFingerprint =
+    typeof __ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256__ === "string"
+      ? __ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256__
+      : undefined;
+  const compiledRevocations =
+    typeof __ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S__ ===
+    "string"
+      ? __ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S__
       : undefined;
   const encoded = compiledKey ?? env[RELEASE_PUBLIC_KEY_ENV];
   if (!encoded) {
@@ -56,6 +103,25 @@ export function loadPinnedEd25519PublicKey(
   }
   if (key.asymmetricKeyType !== "ed25519") {
     throw new Error("Pinned release key must be an Ed25519 SPKI public key.");
+  }
+  const fingerprint = publicKeyFingerprint(key);
+  const expectedFingerprint = canonicalFingerprint(
+    compiledKey ? compiledFingerprint : env[RELEASE_PUBLIC_KEY_FINGERPRINT_ENV],
+    RELEASE_PUBLIC_KEY_FINGERPRINT_ENV,
+  );
+  if (fingerprint !== expectedFingerprint) {
+    throw new Error(
+      "Pinned release key does not match the independently reviewed SPKI SHA-256.",
+    );
+  }
+  if (
+    revokedFingerprints(
+      compiledKey
+        ? compiledRevocations
+        : env[RELEASE_REVOKED_KEY_FINGERPRINTS_ENV],
+    ).has(fingerprint)
+  ) {
+    throw new Error("Pinned release key is revoked.");
   }
   return key;
 }

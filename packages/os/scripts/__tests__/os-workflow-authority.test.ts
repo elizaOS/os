@@ -910,6 +910,16 @@ describe("OS release workflow authority", () => {
     expect(usbSource).toContain(
       "secrets.ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64",
     );
+    expect(usbSource).toContain(
+      "secrets.ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256",
+    );
+    expect(usbSource).toContain(
+      "secrets.ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S",
+    );
+    expect(usbSource).toContain(
+      "release public key does not match independently reviewed fingerprint",
+    );
+    expect(usbSource).toContain("release public key is revoked");
     expect(usbSource).toContain("ephemeral validation-only release trust root");
   });
 

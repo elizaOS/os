@@ -46,6 +46,10 @@ mkosi artifact.
 Production packaging/runtime must provide:
 
 - `ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64` — public Ed25519 SPKI key;
+- `ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256` — independently reviewed
+  lowercase SHA-256 of that canonical DER SPKI;
+- `ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S` — optional sorted,
+  unique comma-separated list of revoked SPKI digests;
 - `ELIZAOS_RELEASE_SEQUENCE_STATE_PATH` — absolute writable state-file path for
   source/server execution or a managed packaged-app override; standalone
   packaged apps provision a per-user Application Support/state path;
@@ -55,9 +59,10 @@ Production packaging/runtime must provide:
   signature URL; otherwise `<manifest URL>.sig` is used.
 
 `build:app` and every `package:*` command run `verify:release-key`. The build
-embeds the public key in the Bun bundle, and that compiled pin wins over a
-runtime environment override. No private key or development trust root belongs
-in this repository.
+embeds the public key, independent fingerprint, and revocation list in the Bun
+bundle, and that compiled policy wins over a runtime environment override. A
+stale, substituted, or revoked key fails packaging. No private key or
+development trust root belongs in this repository.
 
 The first missing sequence-state file is initialized from a verified manifest.
 Deleting or replacing that user-writable file can erase rollback history; the
