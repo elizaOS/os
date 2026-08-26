@@ -114,8 +114,10 @@ Before trusting any metadata, the release path verifies the adjacent fixed-name
 SHA-256, key type and pin, and a separate raw or canonical-base64 Ed25519
 signature over the exact archive bytes.
 It also checks the native GTK shell's authenticated ELF machine ID against the
-target architecture, preventing cross-architecture replay through rewritten
-external metadata.
+target architecture. Agent and doctor entrypoints must be either shebang
+scripts or little-endian 64-bit ELF binaries for that same architecture. This
+prevents cross-architecture replay and rejects unrecognized executable formats
+before any payload is installed.
 Symlinked manifest, archive, signature, and public-key inputs are rejected. The
 portable negative test uses a public RFC 8032 test vector and commits no
 private material:

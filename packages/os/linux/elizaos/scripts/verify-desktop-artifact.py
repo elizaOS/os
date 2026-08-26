@@ -62,6 +62,46 @@ class VerificationError(ValueError):
     """A fail-closed artifact contract violation."""
 
 
+def _verify_entrypoint_architecture(
+    entrypoint: Path,
+    role: str,
+    expected_architecture: str,
+    *,
+    require_elf: bool = False,
+) -> None:
+    """Reject native entrypoints that cannot execute on the target image."""
+    with entrypoint.open("rb") as stream:
+        header = stream.read(20)
+    if header[:4] != b"\x7fELF":
+        if require_elf:
+            raise VerificationError(
+                "desktop artifact native shell must be a little-endian 64-bit ELF"
+            )
+        if not header.startswith(b"#!") or b"\n" not in header:
+            raise VerificationError(
+                f"desktop artifact {role} must be a script or a native ELF"
+            )
+        return
+    if len(header) < 20 or header[4] != 2 or header[5] != 1:
+        if require_elf:
+            raise VerificationError(
+                "desktop artifact native shell must be a little-endian 64-bit ELF"
+            )
+        raise VerificationError(
+            f"desktop artifact {role} must be a little-endian 64-bit ELF"
+        )
+    expected_machine = ELF_MACHINE.get(expected_architecture)
+    actual_machine = int.from_bytes(header[18:20], "little")
+    if expected_machine is None or actual_machine != expected_machine:
+        if require_elf:
+            raise VerificationError(
+                "desktop artifact native shell architecture does not match image"
+            )
+        raise VerificationError(
+            f"desktop artifact {role} architecture does not match image"
+        )
+
+
 def _plain_filename(value: object, field: str) -> str:
     if not isinstance(value, str) or not value or PurePath(value).name != value:
         raise VerificationError(f"desktop artifact {field} name is invalid")
@@ -298,22 +338,12 @@ def extract_verified_archive(
                 raise VerificationError(
                     f"desktop artifact entrypoint is missing, linked, or not executable: {relative}"
                 )
-        with (temporary / ENTRYPOINTS["desktop"]).open("rb") as desktop_stream:
-            desktop_header = desktop_stream.read(20)
-        if (
-            len(desktop_header) < 20
-            or desktop_header[:4] != b"\x7fELF"
-            or desktop_header[4] != 2
-            or desktop_header[5] != 1
-        ):
-            raise VerificationError(
-                "desktop artifact native shell must be a little-endian 64-bit ELF"
-            )
-        expected_machine = ELF_MACHINE.get(expected_architecture)
-        actual_machine = int.from_bytes(desktop_header[18:20], "little")
-        if expected_machine is None or actual_machine != expected_machine:
-            raise VerificationError(
-                "desktop artifact native shell architecture does not match image"
+        for role, relative in ENTRYPOINTS.items():
+            _verify_entrypoint_architecture(
+                temporary / relative,
+                role,
+                expected_architecture,
+                require_elf=role == "desktop",
             )
 
         # Detect any source mutation between initial authentication and install.
