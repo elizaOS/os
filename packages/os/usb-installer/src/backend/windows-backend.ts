@@ -23,7 +23,6 @@ import type {
   InstallerStep,
   InstallerStepId,
   RemovableDrive,
-  RestoreCapability,
   UsbInstallerBackend,
   WritePlan,
   WriteRequest,
@@ -413,16 +412,6 @@ async function spawnPowerShell(
 }
 
 export class WindowsUsbInstallerBackend implements UsbInstallerBackend {
-  async getRestoreCapability(): Promise<RestoreCapability> {
-    return {
-      supported: false,
-      platform: "win32",
-      filesystem: null,
-      reason:
-        "Restore USB is unavailable on Windows until a signed elevated restore helper is implemented and qualified.",
-    };
-  }
-
   constructor() {
     if (detectWsl()) {
       throw new WslDetectedError();
