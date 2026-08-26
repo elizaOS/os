@@ -1,10 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   LinuxInventoryCommandResult,
   LinuxInventoryCommandRunner,
 } from "./linux-inventory";
 import {
+  assertLinuxInventorySnapshotUnchanged,
   isSgdiskRedundancyVerified,
+  LinuxInstallInventoryProvider,
   parseLinuxBootAncestorPaths,
   parseLinuxLsblkInventory,
   parseLinuxRootBlockSource,
@@ -13,6 +15,15 @@ import {
   probeLinuxNtfsFilesystem,
   probeLinuxPartitionFilesystems,
 } from "./linux-inventory";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...original,
+    lstat: vi.fn(async () => ({ isSymbolicLink: () => true })),
+    realpath: vi.fn(async () => "/dev/vda"),
+  };
+});
 
 const GIB = 1024 ** 3;
 const MIB = 1024 ** 2;
@@ -111,6 +122,209 @@ function parse(
 }
 
 describe("Linux read-only disk inventory parser", () => {
+  it("captures two provider snapshots around filesystem probes and rejects runner drift", async () => {
+    const calls: Array<[string, readonly string[]]> = [];
+    let diskSnapshot = 0;
+    const runner: LinuxInventoryCommandRunner = {
+      async run(command, args) {
+        calls.push([command, args]);
+        if (command === "/usr/bin/findmnt") {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              filesystems: [{ source: "overlay", target: "/" }],
+            }),
+            stderr: "",
+          };
+        }
+        if (command === "/usr/bin/lsblk" && args.includes("--bytes")) {
+          diskSnapshot += 1;
+          return {
+            exitCode: 0,
+            stdout: serializedInventory(
+              diskSnapshot === 2 ? { size: 129 * GIB } : {},
+            ),
+            stderr: "",
+          };
+        }
+        if (command === "/usr/bin/udevadm") {
+          return {
+            exitCode: 0,
+            stdout: "/devices/pci0000:00/0000:00:04.0/virtio2/block/vda\n",
+            stderr: "",
+          };
+        }
+        if (command === "/usr/sbin/sgdisk") {
+          return { exitCode: 0, stdout: "No problems found.\n", stderr: "" };
+        }
+        if (command === "/usr/sbin/dumpe2fs") {
+          return {
+            exitCode: 0,
+            stdout: "Filesystem state: clean\nBlock size: 4096\n",
+            stderr: "",
+          };
+        }
+        if (command === "/usr/sbin/resize2fs") {
+          return {
+            exitCode: 0,
+            stdout: "Estimated minimum size of the filesystem: 1000000\n",
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+    };
+    const provider = new LinuxInstallInventoryProvider({
+      runner,
+      firmware: "uefi",
+      resolveDeviceIdentity: async () => "252:0:17",
+    });
+
+    await expect(provider.inspect("virtio-QEMU-DISK-0001")).rejects.toThrow(
+      /changed during filesystem probing/,
+    );
+
+    const diskProbeIndexes = calls
+      .map(([command, args], index) =>
+        command === "/usr/bin/lsblk" && args.includes("--bytes") ? index : -1,
+      )
+      .filter((index) => index !== -1);
+    const filesystemProbeIndexes = calls
+      .map(([command], index) =>
+        command === "/usr/sbin/dumpe2fs" ||
+        command === "/usr/sbin/e2fsck" ||
+        command === "/usr/sbin/resize2fs"
+          ? index
+          : -1,
+      )
+      .filter((index) => index !== -1);
+    expect(diskProbeIndexes).toHaveLength(2);
+    expect(filesystemProbeIndexes.length).toBeGreaterThan(0);
+    expect(Math.max(...filesystemProbeIndexes)).toBeLessThan(
+      diskProbeIndexes[1] as number,
+    );
+    expect(Math.min(...filesystemProbeIndexes)).toBeGreaterThan(
+      diskProbeIndexes[0] as number,
+    );
+    expect(
+      calls.filter(([command]) => command === "/usr/bin/findmnt"),
+    ).toHaveLength(2);
+    expect(
+      calls.filter(([command]) => command === "/usr/bin/udevadm"),
+    ).toHaveLength(2);
+    expect(
+      calls.filter(([command]) => command === "/usr/sbin/sfdisk"),
+    ).toHaveLength(2);
+    expect(
+      calls.filter(([command]) => command === "/usr/sbin/sgdisk"),
+    ).toHaveLength(2);
+  });
+
+  it("rejects same-path block-device replacement before returning inventory", async () => {
+    let identityChecks = 0;
+    const runner: LinuxInventoryCommandRunner = {
+      async run(command, args) {
+        if (command === "/usr/bin/findmnt") {
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              filesystems: [{ source: "overlay", target: "/" }],
+            }),
+            stderr: "",
+          };
+        }
+        if (command === "/usr/bin/lsblk" && args.includes("--bytes")) {
+          return { exitCode: 0, stdout: serializedInventory(), stderr: "" };
+        }
+        if (command === "/usr/bin/udevadm") {
+          return {
+            exitCode: 0,
+            stdout: "/devices/pci0000:00/0000:00:04.0/virtio2/block/vda\n",
+            stderr: "",
+          };
+        }
+        if (command === "/usr/sbin/sgdisk") {
+          return { exitCode: 0, stdout: "No problems found.\n", stderr: "" };
+        }
+        if (command === "/usr/sbin/dumpe2fs") {
+          return {
+            exitCode: 0,
+            stdout: "Filesystem state: clean\nBlock size: 4096\n",
+            stderr: "",
+          };
+        }
+        if (command === "/usr/sbin/resize2fs") {
+          return {
+            exitCode: 0,
+            stdout: "Estimated minimum size of the filesystem: 1000000\n",
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+    };
+    const provider = new LinuxInstallInventoryProvider({
+      runner,
+      firmware: "uefi",
+      resolveDeviceIdentity: async () => {
+        identityChecks += 1;
+        return identityChecks < 4 ? "252:0:17" : "252:0:18";
+      },
+    });
+
+    await expect(provider.inspect("virtio-QEMU-DISK-0001")).rejects.toThrow(
+      /stable ID changed during probing/,
+    );
+  });
+
+  it("rejects identity, geometry, mount, and GPT drift across filesystem probes", () => {
+    const before = parse();
+    expect(() =>
+      assertLinuxInventorySnapshotUnchanged(before, structuredClone(before)),
+    ).not.toThrow();
+
+    const drifted = [
+      { ...structuredClone(before), sizeBytes: before.sizeBytes + MIB },
+      {
+        ...structuredClone(before),
+        hardwareIdentity: {
+          ...before.hardwareIdentity,
+          serial: "QEMU-DISK-REPLACED",
+        },
+      },
+      {
+        ...structuredClone(before),
+        hardwareIdentity: {
+          ...before.hardwareIdentity,
+          gptDiskGuid: "706d33b7-afb8-411e-9154-253971d8c5eb",
+        },
+      },
+      {
+        ...structuredClone(before),
+        partitions: before.partitions.map((partition, index) =>
+          index === 1
+            ? { ...partition, startBytes: partition.startBytes + MIB }
+            : partition,
+        ),
+      },
+      {
+        ...structuredClone(before),
+        partitions: before.partitions.map((partition, index) =>
+          index === 1 ? { ...partition, mounted: true } : partition,
+        ),
+      },
+      { ...structuredClone(before), gptRedundancyVerified: false },
+      { ...structuredClone(before), bootAncestryResolved: false },
+      { ...structuredClone(before), currentBootSource: true },
+    ];
+
+    for (const after of drifted) {
+      expect(() =>
+        assertLinuxInventorySnapshotUnchanged(before, after),
+      ).toThrow(/changed during filesystem probing/);
+    }
+  });
+
   it("classifies a clean unmounted btrfs filesystem without inventing resize evidence", async () => {
     const calls: Array<[string, readonly string[]]> = [];
     const evidence = await probeLinuxBtrfsFilesystem({

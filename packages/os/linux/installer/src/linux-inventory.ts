@@ -1,9 +1,12 @@
 import { execFile } from "node:child_process";
-import { lstat, realpath, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { lstat, readFile, realpath, stat } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import type { InstallInventoryProvider } from "./executor";
-import { validateDiskInventory } from "./planner";
+import {
+  createDiskInventoryFingerprint,
+  validateDiskInventory,
+} from "./planner";
 import type { DiskInventory, Filesystem, PartitionInventory } from "./types";
 
 const execFileAsync = promisify(execFile);
@@ -789,38 +792,75 @@ export interface LinuxInstallInventoryProviderOptions {
   runner?: LinuxInventoryCommandRunner;
   byIdDirectory?: string;
   firmware?: DiskInventory["firmware"];
+  resolveDeviceIdentity?: (devicePath: string) => Promise<string>;
+}
+
+interface LinuxDiskSnapshot {
+  inventory: DiskInventory;
+  serialized: string;
+}
+
+async function resolveLinuxDeviceIdentity(devicePath: string): Promise<string> {
+  const status = await stat(devicePath, { bigint: true });
+  if (!status.isBlockDevice()) {
+    throw new Error(
+      "Linux inventory stable ID does not resolve to a block device.",
+    );
+  }
+  const diskSequence = (
+    await readFile(
+      join("/sys/class/block", basename(devicePath), "diskseq"),
+      "utf8",
+    )
+  ).trim();
+  if (!/^\d+$/.test(diskSequence)) {
+    throw new Error("Linux inventory block-device sequence is invalid.");
+  }
+  return `${status.rdev.toString()}:${diskSequence}`;
+}
+
+export function assertLinuxInventorySnapshotUnchanged(
+  before: DiskInventory,
+  after: DiskInventory,
+): void {
+  if (
+    createDiskInventoryFingerprint(before) !==
+    createDiskInventoryFingerprint(after)
+  ) {
+    throw new Error(
+      "Linux inventory disk identity, geometry, or safety state changed during filesystem probing.",
+    );
+  }
 }
 
 export class LinuxInstallInventoryProvider implements InstallInventoryProvider {
   private readonly runner: LinuxInventoryCommandRunner;
   private readonly byIdDirectory: string;
   private readonly firmware: DiskInventory["firmware"];
+  private readonly resolveDeviceIdentity: (
+    devicePath: string,
+  ) => Promise<string>;
 
   constructor(options: LinuxInstallInventoryProviderOptions = {}) {
     this.runner = options.runner ?? new ExecFileCommandRunner();
     this.byIdDirectory = options.byIdDirectory ?? "/dev/disk/by-id";
     this.firmware = options.firmware ?? "unknown";
+    this.resolveDeviceIdentity =
+      options.resolveDeviceIdentity ?? resolveLinuxDeviceIdentity;
   }
 
-  async inspect(stableId: string): Promise<DiskInventory> {
-    if (!STABLE_ID_PATTERN.test(stableId) || /-part\d+$/i.test(stableId)) {
-      throw new Error(
-        "Linux inventory stable ID is not a whole-disk identifier.",
-      );
-    }
-    const stablePath = join(this.byIdDirectory, stableId);
-    const link = await lstat(stablePath);
-    if (!link.isSymbolicLink()) {
-      throw new Error("Linux inventory stable ID is not a device symlink.");
-    }
-    const devicePath = await realpath(stablePath);
+  private async inspectDiskSnapshot(options: {
+    stableId: string;
+    stablePath: string;
+    devicePath: string;
+    deviceIdentity: string;
+  }): Promise<LinuxDiskSnapshot> {
     if (
-      !devicePath.startsWith("/dev/") ||
-      !(await stat(devicePath)).isBlockDevice()
+      (await realpath(options.stablePath)) !== options.devicePath ||
+      (await this.resolveDeviceIdentity(options.devicePath)) !==
+        options.deviceIdentity
     ) {
-      throw new Error(
-        "Linux inventory stable ID does not resolve to a block device.",
-      );
+      throw new Error("Linux inventory stable ID changed during probing.");
     }
     const rootMount = await this.runner.run(FINDMNT, [
       "--json",
@@ -878,26 +918,30 @@ export class LinuxInstallInventoryProvider implements InstallInventoryProvider {
           "--paths",
           "--output",
           "PATH,KNAME,PKNAME,TYPE,SIZE,LOG-SEC,PTTYPE,PTUUID,FSTYPE,MOUNTPOINTS,PARTTYPE,PARTUUID,PARTLABEL,START,SERIAL,WWN,RO,RM",
-          devicePath,
+          options.devicePath,
         ]),
         this.runner.run(UDEVADM, [
           "info",
           "--query=path",
-          `--name=${devicePath}`,
+          `--name=${options.devicePath}`,
         ]),
-        this.runner.run(SFDISK, ["--verify", devicePath]),
-        this.runner.run(SGDISK, ["--verify", devicePath]),
+        this.runner.run(SFDISK, ["--verify", options.devicePath]),
+        this.runner.run(SGDISK, ["--verify", options.devicePath]),
       ]);
     if (lsblk.exitCode !== 0 || firmwarePath.exitCode !== 0) {
       throw new Error("Linux inventory read-only probes failed.");
     }
-    if ((await realpath(stablePath)) !== devicePath) {
+    if (
+      (await realpath(options.stablePath)) !== options.devicePath ||
+      (await this.resolveDeviceIdentity(options.devicePath)) !==
+        options.deviceIdentity
+    ) {
       throw new Error("Linux inventory stable ID changed during probing.");
     }
     const inventory = parseLinuxLsblkInventory({
-      stableId,
-      stablePath,
-      devicePath,
+      stableId: options.stableId,
+      stablePath: options.stablePath,
+      devicePath: options.devicePath,
       firmwarePath: requiredString("firmware path", firmwarePath.stdout),
       firmware: this.firmware,
       serialized: lsblk.stdout,
@@ -906,11 +950,48 @@ export class LinuxInstallInventoryProvider implements InstallInventoryProvider {
       bootAncestorPaths,
       bootAncestryResolved,
     });
-    inventory.partitions = await probeLinuxPartitionFilesystems({
-      inventory,
-      serialized: lsblk.stdout,
-      runner: this.runner,
+    return { inventory, serialized: lsblk.stdout };
+  }
+
+  async inspect(stableId: string): Promise<DiskInventory> {
+    if (!STABLE_ID_PATTERN.test(stableId) || /-part\d+$/i.test(stableId)) {
+      throw new Error(
+        "Linux inventory stable ID is not a whole-disk identifier.",
+      );
+    }
+    const stablePath = join(this.byIdDirectory, stableId);
+    const link = await lstat(stablePath);
+    if (!link.isSymbolicLink()) {
+      throw new Error("Linux inventory stable ID is not a device symlink.");
+    }
+    const devicePath = await realpath(stablePath);
+    if (!devicePath.startsWith("/dev/")) {
+      throw new Error(
+        "Linux inventory stable ID does not resolve to a block device.",
+      );
+    }
+    const deviceIdentity = await this.resolveDeviceIdentity(devicePath);
+    const before = await this.inspectDiskSnapshot({
+      stableId,
+      stablePath,
+      devicePath,
+      deviceIdentity,
     });
+    const inventory: DiskInventory = {
+      ...before.inventory,
+      partitions: await probeLinuxPartitionFilesystems({
+        inventory: before.inventory,
+        serialized: before.serialized,
+        runner: this.runner,
+      }),
+    };
+    const after = await this.inspectDiskSnapshot({
+      stableId,
+      stablePath,
+      devicePath,
+      deviceIdentity,
+    });
+    assertLinuxInventorySnapshotUnchanged(before.inventory, after.inventory);
     const unsafeFilesystem = inventory.partitions.find(
       (partition) =>
         partition.filesystemHealth === "dirty" ||
@@ -918,11 +999,6 @@ export class LinuxInstallInventoryProvider implements InstallInventoryProvider {
     );
     if (!inventory.protectedReason && unsafeFilesystem) {
       inventory.protectedReason = `Partition ${unsafeFilesystem.id} has a ${unsafeFilesystem.filesystemHealth} filesystem.`;
-    }
-    if ((await realpath(stablePath)) !== devicePath) {
-      throw new Error(
-        "Linux inventory stable ID changed during filesystem probing.",
-      );
     }
     validateDiskInventory(inventory);
     return inventory;

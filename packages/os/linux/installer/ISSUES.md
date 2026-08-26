@@ -34,6 +34,11 @@ package never changes a partition table.
   now has a fixed-argv native read-only health check, but intentionally receives
   no automatic-shrink evidence because native minimum-size discovery requires
   a mounted path.
+  Complete base inventory is now captured both before and after filesystem
+  probes; the kernel block-device generation, hardware identity, geometry, GPT
+  state, partition boundaries, mount state, current-boot ancestry, and
+  protection state must remain identical so the provider cannot return a
+  mixed-time inspection.
 - **Connect plan revalidation and authorization to the root service.** The
   library now reproduces the initial inventory/plan ID, verifies an expiring
   owner credential, re-enumerates before every typed action, and stops on
