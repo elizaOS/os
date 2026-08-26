@@ -120,7 +120,11 @@ the production implementation must synchronously and atomically capture Linux
 `getsockopt(SO_PEERCRED)` plus a kernel-bound `SO_PEERPIDFD`/pidfd handle on the
 socket accepted by this process, before any asynchronous work. Numeric-PID-only
 implementations do not satisfy the interface. The logind adapter checks that
-same handle both before and after each logind lookup. The systemd templates own
+same handle before and after resolving the process's session and before and
+after one `Properties.GetAll` transaction containing the session id, user,
+class, state, active, locked, remote, and seat properties. It never constructs
+authorization from a sequence of independently read properties. The systemd
+templates own
 a root-owned `0660` socket for the separately provisioned `elizaos-installer`
 group and harden the service. Production listening requires
 exactly one systemd-activated listener with `LISTEN_FDNAMES=installer`;
@@ -137,9 +141,11 @@ execution timeout never claims an unabortable disk mutation was cancelled. The a
 retains its bounded handler slot and kernel process handle until the handler
 actually settles, even after the client socket is destroyed.
 
-Packaging must still supply the native `SO_PEERCRED` implementation, logind
-D-Bus resolver, dedicated group membership, AbortSignal-aware lock-retaining
-root-service composition, and entry point. Until all are supplied,
+The package now contains a Linux N-API `SO_PEERCRED`/`SO_PEERPIDFD` provider and
+a bounded `busctl`-based logind D-Bus resolver. Packaging must still build,
+install, and qualify the native module, and supply dedicated group membership,
+an OS credential verifier, AbortSignal-aware lock-retaining root-service
+composition, and an entry point. Until all are supplied,
 `/usr/libexec/elizaos-installer-service` and these unit templates must not be
 installed. The package intentionally does not yet provide the OS
 credential verifier, filesystem tools, GPT writer, image extractor, or
@@ -190,4 +196,12 @@ Run the planner checks with:
 ```bash
 bun run --cwd packages/os/linux/installer test
 bun run --cwd packages/os/linux/installer typecheck
+bun run verify:installer-native
 ```
+
+`verify:installer-native` is the compile/load ABI gate and performs no kernel
+qualification. The dedicated Linux CI qualification uses a real cross-process
+accepted AF_UNIX connection and must prove peer PID/UID/GID and pidfd live,
+exited, and closed states without treating a denied syscall as a skip. A
+restricted local sandbox may therefore pass the compile gate while remaining
+explicitly non-qualified for the kernel boundary.

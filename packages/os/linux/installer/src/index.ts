@@ -33,6 +33,10 @@ export {
   probeLinuxNtfsFilesystem,
   probeLinuxPartitionFilesystems,
 } from "./linux-inventory";
+export type { LogindCommandRunner } from "./linux-logind";
+export { SystemdLogindSessionResolver } from "./linux-logind";
+export type { LinuxPeerCredentialNativeBinding } from "./linux-native-peer";
+export { NativeLinuxUnixPeerCredentialProvider } from "./linux-native-peer";
 export {
   createDiskConfirmationToken,
   createDiskExecutionIdentity,

@@ -3,9 +3,10 @@
 These are implementation issues, not claims of completed installation support.
 The current package produces deterministic plans with `executable: false` and
 contains a fail-closed authorization/journal orchestration boundary plus a
-root-side local request core. No production Unix socket/logind adapter, OS
-credential verifier, or privileged operation backend is connected, so the
-package never changes a partition table.
+root-side local request core. Native Unix peer-credential and logind resolver
+implementations are present but are not packaged or composed into a production
+service. No OS credential verifier or privileged operation backend is
+connected, so the package never changes a partition table.
 
 ## P0 — trusted inventory and execution boundary
 
@@ -54,8 +55,10 @@ package never changes a partition table.
   its owner-only state topology and journal. The bounded AF_UNIX framing
   adapter, atomic `SO_PEERCRED` plus `SO_PEERPIDFD` seam, repeated kernel-handle
   and logind checks, AbortSignal contract, and hardened systemd templates now
-  exist. Packaging must supply and qualify the native credential/pidfd capture,
-  logind D-Bus resolver, dedicated socket-group provisioning/membership,
+  exist. The native credential/pidfd capture and coherent-snapshot bounded
+  logind D-Bus resolver are implemented here; packaging must build, install,
+  and qualify them and
+  supply dedicated socket-group provisioning/membership,
   AbortSignal-aware root-service composition that retains target locks until
   cancellation is confirmed, and OS credential verifier. None of those trusted
   values may come from renderer request data. Do not install the unit templates
