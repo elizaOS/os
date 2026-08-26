@@ -206,13 +206,15 @@ function parseIpcRequest(input: unknown): LocalInstallExecutionRequest {
  * descriptor transferred from another process.
  */
 export function parseLocalInstallExecutionFrame(
-  frame: Uint8Array | string,
+  frame: Uint8Array,
 ): LocalInstallExecutionRequest {
-  const bytes =
-    typeof frame === "string" ? Buffer.from(frame, "utf8") : Buffer.from(frame);
-  if (bytes.length === 0 || bytes.length > MAX_IPC_REQUEST_BYTES) {
+  if (!(frame instanceof Uint8Array)) {
+    throw new Error("Installer IPC frame must be raw bytes.");
+  }
+  if (frame.byteLength === 0 || frame.byteLength > MAX_IPC_REQUEST_BYTES) {
     throw new Error("Installer IPC frame exceeds the bounded request size.");
   }
+  const bytes = Buffer.from(frame);
   let decoded: unknown;
   try {
     decoded = JSON.parse(
@@ -320,18 +322,16 @@ export class PrivilegedInstallService {
       },
       now: this.dependencies.now,
     };
-    // Validate the complete plan and credential before consuming replay state
-    // or taking a durable target lock. Execution independently repeats the
-    // inventory and authorization checks after the lock is held.
+    // Validate the complete plan, credential, and serial-backed physical lock
+    // identity before consuming replay state or taking a durable target lock.
+    // Execution independently repeats the inventory and authorization checks
+    // after the lock is held.
     const authorized = await authorizeInstallPlan(
       message.request,
       message.plan,
       message.authorization,
       executionDependencies,
     );
-    if (!(await this.dependencies.replay.claim(message.authorization))) {
-      throw new Error("Installer owner authorization nonce was already used.");
-    }
     const executionInventory = await this.dependencies.inventory.inspect(
       authorized.target.stableId,
     );
@@ -344,6 +344,9 @@ export class PrivilegedInstallService {
       );
     }
     const physicalIdentity = createDiskExecutionIdentity(executionInventory);
+    if (!(await this.dependencies.replay.claim(message.authorization))) {
+      throw new Error("Installer owner authorization nonce was already used.");
+    }
     return this.dependencies.targets.runExclusive(
       physicalIdentity,
       executionInventory.kernelDeviceIdentity,

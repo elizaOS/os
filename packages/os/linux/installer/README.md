@@ -29,8 +29,9 @@ left by interruption is never silently removed: recovery must inspect it and
 the journal before execution can continue.
 
 `PrivilegedInstallService` is the root-side object core for a local IPC adapter.
-`parseLocalInstallExecutionFrame()` bounds raw bytes before JSON decoding and
-accepts only the typed `execute-reviewed-plan` request. The production adapter
+`parseLocalInstallExecutionFrame()` accepts only raw bytes, bounds them before
+JSON decoding, and accepts only the typed `execute-reviewed-plan` request. The
+production adapter
 must frame exactly one request per connection and reject trailing frames or
 bytes. The daemon itself must run as root and requires kernel-authenticated Unix
 peer credentials for a non-root process in the active, unlocked owner session.
@@ -49,8 +50,12 @@ single-use owner/nonce claims are atomically created and synced without
 persisting credentials. Claims have strict field bounds and a durably
 serialized hard capacity; consumed records are never automatically removed,
 because deletion could permit replay. Capacity exhaustion fails closed pending
-an explicit recovery policy. Target locks use hashed immutable physical
-identity, record the plan-bound kernel device generation when available, and
+an explicit recovery policy. Target locks require and use normalized serial as
+their immutable physical identity. WWN remains bound into reviewed plans and
+inventory fingerprints but does not select the lock namespace, so transient
+WWN presence cannot split one disk across two locks. Duplicate serials
+conservatively share a lock. Locks record the plan-bound kernel device
+generation when available and
 remain after any failed operation or process interruption for explicit
 recovery. The production Unix socket adapter must obtain peer PID/UID/GID and
 process liveness from the kernel and active-session membership from logind or
@@ -109,7 +114,11 @@ The package intentionally does not yet provide the production Unix socket and
 logind adapters, OS credential verifier, filesystem tools, GPT writer, image
 extractor, or bootloader backend. Those implementations and
 disposable-block-device qualification are required before the typed operation
-adapter may be connected to a real disk. Tests must use inventory fixtures or
+adapter may be connected to a real disk. A production mutation backend must
+open and authenticate the whole-disk block device inside its privileged method,
+retain that verified descriptor through the write, and mutate through that
+descriptor; reopening an inventory pathname after validation would leave a
+device-replacement TOCTOU window. Tests must use inventory fixtures or
 disposable virtual block devices only.
 
 ## Alongside support contract
