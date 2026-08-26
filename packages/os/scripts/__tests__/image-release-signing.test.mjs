@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import {
+  chmod,
   link,
   lstat,
   mkdir,
   mkdtemp,
   readdir,
   readFile,
+  rename,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -47,9 +49,16 @@ async function fixture() {
 }
 
 async function signRelease(paths, overrides = {}) {
-  return execFileAsync(
-    process.execPath,
-    [
+  const command = signReleaseCommand(paths, overrides);
+  return execFileAsync(process.execPath, command.args, {
+    cwd: repoRoot,
+    env: command.env,
+  });
+}
+
+function signReleaseCommand(paths, overrides = {}) {
+  return {
+    args: [
       "packages/os/scripts/sign-image-release.mjs",
       "--artifact-root",
       overrides.artifactRoot ?? paths.root,
@@ -67,20 +76,57 @@ async function signRelease(paths, overrides = {}) {
       "--output",
       overrides.output ?? paths.manifest,
     ],
-    {
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        SOURCE_DATE_EPOCH: "1700000000",
-        ELIZAOS_RELEASE_ED25519_PRIVATE_KEY_PKCS8_BASE64: paths.privateKey,
-        ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64: paths.publicKey,
-        ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256:
-          paths.publicKeyFingerprint,
-        ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S:
-          paths.revokedKeyFingerprints ?? "",
-      },
+    env: {
+      ...process.env,
+      SOURCE_DATE_EPOCH: "1700000000",
+      ELIZAOS_RELEASE_ED25519_PRIVATE_KEY_PKCS8_BASE64: paths.privateKey,
+      ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64: paths.publicKey,
+      ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256:
+        paths.publicKeyFingerprint,
+      ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S:
+        paths.revokedKeyFingerprints ?? "",
+      ...overrides.env,
     },
-  );
+  };
+}
+
+function startSignRelease(paths, overrides = {}) {
+  const command = signReleaseCommand(paths, overrides);
+  const child = spawn(process.execPath, command.args, {
+    cwd: repoRoot,
+    env: command.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk;
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+  const completion = new Promise((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", (code, signal) => {
+      if (code === 0) resolve({ stdout, stderr });
+      else reject(new Error(`signer exited ${code ?? signal}: ${stderr}`));
+    });
+  });
+  return { child, completion };
+}
+
+async function waitForPath(filePath) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    try {
+      await lstat(filePath);
+      return;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`timed out waiting for ${filePath}`);
 }
 
 async function verifyRelease(paths) {
@@ -127,6 +173,12 @@ async function assertNoNewReleaseOutputs(paths, ignored = new Set()) {
   }
   assert.deepEqual(
     (await readdir(paths.root)).filter((name) => name.endsWith(".tmp")),
+    [],
+  );
+  assert.deepEqual(
+    (await readdir(paths.root)).filter((name) =>
+      name.startsWith(".elizaos-release-stage-"),
+    ),
     [],
   );
 }
@@ -268,10 +320,21 @@ test("signing rejects a hard-linked output alias without touching inputs", async
   );
   const original = await readFile(compressed);
   await link(compressed, paths.manifest);
-  await assert.rejects(signRelease(paths), /output hard-links an image input/);
+  await assert.rejects(
+    signRelease(paths),
+    /output hard-links an image input|input is not a private nonempty regular file/,
+  );
   assert.deepEqual(await readFile(compressed), original);
   assert.deepEqual(await readFile(paths.manifest), original);
   await assertNoNewReleaseOutputs(paths, new Set([paths.manifest]));
+});
+
+test("signing rejects an input writable by another security principal", async () => {
+  const paths = await fixture();
+  const input = path.join(paths.root, "elizaos-1.2.3-beta.4-x86_64.raw.zst");
+  await chmod(input, 0o664);
+  await assert.rejects(signRelease(paths), /input is not a private/);
+  await assertNoNewReleaseOutputs(paths);
 });
 
 test("signing rejects manifest and artifact signature path aliases", async () => {
@@ -282,6 +345,198 @@ test("signing rejects manifest and artifact signature path aliases", async () =>
     /output paths alias each other/,
   );
   await assertNoNewReleaseOutputs(paths);
+});
+
+test("signing rejects a symlinked artifact root", async () => {
+  const paths = await fixture();
+  const aliasParent = await mkdtemp(
+    path.join(os.tmpdir(), "elizaos-image-signing-alias-"),
+  );
+  const alias = path.join(aliasParent, "artifact-root");
+  await symlink(paths.root, alias);
+  await assert.rejects(
+    signRelease(paths, {
+      artifactRoot: alias,
+      output: path.join(alias, "manifest.json"),
+    }),
+    /artifact-root must be a signer-owned, non-symlink/,
+  );
+  await assertNoNewReleaseOutputs(paths);
+});
+
+test("signing rejects an input path replaced after its handle is opened", async () => {
+  const paths = await fixture();
+  const hooks = await mkdtemp(path.join(os.tmpdir(), "elizaos-sign-hooks-"));
+  const signing = startSignRelease(paths, {
+    env: {
+      NODE_ENV: "test",
+      ELIZAOS_RELEASE_TEST_HOOK_DIRECTORY: hooks,
+      ELIZAOS_RELEASE_TEST_CHECKPOINT: "inputs-opened",
+    },
+  });
+  await waitForPath(path.join(hooks, "inputs-opened.ready"));
+  const input = path.join(paths.root, "elizaos-1.2.3-beta.4-arm64.raw.zst");
+  const original = `${input}.opened-original`;
+  await rename(input, original);
+  await symlink(original, input);
+  await writeFile(path.join(hooks, "inputs-opened.resume"), "resume\n");
+  await assert.rejects(signing.completion, /input changed/);
+  await assertNoNewReleaseOutputs(paths);
+});
+
+test("signing rejects an artifact root replaced after trusted handles are opened", async () => {
+  const paths = await fixture();
+  const hooks = await mkdtemp(path.join(os.tmpdir(), "elizaos-sign-hooks-"));
+  const signing = startSignRelease(paths, {
+    env: {
+      NODE_ENV: "test",
+      ELIZAOS_RELEASE_TEST_HOOK_DIRECTORY: hooks,
+      ELIZAOS_RELEASE_TEST_CHECKPOINT: "inputs-opened",
+    },
+  });
+  await waitForPath(path.join(hooks, "inputs-opened.ready"));
+  const openedRoot = `${paths.root}.opened-original`;
+  await rename(paths.root, openedRoot);
+  await mkdir(paths.root, { mode: 0o700 });
+  await writeFile(path.join(hooks, "inputs-opened.resume"), "resume\n");
+  await assert.rejects(
+    signing.completion,
+    /artifact root or its parent changed/,
+  );
+  await assertNoNewReleaseOutputs(paths);
+  await assertNoNewReleaseOutputs({
+    ...paths,
+    root: openedRoot,
+    manifest: path.join(openedRoot, "manifest.json"),
+  });
+});
+
+test("signing rejects a staged pathname substitution and leaves no residue", {
+  timeout: 15_000,
+}, async () => {
+  const paths = await fixture();
+  const hooks = await mkdtemp(path.join(os.tmpdir(), "elizaos-sign-hooks-"));
+  const signing = startSignRelease(paths, {
+    env: {
+      NODE_ENV: "test",
+      ELIZAOS_RELEASE_TEST_HOOK_DIRECTORY: hooks,
+      ELIZAOS_RELEASE_TEST_CHECKPOINT: "outputs-staged",
+    },
+  });
+  await waitForPath(path.join(hooks, "outputs-staged.ready"));
+  const stageName = (await readdir(paths.root)).find((name) =>
+    name.startsWith(".elizaos-release-stage-"),
+  );
+  assert.ok(stageName);
+  const staged = path.join(paths.root, stageName, "output-0");
+  const displaced = path.join(paths.root, stageName, "displaced-output-0");
+  await rename(staged, displaced);
+  await symlink(displaced, staged);
+  await writeFile(path.join(hooks, "outputs-staged.resume"), "resume\n");
+  await assert.rejects(signing.completion, /staged release output changed/);
+  await assertNoNewReleaseOutputs(paths);
+});
+
+test("signing does not overwrite an output raced into the release set", async () => {
+  const paths = await fixture();
+  const hooks = await mkdtemp(path.join(os.tmpdir(), "elizaos-sign-hooks-"));
+  const signing = startSignRelease(paths, {
+    env: {
+      NODE_ENV: "test",
+      ELIZAOS_RELEASE_TEST_HOOK_DIRECTORY: hooks,
+      ELIZAOS_RELEASE_TEST_CHECKPOINT: "outputs-staged",
+    },
+  });
+  await waitForPath(path.join(hooks, "outputs-staged.ready"));
+  await writeFile(paths.manifest, "concurrent-publisher-bytes\n", {
+    flag: "wx",
+  });
+  await writeFile(path.join(hooks, "outputs-staged.resume"), "resume\n");
+  await assert.rejects(signing.completion, /output changed after preflight/);
+  assert.equal(
+    await readFile(paths.manifest, "utf8"),
+    "concurrent-publisher-bytes\n",
+  );
+  await assertNoNewReleaseOutputs(paths, new Set([paths.manifest]));
+});
+
+test("late promotion failure restores every preexisting output", async () => {
+  const paths = await fixture();
+  await signRelease(paths);
+  const outputs = [
+    ...architectures.map((architecture) =>
+      artifactSignaturePath(paths, architecture),
+    ),
+    paths.manifest,
+    `${paths.manifest}.sig`,
+  ];
+  const originals = new Map(
+    await Promise.all(
+      outputs.map(async (filePath) => [filePath, await readFile(filePath)]),
+    ),
+  );
+  await assert.rejects(
+    signRelease(paths, {
+      sequence: "43",
+      env: {
+        NODE_ENV: "test",
+        ELIZAOS_RELEASE_TEST_FAIL_PROMOTION_AFTER: "4",
+      },
+    }),
+    /injected release-set promotion failure/,
+  );
+  for (const filePath of outputs) {
+    assert.deepEqual(await readFile(filePath), originals.get(filePath));
+  }
+  assert.deepEqual(
+    (await readdir(paths.root)).filter((name) =>
+      name.startsWith(".elizaos-release-stage-"),
+    ),
+    [],
+  );
+  await verifyRelease(paths);
+});
+
+test("input drift after promotion rolls the entire preexisting set back", async () => {
+  const paths = await fixture();
+  await signRelease(paths);
+  const outputs = [
+    ...architectures.map((architecture) =>
+      artifactSignaturePath(paths, architecture),
+    ),
+    paths.manifest,
+    `${paths.manifest}.sig`,
+  ];
+  const originals = new Map(
+    await Promise.all(
+      outputs.map(async (filePath) => [filePath, await readFile(filePath)]),
+    ),
+  );
+  const hooks = await mkdtemp(path.join(os.tmpdir(), "elizaos-sign-hooks-"));
+  const signing = startSignRelease(paths, {
+    sequence: "43",
+    env: {
+      NODE_ENV: "test",
+      ELIZAOS_RELEASE_TEST_HOOK_DIRECTORY: hooks,
+      ELIZAOS_RELEASE_TEST_CHECKPOINT: "outputs-promoted",
+    },
+  });
+  await waitForPath(path.join(hooks, "outputs-promoted.ready"));
+  const input = path.join(paths.root, "elizaos-1.2.3-beta.4-arm64.raw.zst");
+  const inputBytes = await readFile(input);
+  inputBytes[0] ^= 0xff;
+  await writeFile(input, inputBytes);
+  await writeFile(path.join(hooks, "outputs-promoted.resume"), "resume\n");
+  await assert.rejects(signing.completion, /input changed/);
+  for (const filePath of outputs) {
+    assert.deepEqual(await readFile(filePath), originals.get(filePath));
+  }
+  assert.deepEqual(
+    (await readdir(paths.root)).filter((name) =>
+      name.startsWith(".elizaos-release-stage-"),
+    ),
+    [],
+  );
 });
 
 test("canonical image signing rejects incomplete architecture sets", async () => {
