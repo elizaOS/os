@@ -47,6 +47,7 @@ confirmation-only step.
 | `WINDOWS_SIGN_CERT_BASE64` | Base64 Authenticode `.pfx`. |
 | `WINDOWS_SIGN_CERT_PASSWORD` | Export password for the `.pfx`. |
 | `ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64` | Canonical DER SPKI public key embedded into every production USB Installer for signed manifest and image verification. |
+| `ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256` | Independently reviewed lowercase SHA-256 of the canonical Ed25519 DER SPKI; the image verifier rejects a supplied key that does not match this separate pin. |
 | `ELIZAOS_RELEASE_ED25519_PRIVATE_KEY_PKCS8_BASE64` | Offline-origin Ed25519 PKCS#8 private key made available only to the protected image/manifest signing job; never cache or upload it. |
 | `ELIZA_ARTIFACT_TOKEN` | Fine-grained token with Actions read access to the pinned `elizaOS/eliza` desktop-artifact producer run. |
 | `ELIZAOS_DESKTOP_SIGNING_PUBLIC_KEY_SPKI_SHA256` | Independently reviewed SHA-256 of the desktop-artifact Ed25519 DER SPKI trust root consumed by mkosi. |
@@ -55,6 +56,12 @@ confirmation-only step.
 | `DEBIAN_GPG_PASSPHRASE` | Passphrase when the APT key has one. |
 | `CLOUDFLARE_ACCOUNT_ID` | Account containing the `elizaos-homepage` Pages project. |
 | `CLOUDFLARE_API_TOKEN` | Least-privilege token with Pages Read and Pages Write for that account. |
+
+During emergency key revocation, set the protected optional secret
+`ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S` to a sorted, unique,
+comma-separated list of revoked SPKI digests. A matching signing key is denied
+before release metadata is parsed. Removing a digest requires the same
+protected-environment review as changing the active public key or its pin.
 
 The desktop workflows import certificates into temporary runner storage,
 verify Apple notarization or Windows Authenticode after packaging, and remove

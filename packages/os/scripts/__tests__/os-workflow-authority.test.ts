@@ -564,14 +564,28 @@ describe("OS release workflow authority", () => {
     expect(source).toContain("name: Remove privileged build workspace");
     expect(source).toContain("name: Remove signing workspace");
     expect(source).toContain("mkosi-persistence-qualify.py");
+    expect(source).toContain(
+      "name: QEMU legacy-BIOS boot exact x86_64 disk as removable USB",
+    );
+    expect(source).toContain("legacy-bios: /usr/share/qemu/bios-256k.bin");
+    expect(source).toContain("--legacy-bios-evidence");
+    expect(source).toContain(
+      '"$WORK_ROOT/unsigned/qemu-legacy-bios-x86_64.json"',
+    );
+    expect(source).toContain(
+      '"$WORK_ROOT/unsigned/persistence-boot-2-${architecture}.log"',
+    );
     expect(source).toContain("Stage one flat bounded pre-signing artifact");
     expect(source).toContain("path: ${{ env.WORK_ROOT }}/upload/*");
     expect(source).toContain("verify-mkosi-promotion-evidence.mjs");
     expect(source).toContain("sign-image-release.mjs");
     expect(source).toContain("verify-image-release.mjs");
+    expect(source).toContain("ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256");
+    expect(source).toContain("ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S");
     expect(source).toContain(
-      "--evidence mkosi-release-build,qemu-uefi-usb,persistent-reboot,usb-expanded-readback,slsa-provenance",
+      'boot_evidence="mkosi-release-build,qemu-uefi-usb,persistent-reboot,usb-expanded-readback,slsa-provenance"',
     );
+    expect(source).toContain("qemu-legacy-bios-usb");
     expect(source).not.toMatch(
       /--evidence[^\n]*(?:whole-disk-install|alongside-install|desktop-acceptance|hardware-qualification)/,
     );

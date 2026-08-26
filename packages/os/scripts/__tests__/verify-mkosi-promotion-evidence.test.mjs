@@ -21,6 +21,7 @@ async function fixture() {
   const expanded = path.join(root, "elizaos-1.0.0-x86_64.raw");
   const buildEvidence = path.join(root, "build.json");
   const qemuEvidence = path.join(root, "qemu.json");
+  const legacyBiosEvidence = path.join(root, "qemu-legacy-bios.json");
   const persistenceEvidence = path.join(root, "persistence.json");
   const sbom = path.join(root, "image.spdx.json");
   await Promise.all([
@@ -56,11 +57,36 @@ async function fixture() {
         preflightOnly: false,
         architecture: "amd64",
         diskInterface: "usb",
+        firmwareMode: "pflash",
+        emulator: { path: "/usr/bin/qemu-system-x86_64", version: "QEMU 11.1.0" },
         terminationReason: "required-markers",
         markersFound: ["Linux version", "Reached target Graphical Interface"],
         forbiddenMarkersFound: [],
         inputs: {
           image: { size: expandedBytes.length, sha256: sha256(expandedBytes) },
+          firmwareCode: { sha256: "c".repeat(64) },
+          firmwareVarsTemplate: { sha256: "d".repeat(64) },
+        },
+      }),
+    ),
+    writeFile(
+      legacyBiosEvidence,
+      JSON.stringify({
+        schema: "ai.elizaos.mkosi-qemu-evidence.v1",
+        claimBoundary:
+          "qemu_graphical_target_only_no_login_agent_computer_control_or_hardware_claim",
+        success: true,
+        preflightOnly: false,
+        architecture: "amd64",
+        diskInterface: "usb",
+        firmwareMode: "bios",
+        emulator: { path: "/usr/bin/qemu-system-x86_64", version: "QEMU 11.1.0" },
+        terminationReason: "required-markers",
+        markersFound: ["Linux version", "Reached target Graphical Interface"],
+        forbiddenMarkersFound: [],
+        inputs: {
+          image: { size: expandedBytes.length, sha256: sha256(expandedBytes) },
+          bios: { sha256: "e".repeat(64) },
         },
       }),
     ),
@@ -103,10 +129,22 @@ async function fixture() {
       }),
     ),
   ]);
-  return { root, compressed, expanded, buildEvidence, qemuEvidence, persistenceEvidence, sbom };
+  return {
+    root,
+    compressed,
+    expanded,
+    buildEvidence,
+    qemuEvidence,
+    legacyBiosEvidence,
+    persistenceEvidence,
+    sbom,
+  };
 }
 
 function verify(paths) {
+  const legacyBiosArgs = paths.legacyBiosEvidence
+    ? ["--legacy-bios-evidence", paths.legacyBiosEvidence]
+    : [];
   return spawnSync(
     process.execPath,
     [
@@ -121,6 +159,7 @@ function verify(paths) {
       paths.buildEvidence,
       "--qemu-evidence",
       paths.qemuEvidence,
+      ...legacyBiosArgs,
       "--persistence-evidence",
       paths.persistenceEvidence,
       "--sbom",
@@ -155,4 +194,42 @@ test("promotion verifier rejects persistence evidence for different expanded byt
   const result = verify(paths);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /virtual USB readback/);
+});
+
+test("promotion verifier requires legacy BIOS evidence for x86_64", async () => {
+  const paths = await fixture();
+  paths.legacyBiosEvidence = undefined;
+  const result = verify(paths);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /--legacy-bios-evidence/);
+});
+
+test("promotion verifier rejects legacy BIOS evidence for different expanded bytes", async () => {
+  const paths = await fixture();
+  const document = JSON.parse(await readFile(paths.legacyBiosEvidence, "utf8"));
+  document.inputs.image.sha256 = "f".repeat(64);
+  await writeFile(paths.legacyBiosEvidence, JSON.stringify(document));
+  const result = verify(paths);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /legacy BIOS evidence does not bind/);
+});
+
+test("promotion verifier rejects unversioned QEMU evidence", async () => {
+  const paths = await fixture();
+  const document = JSON.parse(await readFile(paths.qemuEvidence, "utf8"));
+  delete document.emulator;
+  await writeFile(paths.qemuEvidence, JSON.stringify(document));
+  const result = verify(paths);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /exact emulator path and version/);
+});
+
+test("promotion verifier rejects unbound QEMU firmware", async () => {
+  const paths = await fixture();
+  const document = JSON.parse(await readFile(paths.qemuEvidence, "utf8"));
+  delete document.inputs.firmwareVarsTemplate;
+  await writeFile(paths.qemuEvidence, JSON.stringify(document));
+  const result = verify(paths);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /explicit pflash firmware pair/);
 });

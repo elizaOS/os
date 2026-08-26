@@ -154,6 +154,7 @@ class QualificationPreflightTest(unittest.TestCase):
             document = json.loads(evidence.read_text())
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse(document["success"])
+            self.assertEqual(document["firmwareMode"], "pflash")
             self.assertEqual(document["markersFound"], [])
             self.assertNotIn("inputs", document)
             self.assertIn("no_login_agent_computer_control_or_hardware_claim", document["claimBoundary"])
@@ -250,6 +251,9 @@ class QualificationPreflightTest(unittest.TestCase):
             emulator.write_text(
                 "#!/usr/bin/env python3\n"
                 "import socket, sys, time\n"
+                "if '--version' in sys.argv:\n"
+                "    print('QEMU emulator version 9.2.2')\n"
+                "    raise SystemExit(0)\n"
                 "monitor = sys.argv[sys.argv.index('-monitor') + 1]\n"
                 "path = monitor.removeprefix('unix:').split(',', 1)[0]\n"
                 "with socket.socket(socket.AF_UNIX) as server:\n"
@@ -309,6 +313,8 @@ class QualificationPreflightTest(unittest.TestCase):
             emulator = fake_bin / "qemu-system-x86_64"
             emulator.write_text(
                 "#!/bin/sh\n"
+                "if [ \"${1:-}\" = --version ]; then "
+                "printf '%s\\n' 'QEMU emulator version 9.2.2'; exit 0; fi\n"
                 "printf '%s\\n' 'Linux version 6.12 fixture' "
                 "'elizaOS recovery boundary verified: Eliza agent and privileged "
                 "broker unavailable'\n"

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -23,15 +23,17 @@ async function fixture() {
     await writeFile(`${base}.zst`, `zstd-${architecture}\n`);
   }
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+  const publicKeyDer = publicKey.export({ format: "der", type: "spki" });
   return {
     root,
     manifest: path.join(root, "manifest.json"),
     privateKey: privateKey
       .export({ format: "der", type: "pkcs8" })
       .toString("base64"),
-    publicKey: publicKey
-      .export({ format: "der", type: "spki" })
-      .toString("base64"),
+    publicKey: publicKeyDer.toString("base64"),
+    publicKeyFingerprint: createHash("sha256")
+      .update(publicKeyDer)
+      .digest("hex"),
   };
 }
 
@@ -81,6 +83,14 @@ async function verifyRelease(paths) {
       env: {
         ...process.env,
         ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64: paths.publicKey,
+        ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256:
+          paths.publicKeyFingerprint,
+        ...(paths.revokedKeyFingerprints
+          ? {
+              ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S:
+                paths.revokedKeyFingerprints,
+            }
+          : {}),
       },
     },
   );
@@ -109,6 +119,34 @@ test("canonical image verification rejects modified compressed bytes", async () 
     "tampered-but-nonempty\n",
   );
   await assert.rejects(verifyRelease(paths), /wrong-sized|byte binding/);
+});
+
+test("canonical image verification rejects an unknown public key fingerprint", async () => {
+  const paths = await fixture();
+  await signRelease(paths);
+  const unknown = await fixture();
+  paths.publicKeyFingerprint = unknown.publicKeyFingerprint;
+  await assert.rejects(
+    verifyRelease(paths),
+    /does not match the independently pinned SPKI SHA-256/,
+  );
+});
+
+test("canonical image verification requires an independent fingerprint pin", async () => {
+  const paths = await fixture();
+  await signRelease(paths);
+  delete paths.publicKeyFingerprint;
+  await assert.rejects(
+    verifyRelease(paths),
+    /PUBLIC_KEY_SPKI_SHA256 must be a nonzero lowercase SHA-256 digest/,
+  );
+});
+
+test("canonical image verification rejects a revoked release key", async () => {
+  const paths = await fixture();
+  await signRelease(paths);
+  paths.revokedKeyFingerprints = paths.publicKeyFingerprint;
+  await assert.rejects(verifyRelease(paths), /verification key is revoked/);
 });
 
 test("canonical image signing rejects incomplete architecture sets", async () => {
