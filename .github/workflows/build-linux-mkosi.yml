@@ -419,6 +419,12 @@ jobs:
           path: ${{ env.WORK_ROOT }}/unsigned
           merge-multiple: true
 
+      - name: Seal private offline signing root
+        run: |
+          set -euo pipefail
+          chmod 0700 -- "$WORK_ROOT/unsigned"
+          test "$(stat -c '%a' -- "$WORK_ROOT/unsigned")" = 700
+
       - name: Expand and reverify every architecture before signing
         run: |
           set -euo pipefail
@@ -445,6 +451,8 @@ jobs:
 
       - name: Sign discovery metadata and all compressed images
         run: |
+          # This mode-0700 tree is not a publication surface. The manifest is
+          # the atomic commit marker and is created only after every signature.
           node packages/os/scripts/sign-image-release.mjs \
             --artifact-root "$WORK_ROOT/unsigned" \
             --version "${{ inputs.version }}" \
@@ -454,17 +462,19 @@ jobs:
             --base-url "${{ inputs.base_url }}" \
             --output "$WORK_ROOT/unsigned/elizaos-${{ inputs.version }}-images.json"
           node packages/os/scripts/verify-image-release.mjs \
+            --require-private-root \
             --artifact-root "$WORK_ROOT/unsigned" \
-            --manifest "$WORK_ROOT/unsigned/elizaos-${{ inputs.version }}-images.json"
+            --manifest "$WORK_ROOT/unsigned/elizaos-${{ inputs.version }}-images.json" \
+            --publish-root "$WORK_ROOT/publish"
 
       - name: Create bounded producer records and publication directories
         run: |
           set -euo pipefail
-          mkdir -p "$WORK_ROOT/publish/metadata"
-          cp -- \
-            "$WORK_ROOT/unsigned/elizaos-${{ inputs.version }}-images.json" \
-            "$WORK_ROOT/unsigned/elizaos-${{ inputs.version }}-images.json.sig" \
-            "$WORK_ROOT/publish/metadata/"
+          # Promote only from the independently verified, committed private set.
+          # The verifier created the signed files from the same held descriptors
+          # used for validation. Never reopen the private paths to copy them.
+          test "$(stat -c '%a' -- "$WORK_ROOT/publish")" = 700
+          test "$(stat -c '%a' -- "$WORK_ROOT/publish/metadata")" = 700
           node packages/os/scripts/create-release-evidence.mjs \
             --artifact-id linux-image-release-manifest \
             --source-artifact elizaos-linux-image-metadata \
@@ -485,12 +495,8 @@ jobs:
             --workflow "$GITHUB_WORKFLOW_REF" --job sign-and-stage
           for architecture in x86_64 arm64 riscv64; do
             directory="$WORK_ROOT/publish/${architecture}"
-            mkdir -p "$directory"
-            cp -- \
-              "$WORK_ROOT/unsigned/elizaos-${{ inputs.version }}-${architecture}.raw.zst" \
-              "$WORK_ROOT/unsigned/elizaos-${{ inputs.version }}-${architecture}.raw.zst.sig" \
-              "$WORK_ROOT/unsigned/elizaos-${{ inputs.version }}-${architecture}.spdx.json" \
-              "$directory/"
+            test "$(stat -c '%a' -- "$directory")" = 700
+            cp -- "$WORK_ROOT/unsigned/elizaos-${{ inputs.version }}-${architecture}.spdx.json" "$directory/"
             cp -- \
               "$WORK_ROOT/unsigned/mkosi-build-${architecture}.json" \
               "$WORK_ROOT/unsigned/qemu-${architecture}.json" \
