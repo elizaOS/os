@@ -64,6 +64,13 @@ missing device tree or `spacecraft` kernel source. Promotion additionally
 requires an exact-build compile, bootloader/slot capture, stock rollback drill,
 and every physical validation item below.
 
+The reproducible operator handoff is produced with `make bundle-grizzly` as
+documented in the package README. Before flashing, independently verify
+`SHA256SUMS`, its offline release signature, and the adjacent resolved AOSP
+source manifest. Use the bundled `fastboot-info.txt`/flashall flow, including
+fastbootd dynamic-super updates; a standalone system partition flash is not a
+supported validation path.
+
 ## Promotion matrix
 
 Before setting a release-manifest tier to `lab-validated`, retain all of:
