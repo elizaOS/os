@@ -56,3 +56,24 @@ export {
   parseLocalInstallExecutionFrame,
 } from "./root-service";
 export type * from "./types";
+export type {
+  KernelBoundPeerProcessHandle,
+  KernelUnixPeerCredentials,
+  LinuxUnixPeerCredentialProvider,
+  LogindSessionResolver,
+  UnixInstallServerOptions,
+  UnixInstallService,
+} from "./unix-transport";
+export {
+  createUnixInstallServer,
+  DEFAULT_EXECUTION_TIMEOUT_MILLISECONDS,
+  DEFAULT_FRAME_TIMEOUT_MILLISECONDS,
+  InstallerRequestGate,
+  LinuxLogindActiveOwnerSessionProvider,
+  listenUnixInstallServer,
+  MAX_EXECUTION_TIMEOUT_MILLISECONDS,
+  MAX_UNIX_INSTALL_FRAME_BYTES,
+  MIN_EXECUTION_TIMEOUT_MILLISECONDS,
+  parseUnixInstallWireFrame,
+  rejectOverloadedUnixSocket,
+} from "./unix-transport";

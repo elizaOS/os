@@ -21,8 +21,9 @@ export interface LocalInstallPeerProcessIdentity {
   /** Informational only; authorization must be based on livenessToken. */
   pid: number;
   /**
-   * Adapter-owned, non-reusable process handle, such as a pidfd or a tuple
-   * containing PID plus verified process start time. Never decoded from JSON.
+   * Adapter-owned, kernel-bound non-reusable process handle, such as a pidfd
+   * captured atomically with SO_PEERCRED. Never decoded from JSON. A numeric
+   * PID followed by a process-table lookup is insufficient.
    */
   livenessToken: object;
 }

@@ -51,10 +51,15 @@ package never changes a partition table.
   owner session, rechecks that session immediately before every privileged
   mutation, durably consumes bounded owner nonces under a hard fail-closed
   quota, and serializes every alias for one physical disk identity. Provision
-  its owner-only state topology
-  and journal, implement the Unix socket/peer-credential and logind adapters,
-  and implement the OS credential verifier. None of those trusted values may
-  come from renderer request data.
+  its owner-only state topology and journal. The bounded AF_UNIX framing
+  adapter, atomic `SO_PEERCRED` plus `SO_PEERPIDFD` seam, repeated kernel-handle
+  and logind checks, AbortSignal contract, and hardened systemd templates now
+  exist. Packaging must supply and qualify the native credential/pidfd capture,
+  logind D-Bus resolver, dedicated socket-group provisioning/membership,
+  AbortSignal-aware root-service composition that retains target locks until
+  cancellation is confirmed, and OS credential verifier. None of those trusted
+  values may come from renderer request data. Do not install the unit templates
+  until those fail-closed native adapters are present.
 - **Implement recoverable GPT mutation.** Save and verify both GPT headers and
   partition entries to separate recovery media/state, perform typed operations,
   reread the kernel partition table, and prove rollback after every injected

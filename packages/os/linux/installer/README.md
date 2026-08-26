@@ -35,9 +35,11 @@ production adapter
 must frame exactly one request per connection and reject trailing frames or
 bytes. The daemon itself must run as root and requires kernel-authenticated Unix
 peer credentials for a non-root process in the active, unlocked owner session.
-The adapter must bind those credentials to a non-reusable process-liveness
-token (a pidfd or PID plus verified process start time), reject transferred
-connected file descriptors, and never decode that token from request JSON. The
+The adapter must atomically bind those credentials to a kernel-owned,
+non-reusable process-liveness handle such as `SO_PEERPIDFD`, reject transferred
+connected file descriptors, and never decode that handle from request JSON. A
+numeric PID followed by a `/proc` lookup is not this boundary because PID reuse
+can occur between those operations. The
 owner/session binding and OS credential are rechecked immediately before the
 partition-table backup and every privileged disk mutation. Authorizations are
 single-use, and every plan targeting the same physical disk is serialized even
@@ -110,9 +112,38 @@ so a same-path device replacement, repartition, mount, or protection-state
 change invalidates the entire inspection instead of returning mixed-time
 evidence.
 
-The package intentionally does not yet provide the production Unix socket and
-logind adapters, OS credential verifier, filesystem tools, GPT writer, image
-extractor, or bootloader backend. Those implementations and
+`createUnixInstallServer()` provides a bounded, one-request-per-connection
+AF_UNIX adapter. Its four-byte big-endian length prefix is checked before JSON
+decoding; partial frames, oversized frames, and trailing bytes are rejected.
+Peer PID/UID/GID must come from a trusted `LinuxUnixPeerCredentialProvider`;
+the production implementation must synchronously and atomically capture Linux
+`getsockopt(SO_PEERCRED)` plus a kernel-bound `SO_PEERPIDFD`/pidfd handle on the
+socket accepted by this process, before any asynchronous work. Numeric-PID-only
+implementations do not satisfy the interface. The logind adapter checks that
+same handle both before and after each logind lookup. The systemd templates own
+a root-owned `0660` socket for the separately provisioned `elizaos-installer`
+group and harden the service. Production listening requires
+exactly one systemd-activated listener with `LISTEN_FDNAMES=installer`;
+an absent descriptor name is rejected, and the adapter does not accept a
+connected descriptor supplied by a caller. Connections have bounded size and
+concurrency. Framing has a separate five-second default deadline. Execution
+uses a configurable six-hour default bounded to one second through 24 hours,
+so admitted installation work is not constrained by the framing deadline.
+Execution is accepted only through an
+AbortSignal-aware service declaring `confirmed-stop-or-lock-retained`: after a
+timeout it must either confirm that work stopped or retain the fail-closed
+physical-target lock until work reaches a known terminal state. Transport
+execution timeout never claims an unabortable disk mutation was cancelled. The adapter
+retains its bounded handler slot and kernel process handle until the handler
+actually settles, even after the client socket is destroyed.
+
+Packaging must still supply the native `SO_PEERCRED` implementation, logind
+D-Bus resolver, dedicated group membership, AbortSignal-aware lock-retaining
+root-service composition, and entry point. Until all are supplied,
+`/usr/libexec/elizaos-installer-service` and these unit templates must not be
+installed. The package intentionally does not yet provide the OS
+credential verifier, filesystem tools, GPT writer, image extractor, or
+bootloader backend. Those implementations and
 disposable-block-device qualification are required before the typed operation
 adapter may be connected to a real disk. A production mutation backend must
 open and authenticate the whole-disk block device inside its privileged method,
