@@ -27,8 +27,8 @@ import {
   verifyProprietaryArchive,
 } from "./bootstrap-aosp.mjs";
 import { loadBrandFromArgv } from "./brand-config.mjs";
-import { withSisoCompatibility } from "./siso-env.mjs";
 import { provisionCuttlefishE1 } from "./provision-cuttlefish-e1.mjs";
+import { withSisoCompatibility } from "./siso-env.mjs";
 import { main as syncToAospMain } from "./sync-to-aosp.mjs";
 import { main as validateMain } from "./validate.mjs";
 
@@ -47,6 +47,16 @@ export function recommendedJobs(totalMemBytes, cpuCount) {
   const totalGiB = totalMemBytes / (1024 * 1024 * 1024);
   const ramCap = Math.max(1, Math.floor((totalGiB - 4) / 4));
   return Math.max(1, Math.min(cpuCount, ramCap));
+}
+
+export function aospBuildEnvironment(aospRoot, env = process.env) {
+  const tempDir = path.join(path.resolve(aospRoot), "out", ".elizaos-tmp");
+  return withSisoCompatibility({
+    ...env,
+    TMPDIR: tempDir,
+    TMP: tempDir,
+    TEMP: tempDir,
+  });
 }
 
 export function parseSubArgs(argv) {
@@ -177,13 +187,15 @@ function stopRunningCvd() {
 }
 
 function runAospBuild(aospRoot, jobs, brand) {
+  const env = aospBuildEnvironment(aospRoot);
+  fs.mkdirSync(env.TMPDIR, { recursive: true });
   run(
     "bash",
     [
       "-lc",
       `source build/envsetup.sh && lunch ${brand.lunchTarget} && m -j${jobs}`,
     ],
-    { cwd: aospRoot, env: withSisoCompatibility() },
+    { cwd: aospRoot, env },
   );
 }
 

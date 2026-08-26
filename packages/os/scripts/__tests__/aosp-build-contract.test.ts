@@ -39,7 +39,10 @@ import {
   verifyProprietaryArchive,
 } from "../../../../scripts/distro-android/bootstrap-aosp.mjs";
 import { loadBrandConfig } from "../../../../scripts/distro-android/brand-config.mjs";
-import { assertBuildHost } from "../../../../scripts/distro-android/build-aosp.mjs";
+import {
+  aospBuildEnvironment,
+  assertBuildHost,
+} from "../../../../scripts/distro-android/build-aosp.mjs";
 import { parseArgs as parseGrizzlyArgs } from "../../../../scripts/distro-android/prepare-grizzly.mjs";
 import { loadCuttlefishE1Lock } from "../../../../scripts/distro-android/provision-cuttlefish-e1.mjs";
 import { withSisoCompatibility } from "../../../../scripts/distro-android/siso-env.mjs";
@@ -86,6 +89,20 @@ async function createGitFixture(root: string, files: string[]) {
 }
 
 describe("AOSP build contracts", () => {
+  test("AOSP builds keep temporary artifacts on the checkout volume", () => {
+    expect(
+      aospBuildEnvironment("/srv/aosp", {
+        SISO_EXPERIMENTS: "oom-score-adj",
+        TMPDIR: "/tmp",
+      }),
+    ).toMatchObject({
+      SISO_EXPERIMENTS: "oom-score-adj,ignore-missing-targets",
+      TMPDIR: "/srv/aosp/out/.elizaos-tmp",
+      TMP: "/srv/aosp/out/.elizaos-tmp",
+      TEMP: "/srv/aosp/out/.elizaos-tmp",
+    });
+  });
+
   test("agent smoke distinguishes a running service from a pending record", () => {
     expect(
       parseAgentServiceProcessState(
