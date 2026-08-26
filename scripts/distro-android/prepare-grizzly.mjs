@@ -202,6 +202,100 @@ function normalizeGeneratedUsbConfigfs(aospRoot) {
   }
 }
 
+// Google's stock Android 17 grizzly image enables SurfaceFlinger's Graphite
+// Vulkan RenderEngine. The extracted proprietary PowerVR EGL implementation
+// does not expose an EGL_RECORDABLE_ANDROID RGBA_8888 window+pbuffer config
+// accepted by the Android 17 SkiaGL RenderEngine, while the same stock stack
+// exposes a working Vulkan 1.4 device with protected-memory support. Preserve
+// the stock render path through SurfaceFlinger's supported flag override; do
+// not force a backend, so RenderEngine::canSupport(Vk) remains authoritative.
+export function normalizeGeneratedRenderEngine(aospRoot) {
+  const makefilePath = path.join(
+    aospRoot,
+    "vendor/google_devices/grizzly/grizzly.mk",
+  );
+  if (!fs.existsSync(makefilePath)) return;
+  const contents = fs.readFileSync(makefilePath, "utf8");
+  if (contents.includes("debug.renderengine.graphite=true")) return;
+  fs.writeFileSync(
+    makefilePath,
+    `${contents.trimEnd()}\n\n# Match the stock Pixel 11 Pro Android 17 RenderEngine path.\nPRODUCT_SYSTEM_PROPERTIES += \\\n    debug.renderengine.graphite=true\n`,
+  );
+}
+
+// Keep bring-up observability separate from the extracted stock init actions.
+// The diagnostics are packaged explicitly, gated to debuggable builds, and do
+// not alter module readiness, storage, or Android's canonical boot triggers.
+export function stageGeneratedBringupDiagnostics(aospRoot) {
+  const generatedRoot = path.join(aospRoot, "vendor/google_devices/grizzly");
+  const stockInitPath = path.join(
+    generatedRoot,
+    "proprietary/vendor/etc/init/hw/init.grizzly.rc",
+  );
+  const makefilePath = path.join(generatedRoot, "grizzly.mk");
+  for (const requiredPath of [stockInitPath, makefilePath]) {
+    if (!fs.existsSync(requiredPath)) {
+      fail(`generated bring-up diagnostics require ${requiredPath}`);
+    }
+  }
+
+  const importLine = "import /vendor/etc/init/hw/init.elizaos-debug.rc";
+  const stockInit = fs.readFileSync(stockInitPath, "utf8");
+  if (!stockInit.includes(importLine)) {
+    const normalized = stockInit.replace(
+      /^# grizzly specific init\.rc$/m,
+      `# grizzly specific init.rc\n${importLine}`,
+    );
+    if (normalized === stockInit) {
+      fail("generated init.grizzly.rc is missing its expected header");
+    }
+    fs.chmodSync(stockInitPath, 0o644);
+    fs.writeFileSync(stockInitPath, normalized);
+  }
+
+  const debugInitRelative =
+    "proprietary/vendor/etc/init/hw/init.elizaos-debug.rc";
+  const debugInitPath = path.join(generatedRoot, debugInitRelative);
+  fs.mkdirSync(path.dirname(debugInitPath), { recursive: true });
+  fs.writeFileSync(
+    debugInitPath,
+    `# elizaOS userdebug bring-up diagnostics; remove after hardware qualification.
+
+on early-init && property:ro.debuggable=1
+    write /metadata/elizaos_vendor_early_init.marker 1
+    setprop sys.usb.controller a210000.dwc3
+    setprop sys.usb.configfs 1
+    setprop persist.sys.usb.config adb
+    setprop sys.usb.config adb
+    start adbd
+
+on post-fs && property:ro.debuggable=1
+    write /metadata/elizaos_vendor_post_fs.marker 1
+
+on late-fs && property:ro.debuggable=1
+    write /metadata/elizaos_vendor_late_fs.marker 1
+
+on post-fs-data && property:ro.debuggable=1
+    write /metadata/elizaos_vendor_post_fs_data.marker 1
+
+on boot && property:ro.debuggable=1
+    write /metadata/elizaos_vendor_boot.marker 1
+`,
+  );
+  fs.chmodSync(debugInitPath, 0o644);
+
+  const copyDestination =
+    "$(TARGET_COPY_OUT_VENDOR)/etc/init/hw/init.elizaos-debug.rc";
+  const copyEntry = `    vendor/google_devices/grizzly/${debugInitRelative}:${copyDestination}`;
+  const makefile = fs.readFileSync(makefilePath, "utf8");
+  if (!makefile.includes(copyDestination)) {
+    fs.writeFileSync(
+      makefilePath,
+      `${makefile.trimEnd()}\n\n# elizaOS userdebug bring-up diagnostics\nPRODUCT_COPY_FILES += \\\n${copyEntry}\n`,
+    );
+  }
+}
+
 function fail(message) {
   throw new Error(`[distro-android:grizzly] ${message}`);
 }
@@ -213,8 +307,8 @@ function run(command, args, options = {}) {
     encoding: "utf8",
     stdio: "inherit",
   });
-  if (result.error) fail(`${command} failed: ${result.error.message}`);
   if (result.status !== 0) {
+    if (result.error) fail(`${command} failed: ${result.error.message}`);
     fail(`${command} ${args.join(" ")} exited ${result.status}`);
   }
 }
@@ -323,6 +417,8 @@ export async function prepareGrizzly({
       normalizeGeneratedVintf(aospRoot);
       normalizeGeneratedF2fsMountOptions(aospRoot);
       normalizeGeneratedUsbConfigfs(aospRoot);
+      normalizeGeneratedRenderEngine(aospRoot);
+      stageGeneratedBringupDiagnostics(aospRoot);
       assertGeneratedVendorTree(aospRoot, lock);
       generatedTreeComplete = true;
     } catch {
@@ -350,6 +446,8 @@ export async function prepareGrizzly({
     normalizeGeneratedVintf(aospRoot);
     normalizeGeneratedF2fsMountOptions(aospRoot);
     normalizeGeneratedUsbConfigfs(aospRoot);
+    normalizeGeneratedRenderEngine(aospRoot);
+    stageGeneratedBringupDiagnostics(aospRoot);
   }
   const files = assertGeneratedVendorTree(aospRoot, lock);
 

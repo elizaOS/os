@@ -43,7 +43,16 @@ import {
   aospBuildEnvironment,
   assertBuildHost,
 } from "../../../../scripts/distro-android/build-aosp.mjs";
-import { parseArgs as parseGrizzlyArgs } from "../../../../scripts/distro-android/prepare-grizzly.mjs";
+import {
+  GRAPHICS_PROBES,
+  parseArgs as parseGraphicsEvidenceArgs,
+  probeSucceeded,
+} from "../../../../scripts/distro-android/collect-grizzly-graphics.mjs";
+import {
+  normalizeGeneratedRenderEngine,
+  parseArgs as parseGrizzlyArgs,
+  stageGeneratedBringupDiagnostics,
+} from "../../../../scripts/distro-android/prepare-grizzly.mjs";
 import { loadCuttlefishE1Lock } from "../../../../scripts/distro-android/provision-cuttlefish-e1.mjs";
 import { withSisoCompatibility } from "../../../../scripts/distro-android/siso-env.mjs";
 
@@ -760,6 +769,95 @@ describe("AOSP build contracts", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  test("Pixel bring-up diagnostics preserve init ordering and module readiness", async () => {
+    const root = await mkdtemp(join(tmpdir(), "elizaos-grizzly-debug-init-"));
+    const generatedRoot = join(root, "vendor/google_devices/grizzly");
+    const initPath = join(
+      generatedRoot,
+      "proprietary/vendor/etc/init/hw/init.grizzly.rc",
+    );
+    const makefilePath = join(generatedRoot, "grizzly.mk");
+    try {
+      await mkdir(dirname(initPath), { recursive: true });
+      await writeFile(
+        initPath,
+        "# grizzly specific init.rc\n\non early-boot\n    wait_for_prop vendor.common.modules.ready 1\n",
+      );
+      await writeFile(makefilePath, "PRODUCT_NAME := grizzly\n");
+
+      normalizeGeneratedRenderEngine(root);
+      normalizeGeneratedRenderEngine(root);
+      stageGeneratedBringupDiagnostics(root);
+      stageGeneratedBringupDiagnostics(root);
+
+      const init = readFileSync(initPath, "utf8");
+      const debugInit = readFileSync(
+        join(
+          generatedRoot,
+          "proprietary/vendor/etc/init/hw/init.elizaos-debug.rc",
+        ),
+        "utf8",
+      );
+      const makefile = readFileSync(makefilePath, "utf8");
+      expect(
+        init.match(/import \/vendor\/etc\/init\/hw\/init\.elizaos-debug\.rc/g),
+      ).toHaveLength(1);
+      expect(init).toContain("wait_for_prop vendor.common.modules.ready 1");
+      expect(debugInit).toContain("on early-init && property:ro.debuggable=1");
+      expect(debugInit).not.toMatch(/^on early-init$/m);
+      expect(debugInit).not.toContain("trigger post-fs-data");
+      expect(makefile.match(/init\.elizaos-debug\.rc/g)).toHaveLength(2);
+      expect(makefile).toContain(
+        "    vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.elizaos-debug.rc:$(TARGET_COPY_OUT_VENDOR)/etc/init/hw/init.elizaos-debug.rc",
+      );
+      expect(makefile).not.toContain("\n+    vendor/google_devices/grizzly/");
+      expect(
+        makefile.match(/debug\.renderengine\.graphite=true/g),
+      ).toHaveLength(1);
+      expect(makefile).not.toContain("debug.renderengine.backend");
+      expect(makefile).not.toContain("debug.renderengine.vulkan");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("Pixel graphics evidence collection is comprehensive and read-only", () => {
+    const parsed = parseGraphicsEvidenceArgs([
+      "--serial",
+      "pixel-under-test",
+      "--output-dir",
+      "/tmp/grizzly-evidence",
+    ]);
+    expect(parsed.serial).toBe("pixel-under-test");
+    expect(parsed.outputDir).toBe("/tmp/grizzly-evidence");
+
+    const probeNames = GRAPHICS_PROBES.map(({ name }) => name);
+    expect(new Set(probeNames).size).toBe(GRAPHICS_PROBES.length);
+    expect(probeNames).toEqual(
+      expect.arrayContaining([
+        "graphics-properties",
+        "graphics-libraries",
+        "graphics-library-contexts",
+        "surfaceflinger-dump",
+        "gpu-dump",
+        "vulkan-json",
+        "vendor-vintf",
+        "hal-services",
+        "kernel-graphics",
+        "logcat-all",
+      ]),
+    );
+    const commands = GRAPHICS_PROBES.flatMap(({ args }) => args).join("\n");
+    expect(commands).not.toMatch(/(^|[;&|]\s*)(setprop|stop|start|reboot)\b/);
+    expect(probeSucceeded({ status: 0, signal: null, error: null })).toBeTrue();
+    expect(
+      probeSucceeded({ status: 0, signal: null, error: "spawn warning" }),
+    ).toBeFalse();
+    expect(
+      probeSucceeded({ status: 1, signal: null, error: null }),
+    ).toBeFalse();
   });
 
   test("Pixel deployment uses the OS brand contract accepted by build-aosp", () => {
