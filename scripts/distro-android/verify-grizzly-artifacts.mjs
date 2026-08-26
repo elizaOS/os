@@ -44,25 +44,33 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 
 const PRODUCT_DEVICE = "grizzly";
 const STAMP_RELATIVE_PATH =
   "vendor/google_devices/grizzly/.elizaos-prepare-stamp.json";
-// Partitions we build and flash for grizzly bring-up. boot-chain partitions
-// stay stock (factory kernel), so they are intentionally absent.
-const ATTESTED_IMAGES = [
+// Partitions in the coherent grizzly flash handoff. Keep boot-chain and
+// logical-partition metadata pinned too; mixing generations is unsafe.
+const REQUIRED_ATTESTED_IMAGES = [
+  "boot.img",
+  "init_boot.img",
+  "dtbo.img",
+  "vendor_kernel_boot.img",
+  "pvmfw.img",
+  "vendor_boot.img",
+  "vbmeta.img",
   "system.img",
   "system_ext.img",
   "product.img",
   "vendor.img",
   "vendor_dlkm.img",
   "system_dlkm.img",
-  "vbmeta.img",
-  "vbmeta_system.img",
-  "vbmeta_vendor.img",
+  "system_other.img",
+  "super_empty.img",
 ];
+const OPTIONAL_ATTESTED_IMAGES = ["vbmeta_system.img", "vbmeta_vendor.img"];
 
 function fail(message) {
   console.error(`[verify-grizzly-artifacts] ERROR: ${message}`);
@@ -148,6 +156,32 @@ function productOutDir(aospRoot) {
     ? configured
     : path.join(aospRoot, configured);
   return path.join(outRoot, "target", "product", PRODUCT_DEVICE);
+}
+
+// Modern AOSP removes unpacked staging trees after packaging. Read final
+// sparse ext4 images for the contract checks so we verify what fastboot gets.
+function readImageEntry(aospRoot, imagePath, entryPath) {
+  if (!fs.existsSync(imagePath)) return null;
+  const configured = process.env.OUT_DIR?.trim() || "out";
+  const outRoot = path.isAbsolute(configured)
+    ? configured
+    : path.join(aospRoot, configured);
+  const simg2img = path.join(outRoot, "host/linux-x86/bin/simg2img");
+  const temporaryDir = fs.mkdtempSync(path.join(os.tmpdir(), "grizzly-img-"));
+  const rawPath = path.join(temporaryDir, "image.raw");
+  try {
+    const header = fs.readFileSync(imagePath).subarray(0, 4);
+    const sourcePath = header.equals(Buffer.from([0x3a, 0xff, 0x26, 0xed])) && fs.existsSync(simg2img)
+      ? (execFileSync(simg2img, [imagePath, rawPath]), rawPath)
+      : imagePath;
+    try {
+      return execFileSync("debugfs", ["-R", `cat /${entryPath}`, sourcePath], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    } catch {
+      return null;
+    }
+  } finally {
+    fs.rmSync(temporaryDir, { recursive: true, force: true });
+  }
 }
 
 // The staged vendor/build.prop is what vendor.img is packaged from; verifying
@@ -240,6 +274,29 @@ function assertStagedProbes(stagedVendorDir, stamp) {
   info(`staged bring-up probes verified (enabled=${stamp.earlyBootProbes})`);
 }
 
+function assertPackagedVendorEntries(aospRoot, productDir, stamp) {
+  const vendorImage = path.join(productDir, "vendor.img");
+  const buildProp = readImageEntry(aospRoot, vendorImage, "build.prop");
+  const fstab = readImageEntry(aospRoot, vendorImage, "etc/fstab.malibu");
+  if (!buildProp || !fstab) fail("vendor.img is missing packaged build.prop or fstab.malibu; refusing to attest an opaque image");
+  const backendMatch = buildProp.match(/^debug\.renderengine\.backend=(\S+)$/m);
+  const stagedBackend = backendMatch ? backendMatch[1] : null;
+  if (stagedBackend !== (stamp.renderengineBackend ?? null)) fail(`packaged vendor build.prop backend=${JSON.stringify(stagedBackend)} does not match prepare stamp`);
+  const graphiteMatch = buildProp.match(/^debug\.renderengine\.graphite=(true|false)$/m);
+  if (!graphiteMatch || (graphiteMatch[1] === "true") !== stamp.renderengineGraphite) fail("packaged vendor build.prop graphite value does not match prepare stamp");
+  const stagedAngle = /^persist\.graphics\.egl=angle$/m.test(buildProp);
+  if ((stamp.eglSelection === "native" && stagedAngle) || (stamp.eglSelection !== "native" && !stagedAngle)) fail("packaged vendor EGL selection does not match prepare stamp");
+  const rewritten = /elizaos/i.test(fstab);
+  if (stamp.conservativeF2fs !== rewritten) fail("packaged vendor fstab stance does not match prepare stamp");
+  if (!stamp.conservativeF2fs) {
+    const userdataLine = fstab.split("\n").find((line) => /\s\/data\s/.test(line) && !line.trim().startsWith("#"));
+    if (!userdataLine || !userdataLine.includes("fileencryption=") || !userdataLine.includes("metadata_encryption=")) fail("packaged vendor fstab lost the stock /data encryption contract");
+  }
+  const probe = readImageEntry(aospRoot, vendorImage, "etc/init/hw/init.elizaos-debug.rc");
+  if ((probe !== null) !== stamp.earlyBootProbes) fail("packaged vendor probe state does not match prepare stamp");
+  info(`packaged vendor image verified: backend=${stagedBackend ?? "(stock)"} graphite=${stamp.renderengineGraphite}`);
+}
+
 // 16 KiB page-size kernels refuse to map ELFs whose LOAD segments are aligned
 // below 16384. Stock vendor blobs are Google's problem; the binaries WE add
 // (Eliza app JNI, inference runtimes) are ours. Uses llvm-readelf from the
@@ -314,9 +371,13 @@ function attest({ aospRoot, out }) {
     fail(`product out dir missing: ${productDir}; build first`);
   }
   const stagedVendorDir = path.join(productDir, "vendor");
-  assertStagedRenderEngine(stagedVendorDir, stamp);
-  assertStagedFstab(stagedVendorDir, stamp);
-  assertStagedProbes(stagedVendorDir, stamp);
+  if (fs.existsSync(path.join(stagedVendorDir, "build.prop"))) {
+    assertStagedRenderEngine(stagedVendorDir, stamp);
+    assertStagedFstab(stagedVendorDir, stamp);
+    assertStagedProbes(stagedVendorDir, stamp);
+  } else {
+    assertPackagedVendorEntries(aospRoot, productDir, stamp);
+  }
   checkElfAlignment(aospRoot, productDir);
 
   // A vendor.img older than any staged vendor file is definitionally stale.
@@ -332,10 +393,10 @@ function attest({ aospRoot, out }) {
   }
 
   const images = {};
-  for (const name of ATTESTED_IMAGES) {
+  for (const name of [...REQUIRED_ATTESTED_IMAGES, ...OPTIONAL_ATTESTED_IMAGES]) {
     const imagePath = path.join(productDir, name);
     if (!fs.existsSync(imagePath)) {
-      // vbmeta_vendor and some dlkm images legitimately vary by target.
+      if (REQUIRED_ATTESTED_IMAGES.includes(name)) fail(`required image absent: ${name}`);
       warn(`image absent, not attested: ${name}`);
       continue;
     }

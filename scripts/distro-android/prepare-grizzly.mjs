@@ -375,6 +375,52 @@ export function normalizeGeneratedBringupProbes(aospRoot) {
   stageGeneratedBringupDiagnostics(aospRoot);
 }
 
+// DIAGNOSTIC-ONLY init experiment, opt-in via
+// ELIZAOS_GRIZZLY_KEYMASTER_NONBLOCKING=1. Keep this explicit and
+// stamp-bound: it changes the stock post-fs-data keymaster notification from
+// a synchronous wait into a background notification for boot diagnostics.
+export function normalizeAospKeymasterInit(aospRoot, enabled = false) {
+  const sourceInitPath = path.join(aospRoot, "system/core/rootdir/init.rc");
+  const generatedRoot = path.join(aospRoot, "vendor/google_devices/grizzly");
+  const overlayInitPath = path.join(generatedRoot, "diagnostics/system/etc/init/hw/init.rc");
+  const makefilePath = path.join(generatedRoot, "grizzly.mk");
+  if (!fs.existsSync(sourceInitPath) || !fs.existsSync(makefilePath)) {
+    fail(`keymaster diagnostic requires ${sourceInitPath} and ${makefilePath}`);
+  }
+  const contents = fs.readFileSync(sourceInitPath, "utf8");
+  const blocking = "exec - system system -- /system/bin/vdc keymaster earlyBootEnded";
+  const background = "exec_background - system system -- /system/bin/vdc keymaster earlyBootEnded";
+  const marker = "elizaOS: diagnostic non-blocking keymaster notification";
+  if (!enabled) {
+    fs.rmSync(overlayInitPath, { force: true });
+    const makefile = fs.readFileSync(makefilePath, "utf8");
+    const withoutOverlay = makefile.replace(/\n?# elizaOS diagnostic keymaster init overlay\nPRODUCT_COPY_FILES += \\\n {4}vendor\/google_devices\/grizzly\/diagnostics\/system\/etc\/init\/hw\/init\.rc:\$\(TARGET_COPY_OUT_SYSTEM\)\/etc\/init\/hw\/init\.rc\n?/m, "\n");
+    if (withoutOverlay !== makefile) fs.writeFileSync(makefilePath, withoutOverlay);
+    return;
+  }
+  const escape = (value) => value.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&");
+  const blockingPattern = new RegExp(`^([\\t ]*)${escape(blocking)}$`, "m");
+  if (!blockingPattern.test(contents)) {
+    if (new RegExp(`^([\\t ]*)${escape(background)}$`, "m").test(contents)) {
+      fail(`${sourceInitPath} already uses exec_background without the elizaOS marker`);
+    }
+    fail(`${sourceInitPath} is missing the expected vdc keymaster earlyBootEnded command`);
+  }
+  const normalized = contents.replace(blockingPattern, `$1# ${marker}\n$1${background}`);
+  fs.mkdirSync(path.dirname(overlayInitPath), { recursive: true });
+  if (!fs.existsSync(overlayInitPath) || fs.readFileSync(overlayInitPath, "utf8") !== normalized) fs.writeFileSync(overlayInitPath, normalized);
+  const makefile = fs.readFileSync(makefilePath, "utf8");
+  const copyEntry = "    vendor/google_devices/grizzly/diagnostics/system/etc/init/hw/init.rc:$(TARGET_COPY_OUT_SYSTEM)/etc/init/hw/init.rc";
+  if (!makefile.includes(copyEntry)) fs.writeFileSync(makefilePath, `${makefile.trimEnd()}\n\n# elizaOS diagnostic keymaster init overlay\nPRODUCT_COPY_FILES += \\\n${copyEntry}\n`);
+}
+
+export function generatedTreeHasKeymasterOverride(aospRoot) {
+  const generatedRoot = path.join(aospRoot, "vendor/google_devices/grizzly");
+  const overlayPath = path.join(generatedRoot, "diagnostics/system/etc/init/hw/init.rc");
+  const makefilePath = path.join(generatedRoot, "grizzly.mk");
+  return (fs.existsSync(overlayPath) && /diagnostic non-blocking keymaster notification/.test(fs.readFileSync(overlayPath, "utf8"))) || (fs.existsSync(makefilePath) && /diagnostic keymaster init overlay/.test(fs.readFileSync(makefilePath, "utf8")));
+}
+
 // After the generated tree exists, prove the graphics stack adevtool extracted
 // is complete enough to boot past SurfaceFlinger init. These are the pieces
 // whose absence produces a silent hang or an EGL-loader abort at runtime; the
@@ -423,10 +469,10 @@ export function assertGeneratedGraphicsStack(aospRoot) {
     /^persist\.graphics\.egl=angle$/m.test(
       fs.readFileSync(vendorProp, "utf8"),
     ) &&
-    !eglLibs.some((name) => name.includes("angle"))
+    !fs.existsSync(path.join(aospRoot, "external/angle"))
   ) {
     fail(
-      "vendor.prop selects persist.graphics.egl=angle but no ANGLE library exists under vendor/lib64/egl; the EGL loader aborts every client in this state",
+      "vendor.prop selects persist.graphics.egl=angle but the AOSP external/angle source is absent; the staged EGL loader would abort every client in this state",
     );
   }
   const firmwareDir = path.join(vendorRoot, "firmware");
@@ -454,6 +500,7 @@ export function currentPrepareStamp(env = process.env) {
     eglSelection: resolveEglOverride(env),
     earlyBootProbes: env.ELIZAOS_GRIZZLY_EARLY_BOOT_PROBES === "1",
     conservativeF2fs: env.ELIZAOS_GRIZZLY_CONSERVATIVE_F2FS === "1",
+    keymasterNonblocking: env.ELIZAOS_GRIZZLY_KEYMASTER_NONBLOCKING === "1",
   };
 }
 
@@ -679,11 +726,14 @@ export async function prepareGrizzly({
     process.env.ELIZAOS_GRIZZLY_EARLY_BOOT_PROBES === "1";
   const conservativeF2fs =
     process.env.ELIZAOS_GRIZZLY_CONSERVATIVE_F2FS === "1";
+  const keymasterNonblocking =
+    process.env.ELIZAOS_GRIZZLY_KEYMASTER_NONBLOCKING === "1";
   let generatedTreeComplete = false;
   if (
     fs.existsSync(generatedRoot) &&
     ((!enableBringupProbes && generatedTreeHasBringupProbes(aospRoot)) ||
       (!conservativeF2fs && generatedTreeHasF2fsFallback(aospRoot)) ||
+      (!keymasterNonblocking && generatedTreeHasKeymasterOverride(aospRoot)) ||
       (resolveEglOverride() !== "native" &&
         generatedTreeHasEglOverride(aospRoot)))
   ) {
@@ -699,6 +749,7 @@ export async function prepareGrizzly({
       normalizeGeneratedProprietaryNamespace(aospRoot);
       normalizeGeneratedSePolicy(aospRoot);
       normalizeGeneratedVintf(aospRoot);
+      normalizeAospKeymasterInit(aospRoot, keymasterNonblocking);
       if (conservativeF2fs) normalizeGeneratedF2fsMountOptions(aospRoot);
       normalizeGeneratedGraphicsProperties(aospRoot);
       if (enableBringupProbes) normalizeGeneratedBringupProbes(aospRoot);
@@ -727,6 +778,7 @@ export async function prepareGrizzly({
     normalizeGeneratedProprietaryNamespace(aospRoot);
     normalizeGeneratedSePolicy(aospRoot);
     normalizeGeneratedVintf(aospRoot);
+    normalizeAospKeymasterInit(aospRoot, keymasterNonblocking);
     if (conservativeF2fs) normalizeGeneratedF2fsMountOptions(aospRoot);
     normalizeGeneratedGraphicsProperties(aospRoot);
     if (enableBringupProbes) normalizeGeneratedBringupProbes(aospRoot);
