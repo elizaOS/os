@@ -163,7 +163,10 @@ first bring-up deliberately uses the stock `spacecraft` kernel, modules, DTB,
 and DTBO extracted by `adevtool`; it does not treat the missing public kernel
 source as reconstructed source.
 
-Use a Linux x86_64 builder with at least 30 GB RAM and 600 GB free disk:
+Use the dedicated Linux x86_64 builder specified in
+[`docs/grizzly-build-handoff.md`](docs/grizzly-build-handoff.md); the production
+lane requires at least 32 physical cores, 128 GB RAM, and 1.5 TB fast local
+storage:
 
 ```bash
 make -C packages/os/android bootstrap-grizzly \
@@ -173,14 +176,29 @@ make -C packages/os/android prepare-grizzly \
 make -C packages/os/android build-grizzly \
   AOSP_GRIZZLY_ROOT=/build/aosp-grizzly \
   ELIZAOS_ELIZA_ROOT=/build/eliza
+SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" \
+make -C packages/os/android bundle-grizzly \
+  AOSP_GRIZZLY_ROOT=/build/aosp-grizzly \
+  ELIZAOS_ELIZA_ROOT=/build/eliza \
+  BUNDLE_DIR=/build/elizaos-grizzly-bundle
 ```
 
 Preparation uses sparse exact-commit Git checkouts for the generation inputs,
 runs `adevtool generate-all -d grizzly`, verifies the required output, and
 retains and verifies both factory images. Downloads are governed by Google's
 Pixel factory-image terms, which `adevtool` displays before download. The
-result remains installer-ineligible until the exact image completes the full
-physical validation and rollback matrix.
+bundle target completes the full `dist` build while also building the pinned
+`host_init_verifier` and `checkvintf` host tools, verifies `vbmeta.img` with the
+built `avbtool`, refuses dirty source trees or a missing flash input or
+privileged APK, and emits exact source identities, SHA-256 values, and sizes.
+`SOURCE_DATE_EPOCH` is mandatory so the handoff metadata is reproducible. Sign
+`SHA256SUMS` only with the separately provisioned offline release key; this
+command never generates or accepts private signing material. The generated
+`fastboot-info.txt` is the flashing authority: do not replace it with a direct
+`fastboot flash system` operation on the dynamic-super device.
+
+The result remains installer-ineligible until the exact image completes the
+full physical validation and rollback matrix.
 
 `scripts/aosp/` contains device deployment and Cuttlefish runtime smoke
 orchestration. App compilation and agent-payload staging remain in the

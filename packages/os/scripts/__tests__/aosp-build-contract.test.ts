@@ -9,6 +9,15 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  assertApkProvenanceEntries,
+  assertSafeFlashMetadata,
+  collectGrizzlyArtifacts,
+  parseArgs as parseBundleArgs,
+  parseFastbootInfoArtifacts,
+  REQUIRED_APK_PROVENANCE,
+  REQUIRED_GRIZZLY_ARTIFACTS,
+} from "../../../../scripts/aosp/build-grizzly-bundle.mjs";
+import {
   loadPhysicalTargetContract,
   parseArgs as parseDeployArgs,
   resolveBuiltPrivilegedApk,
@@ -22,9 +31,9 @@ import {
   parseBootstrapArgs,
   verifyProprietaryArchive,
 } from "../../../../scripts/distro-android/bootstrap-aosp.mjs";
+import { loadBrandConfig } from "../../../../scripts/distro-android/brand-config.mjs";
 import { assertBuildHost } from "../../../../scripts/distro-android/build-aosp.mjs";
 import { parseArgs as parseGrizzlyArgs } from "../../../../scripts/distro-android/prepare-grizzly.mjs";
-import { loadBrandConfig } from "../../../../scripts/distro-android/brand-config.mjs";
 import { loadCuttlefishE1Lock } from "../../../../scripts/distro-android/provision-cuttlefish-e1.mjs";
 import { withSisoCompatibility } from "../../../../scripts/distro-android/siso-env.mjs";
 
@@ -109,6 +118,10 @@ describe("AOSP build contracts", () => {
     expect(makefile).toContain("provision-repo.sh");
     expect(makefile).toContain('--repo-bin "$(REPO_LAUNCHER)"');
     expect(makefile).toContain("stage-elizavoice-lib.mjs");
+    expect(makefile).toContain("bundle-grizzly:");
+    expect(makefile).toContain("build-grizzly-bundle.mjs");
+    expect(makefile).toContain('test -n "$$SOURCE_DATE_EPOCH"');
+    expect(makefile).toContain('test -n "$(BUNDLE_DIR)"');
     expect(makefile).not.toContain("ELIZA_MTP_ANDROID_LIBDIR");
   });
 
@@ -345,7 +358,10 @@ describe("AOSP build contracts", () => {
     );
 
     const e1Brand = loadBrandConfig(
-      join(repositoryRoot, "scripts/distro-android/brand.eliza-riscv64-e1.json"),
+      join(
+        repositoryRoot,
+        "scripts/distro-android/brand.eliza-riscv64-e1.json",
+      ),
     );
     expect(e1Brand).toMatchObject({
       productName: "eliza_cf_riscv64_e1_phone",
@@ -922,5 +938,115 @@ describe("AOSP build contracts", () => {
         kvmPath: "/definitely/missing/kvm",
       }),
     ).toThrow("Cuttlefish launch requires /dev/kvm");
+  });
+
+  test("the grizzly handoff requires and digest-binds every flash input", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eliza-grizzly-bundle-"));
+    const productOut = join(root, "product");
+    const bundleDir = join(root, "bundle");
+    try {
+      await mkdir(productOut, { recursive: true });
+      for (const artifact of REQUIRED_GRIZZLY_ARTIFACTS) {
+        await writeFile(
+          join(productOut, artifact),
+          artifact === "fastboot-info.txt"
+            ? [
+                "version 1",
+                "flash boot",
+                "flash --apply-vbmeta vbmeta",
+                "flash vbmeta_system",
+                "flash --slot-other system system_other.img",
+                "reboot fastboot",
+                "update-super",
+                "if-wipe erase userdata",
+                "",
+              ].join("\n")
+            : `${artifact}\n`,
+        );
+      }
+      await writeFile(join(productOut, "vbmeta_system.img"), "vbmeta-system\n");
+      const collected = collectGrizzlyArtifacts({ productOut, bundleDir });
+      expect(collected.map(({ filename }) => filename)).toEqual([
+        ...REQUIRED_GRIZZLY_ARTIFACTS,
+        "vbmeta_system.img",
+      ]);
+      expect(
+        collected.every(({ sha256 }) => /^[a-f0-9]{64}$/.test(sha256)),
+      ).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the grizzly handoff rejects incomplete output and invalid concurrency", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eliza-grizzly-bundle-"));
+    try {
+      await mkdir(join(root, "product"), { recursive: true });
+      expect(() =>
+        collectGrizzlyArtifacts({
+          productOut: join(root, "product"),
+          bundleDir: join(root, "bundle"),
+        }),
+      ).toThrow("required build artifact boot.img");
+      expect(() =>
+        parseBundleArgs([
+          "--aosp-root",
+          root,
+          "--output-dir",
+          join(root, "out"),
+          "--jobs",
+          "0",
+        ]),
+      ).toThrow("--jobs must be an integer from 1 through 256");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the grizzly handoff requires both APK provenance records", () => {
+    expect(assertApkProvenanceEntries([...REQUIRED_APK_PROVENANCE])).toEqual([
+      ...REQUIRED_APK_PROVENANCE,
+    ]);
+    expect(() =>
+      assertApkProvenanceEntries(["META-INF/eliza/aosp-build-provenance.json"]),
+    ).toThrow("assets/agent/android-agent-runtime-provenance.json");
+  });
+
+  test("the grizzly handoff requires a safe dynamic-super flash plan", () => {
+    expect(
+      assertSafeFlashMetadata({
+        androidInfo: "require board=grizzly\n",
+        fastbootInfo:
+          "version 1\nflash boot\nreboot fastboot\nupdate-super\nflash system\n",
+      }),
+    ).toEqual({ rebootFastbootIndex: 2, updateSuperIndex: 3 });
+    expect(() =>
+      assertSafeFlashMetadata({
+        androidInfo: "require board=grizzly\n",
+        fastbootInfo:
+          "version 1\nflash system\nreboot fastboot\nupdate-super\n",
+      }),
+    ).toThrow("flash system before update-super");
+    expect(() =>
+      assertSafeFlashMetadata({
+        androidInfo: "require board=grizzly\n",
+        fastbootInfo:
+          "version 1\nreboot fastboot\nupdate-super\nerase userdata\n",
+      }),
+    ).toThrow("must not erase userdata or metadata");
+  });
+
+  test("the grizzly handoff rejects an unsafe or unknown flash authority", () => {
+    expect(() =>
+      parseFastbootInfoArtifacts(
+        "version 1\nflash --slot-other system ../system_other.img\n",
+      ),
+    ).toThrow("unsafe image filename");
+    expect(() => parseFastbootInfoArtifacts("version 1\noem unlock\n")).toThrow(
+      "unsupported fastboot-info command",
+    );
+    expect(() => parseFastbootInfoArtifacts("flash boot\n")).toThrow(
+      "missing its version",
+    );
   });
 });
