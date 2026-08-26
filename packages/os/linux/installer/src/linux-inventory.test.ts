@@ -8,7 +8,9 @@ import {
   parseLinuxBootAncestorPaths,
   parseLinuxLsblkInventory,
   parseLinuxRootBlockSource,
+  probeLinuxBtrfsFilesystem,
   probeLinuxExt4Filesystem,
+  probeLinuxPartitionFilesystems,
 } from "./linux-inventory";
 
 const GIB = 1024 ** 3;
@@ -108,6 +110,114 @@ function parse(
 }
 
 describe("Linux read-only disk inventory parser", () => {
+  it("classifies a clean unmounted btrfs filesystem without inventing resize evidence", async () => {
+    const calls: Array<[string, readonly string[]]> = [];
+    const evidence = await probeLinuxBtrfsFilesystem({
+      devicePath: "/dev/vda2",
+      runner: {
+        async run(command, args) {
+          calls.push([command, args]);
+          return {
+            exitCode: 0,
+            stdout: [
+              "Opening filesystem to check...",
+              "found 163840 bytes used, no error found",
+              "[8/8] checking quota groups skipped (not enabled on this FS)",
+            ].join("\n"),
+            stderr: "",
+          };
+        },
+      },
+    });
+
+    expect(evidence).toEqual({ filesystemHealth: "healthy" });
+    expect(evidence).not.toHaveProperty("minimumBytes");
+    expect(calls).toEqual([
+      ["/usr/bin/btrfs", ["check", "--readonly", "/dev/vda2"]],
+    ]);
+  });
+
+  it("wires btrfs health into partition inventory and skips mounted filesystems", async () => {
+    const calls: Array<[string, readonly string[]]> = [];
+    const runner: LinuxInventoryCommandRunner = {
+      async run(command, args) {
+        calls.push([command, args]);
+        return {
+          exitCode: 0,
+          stdout: "found 163840 bytes used, no error found\n",
+          stderr: "",
+        };
+      },
+    };
+    const serialized = serializedInventory({}, { fstype: "btrfs" });
+    const partitions = await probeLinuxPartitionFilesystems({
+      inventory: parse(serialized),
+      serialized,
+      runner,
+    });
+
+    expect(partitions[1]).toMatchObject({
+      filesystem: "btrfs",
+      filesystemHealth: "healthy",
+    });
+    expect(partitions[1]?.resize).toBeUndefined();
+    expect(calls).toEqual([
+      ["/usr/bin/btrfs", ["check", "--readonly", "/dev/vda2"]],
+    ]);
+
+    calls.length = 0;
+    const mountedSerialized = serializedInventory(
+      {},
+      { fstype: "btrfs", mountpoints: ["/srv"] },
+    );
+    const mounted = await probeLinuxPartitionFilesystems({
+      inventory: parse(mountedSerialized),
+      serialized: mountedSerialized,
+      runner,
+    });
+    expect(mounted[1]?.filesystemHealth).toBe("unknown");
+    expect(calls).toEqual([]);
+  });
+
+  it("fails btrfs health classification closed on errors and ambiguous output", async () => {
+    const probe = async (result: LinuxInventoryCommandResult) =>
+      probeLinuxBtrfsFilesystem({
+        devicePath: "/dev/vda2",
+        runner: {
+          async run() {
+            return result;
+          },
+        },
+      });
+
+    await expect(
+      probe({ exitCode: 1, stdout: "", stderr: "errors found" }),
+    ).resolves.toEqual({ filesystemHealth: "unhealthy" });
+    await expect(
+      probe({
+        exitCode: 0,
+        stdout: "no error found",
+        stderr: "WARNING: checksum mismatch",
+      }),
+    ).resolves.toEqual({ filesystemHealth: "unhealthy" });
+    await expect(
+      probe({ exitCode: 0, stdout: "check complete", stderr: "" }),
+    ).resolves.toEqual({ filesystemHealth: "unknown" });
+    await expect(
+      probe({ exitCode: 127, stdout: "", stderr: "not found" }),
+    ).resolves.toEqual({ filesystemHealth: "unknown" });
+    await expect(
+      probeLinuxBtrfsFilesystem({
+        devicePath: "/dev/../etc/passwd",
+        runner: {
+          async run() {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          },
+        },
+      }),
+    ).rejects.toThrow(/device path/);
+  });
+
   it("derives bounded ext4 resize evidence from read-only native probes", async () => {
     const calls: Array<[string, readonly string[]]> = [];
     const runner: LinuxInventoryCommandRunner = {

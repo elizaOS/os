@@ -40,8 +40,14 @@ and encryption classifications. Unmounted ext4 filesystems are checked with
 read-only `dumpe2fs`, `e2fsck -f -n`, and `resize2fs -P` probes. Clean 4 KiB
 filesystems receive bounded minimum-size evidence; dirty and unhealthy ext4
 filesystems protect the disk, while missing, malformed, non-4-KiB, or failed
-probe output emits no shrink claim. Dedicated btrfs and Windows-native health,
-encryption, hibernation, and minimum-size probes are still required.
+probe output emits no shrink claim. Windows-native health, encryption,
+hibernation, and minimum-size probes remain required, as does a separately
+reviewed btrfs minimum-size boundary.
+Unmounted btrfs filesystems are classified with `btrfs check --readonly`; only
+an exit-zero report containing the clean marker and no failure diagnostics is
+healthy. This deliberately emits no resize minimum because the native
+minimum-device-size command requires a mounted path, which would violate this
+probe's unmounted safety boundary.
 The GPT verifier parses diagnostics as well as exit status because `sgdisk`
 may report exit zero after reconstructing a corrupt backup header in memory.
 The provider also resolves `/` with `findmnt` and walks its complete inverse
