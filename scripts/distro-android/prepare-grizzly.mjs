@@ -196,6 +196,133 @@ function normalizeGeneratedUsbConfigfs(aospRoot) {
     /setprop sys\.usb\.configfs 2/g,
     "setprop sys.usb.configfs 1",
   );
+  const withAdbDefault = normalized.replace(
+    /on boot\n {4}# Use USB Gadget HAL\n {4}setprop sys\.usb\.configfs 1/,
+    "on boot\n    # Use USB Gadget HAL\n    setprop sys.usb.controller a210000.dwc3\n    setprop sys.usb.configfs 1\n    # Keep the unlocked userdebug bring-up reachable before framework USB policy.\n    setprop persist.sys.usb.config adb\n    setprop sys.usb.config adb",
+  );
+  if (withAdbDefault !== contents) {
+    fs.chmodSync(filePath, 0o644);
+    fs.writeFileSync(filePath, withAdbDefault);
+  }
+}
+
+// The extracted stock grizzly init waits synchronously for every proprietary
+// kernel module before proceeding through early-boot.  During bring-up a
+// missing optional module must not strand init (and therefore USB/adbd) on the
+// splash screen; the module loader remains started asynchronously below.
+function normalizeGeneratedEarlyBootModuleWait(aospRoot) {
+  const filePath = path.join(
+    aospRoot,
+    "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.grizzly.rc",
+  );
+  if (!fs.existsSync(filePath)) return;
+  const contents = fs.readFileSync(filePath, "utf8");
+  const normalized = contents.replace(
+    /on early-boot\n {4}# Wait for insmod_sh to finish all common modules\n {4}wait_for_prop vendor\.common\.modules\.ready 1\n {4}start insmod_sh_grizzly/,
+    "on early-boot\n    # elizaOS: keep bring-up non-blocking when an optional module is absent\n    start insmod_sh_grizzly",
+  );
+  const withMarker = normalized
+    .replace(
+      /^# grizzly specific init\.rc$/m,
+      "# grizzly specific init.rc\nimport /vendor/etc/init/hw/init.elizaos-debug.rc",
+    )
+    .replace(
+      /^on early-boot/m,
+      "on early-init\n    # elizaOS: prove vendor init reached the earliest normal-boot phase\n    write /metadata/elizaos_vendor_init.marker 1\n    setprop sys.usb.controller a210000.dwc3\n    setprop sys.usb.configfs 1\n    setprop persist.sys.usb.config adb\n    setprop sys.usb.config adb\n    # elizaOS: expose a root debug shell before vendor post-fs-data actions\n    start adbd\n\non early-boot",
+    );
+  if (withMarker !== contents) {
+    fs.chmodSync(filePath, 0o644);
+    fs.writeFileSync(filePath, withMarker);
+  }
+}
+
+function normalizeGeneratedDebugInit(aospRoot) {
+  const filePath = path.join(
+    aospRoot,
+    "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.elizaos-debug.rc",
+  );
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const contents = `# elizaOS bring-up ordering probe; remove after normal boot is proven.\n\non post-fs\n    write /metadata/elizaos_debug_postfs.marker 1\n    setprop sys.usb.controller a210000.dwc3\n    setprop sys.usb.config adb\n    start adbd\n\non post-fs-data\n    write /metadata/elizaos_debug_postfs_data.marker 1\n`;
+  fs.chmodSync(filePath, 0o644);
+  fs.writeFileSync(filePath, contents);
+}
+
+function normalizeGeneratedModuleWaits(aospRoot) {
+  const relativePaths = [
+    "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.malibu.rc",
+    "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.modem.rc",
+    "vendor/google_devices/grizzly/proprietary/vendor/etc/init/dump_power.rc",
+  ];
+  for (const relativePath of relativePaths) {
+    const filePath = path.join(aospRoot, relativePath);
+    if (!fs.existsSync(filePath)) continue;
+    const contents = fs.readFileSync(filePath, "utf8");
+    const normalized = contents.replace(
+      /^\s*wait_for_prop vendor\.common\.modules\.ready 1\s*$/gm,
+      "    # elizaOS: do not block boot on optional module readiness",
+    );
+    if (normalized !== contents) {
+      fs.chmodSync(filePath, 0o644);
+      fs.writeFileSync(filePath, normalized);
+    }
+  }
+}
+
+// The stock storage proxy action waits synchronously for the secure-storage
+// SCSI node.  On an unlocked bring-up device that node can be late (or absent)
+// while the rest of init is healthy; blocking post-fs here prevents bootanim,
+// framework startup, and normal-boot ADB from ever becoming observable.  Keep
+// the service start, but let its own retry/error handling deal with readiness.
+function normalizeGeneratedStorageProxyWait(aospRoot) {
+  const filePath = path.join(
+    aospRoot,
+    "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.malibu.rc",
+  );
+  if (!fs.existsSync(filePath)) return;
+  const contents = fs.readFileSync(filePath, "utf8");
+  const normalized = contents.replace(
+    /^ {4}wait \/dev\/sg1\n {4}start storageproxyd$/m,
+    "    # elizaOS: do not block post-fs on optional secure-storage enumeration\n    start storageproxyd",
+  );
+  if (normalized !== contents) {
+    fs.chmodSync(filePath, 0o644);
+    fs.writeFileSync(filePath, normalized);
+  }
+}
+
+function normalizeGeneratedInitPhaseMarkers(aospRoot) {
+  const filePath = path.join(
+    aospRoot,
+    "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.malibu.rc",
+  );
+  if (!fs.existsSync(filePath)) return;
+  const contents = fs.readFileSync(filePath, "utf8");
+  const normalized = contents
+    .replace(
+      /^on post-fs$/m,
+      "on post-fs\n    write /metadata/elizaos_postfs.marker 1",
+    )
+    .replace(
+      /^on post-fs-data$/m,
+      "on post-fs-data\n    write /metadata/elizaos_postfs_data.marker 1",
+    )
+    .replace(
+      /^on late-fs$/m,
+      "on late-fs\n    write /metadata/elizaos_latefs.marker 1",
+    )
+    .replace(
+      /^ {4}mount_all --late$/m,
+      "    mount_all --late\n    write /metadata/elizaos_latefs_done.marker 1\n    # elizaOS: continue init even if fs_mgr does not emit the next event\n    trigger post-fs-data",
+    )
+    .replace(
+      /^on post-fs\n {4}write \/metadata\/elizaos_bootanim\.marker 1$/m,
+      "on post-fs\n    write /metadata/elizaos_bootanim.marker 1\n    # elizaOS: expose ADB before vendor post-fs-data actions\n    start adbd\n    setprop sys.usb.controller a210000.dwc3\n    setprop sys.usb.config adb",
+    )
+    .replace(/^on boot$/m, "on boot\n    write /metadata/elizaos_boot.marker 1")
+    .replace(
+      /^on property:vendor\.common\.modules\.ready=1$/m,
+      "on post-fs\n    write /metadata/elizaos_bootanim.marker 1",
+    );
   if (normalized !== contents) {
     fs.chmodSync(filePath, 0o644);
     fs.writeFileSync(filePath, normalized);
@@ -323,6 +450,11 @@ export async function prepareGrizzly({
       normalizeGeneratedVintf(aospRoot);
       normalizeGeneratedF2fsMountOptions(aospRoot);
       normalizeGeneratedUsbConfigfs(aospRoot);
+      normalizeGeneratedEarlyBootModuleWait(aospRoot);
+      normalizeGeneratedDebugInit(aospRoot);
+      normalizeGeneratedModuleWaits(aospRoot);
+      normalizeGeneratedStorageProxyWait(aospRoot);
+      normalizeGeneratedInitPhaseMarkers(aospRoot);
       assertGeneratedVendorTree(aospRoot, lock);
       generatedTreeComplete = true;
     } catch {
@@ -350,6 +482,11 @@ export async function prepareGrizzly({
     normalizeGeneratedVintf(aospRoot);
     normalizeGeneratedF2fsMountOptions(aospRoot);
     normalizeGeneratedUsbConfigfs(aospRoot);
+    normalizeGeneratedEarlyBootModuleWait(aospRoot);
+    normalizeGeneratedDebugInit(aospRoot);
+    normalizeGeneratedModuleWaits(aospRoot);
+    normalizeGeneratedStorageProxyWait(aospRoot);
+    normalizeGeneratedInitPhaseMarkers(aospRoot);
   }
   const files = assertGeneratedVendorTree(aospRoot, lock);
 
