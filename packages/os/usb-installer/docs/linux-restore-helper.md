@@ -82,3 +82,48 @@ of the following in one testable design:
 The TypeScript `restoreFdQualificationProbe` models a harmless fixed `/usr/bin/stat`
 probe solely to make the absolute-executable, fixed-argv, inherited-FD contract
 executable in unit tests. It is not invoked by the application.
+
+## Candidate mutation sequence (still disabled)
+
+`linux-restore-helper-model.ts` now records the smallest candidate native
+sequence and the exact process shapes which must be qualified. This is review
+and qualification data only; the native helper still contains no mutation
+subprocess and still returns `NATIVE_FD_QUALIFICATION_REQUIRED`.
+
+Every candidate child uses a null standard input, the constant
+`LANG=C`, `LC_ALL=C`, `PATH=/nonexistent` environment, a 15-second parent
+deadline ending in `SIGKILL`, and a 256-KiB ceiling on each output stream. The
+udev command also has its own 10-second deadline. A future native implementation
+must drain stdout and stderr without deadlock while enforcing the ceiling
+independently of whether a child exits, fails, or times out.
+
+The candidate sequence is deliberately linear:
+
+1. Revalidate the retained whole-device FD and durably consume the plan.
+2. Create one GPT Microsoft Basic Data partition using `/usr/sbin/parted` and
+   verify the table using `/usr/sbin/sfdisk`, both through
+   `/proc/self/fd/3`.
+3. Revalidate, issue `BLKRRPART` on the retained FD, run the fixed bounded
+   `/usr/bin/udevadm settle --timeout=10`, then open partition 1 and bind its
+   sysfs parent and disk sequence back to the retained whole device.
+4. After another cancellation check and identity validation, create exFAT with
+   `/usr/sbin/mkfs.exfat` and verify it read-only with
+   `/usr/sbin/fsck.exfat`, both through `/proc/self/fd/4`.
+5. Sync and revalidate both retained identities before success is possible.
+
+Cancellation is checked immediately before and after every bounded child,
+after revalidating the retained identity appropriate to that boundary.
+Cancellation before the durable consumed marker is `untouched`. Cancellation,
+timeout, signal, malformed or oversized child output, nonzero exit, unplug, or
+identity drift after that marker is always terminal `incomplete`; it can never
+be translated to success. Cancellation is observed between bounded tools, not
+by pretending an interrupted partition or filesystem write was rolled back.
+
+The default unit test can prove that the exact `parted`, `sfdisk`,
+`mkfs.exfat`, and `fsck.exfat` builds installed on a runner accept inherited
+regular-file descriptors, and that the constant udev settle command completes.
+That is useful pathname/argv evidence but **not block-device qualification**.
+The production gate remains closed until an isolated privileged job repeats the
+exact process shapes on disposable loop or `scsi_debug` media and exercises
+kernel reread, partition-FD retention, unplug, name reuse, timeout, signal, and
+every failure boundary. No real disk is an acceptable qualification target.
