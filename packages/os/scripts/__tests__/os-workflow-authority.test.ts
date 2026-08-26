@@ -792,12 +792,14 @@ describe("OS release workflow authority", () => {
     expect(rules).toContain("ai.elizaos.app.desktop");
     expect(rules).toContain("ai.elizaos.app.metainfo.xml");
     expect(rules).toContain("ai.elizaos.app.svg");
+    expect(rules).toContain("debian/validate-user-units");
     expect(rules).toContain("dh_installsystemduser --no-enable");
     expect(source).toContain("logo_blue_nobg.svg");
     expect(source).toContain("desktop-file-validate");
     expect(source).toContain("appstreamcli validate --no-net");
     expect(control).toContain("xdg-desktop-portal");
     expect(control).toContain("gnome-keyring");
+    expect(control).toMatch(/^Build-Depends:.*\bsystemd\b/m);
     expect(desktopEntry).toContain("Exec=eliza-desktop %u");
     expect(desktopEntry).toContain("MimeType=x-scheme-handler/elizaos;");
     expect(desktopEntry).toContain("Icon=ai.elizaos.app");

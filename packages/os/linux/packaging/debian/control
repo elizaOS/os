@@ -2,7 +2,7 @@ Source: elizaos-app
 Section: misc
 Priority: optional
 Maintainer: elizaos <dev@app.elizaos.ai>
-Build-Depends: debhelper-compat (= 13), appstream, binutils, desktop-file-utils
+Build-Depends: debhelper-compat (= 13), appstream, binutils, desktop-file-utils, systemd
 Standards-Version: 4.6.2
 Homepage: https://elizaos.ai/
 Vcs-Git: https://github.com/elizaOS/os.git
