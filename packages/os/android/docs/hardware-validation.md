@@ -71,6 +71,38 @@ source manifest. Use the bundled `fastboot-info.txt`/flashall flow, including
 fastbootd dynamic-super updates; a standalone system partition flash is not a
 supported validation path.
 
+Verify the pinned source identities with
+`node scripts/aosp/verify-source-lock.mjs --profile pixel11pro --aosp-root "$AOSP_ROOT"`.
+
+The G-logo boot-hang investigation, ranked hypotheses, reboot decision tree,
+and attestation/evidence contract live in
+[grizzly-bringup-runbook.md](grizzly-bringup-runbook.md).
+
+### Bring-up diagnostics are opt-in and stamped
+
+The default grizzly image is stock apart from the required build fixes. Every
+diagnostic deviation is env-gated at prepare time, recorded in
+`vendor/google_devices/grizzly/.elizaos-prepare-stamp.json`, and re-checked by
+`build-aosp.mjs`, which fails closed if the tree was prepared under different
+settings than the build environment:
+
+- `ELIZAOS_GRIZZLY_RENDERENGINE_BACKEND=skiagl|skiaglthreaded|skiavk|skiavkthreaded`
+  forces a RenderEngine backend and switches Graphite off. Set
+  `ELIZAOS_GRIZZLY_RENDERENGINE_GRAPHITE=1` only for an explicit
+  Graphite-on-Vulkan probe; it is rejected with a GL backend.
+- `ELIZAOS_GRIZZLY_EGL=native` drops the stock ANGLE selection and derives the
+  vendor PowerVR EGL name from the extracted payload. Unset (or `angle`) keeps
+  the stock selection.
+- `ELIZAOS_GRIZZLY_EARLY_BOOT_PROBES=1` enables init phase markers, pstore
+  `/dev/kmsg` breadcrumbs, and non-blocking module/storage waits. The probe
+  init file is installed through an explicit `PRODUCT_COPY_FILES` rule.
+- `ELIZAOS_GRIZZLY_CONSERVATIVE_F2FS=1` applies the diagnostic userdata fstab
+  rewrite. It strips the factory encryption contract from `/data`; the first
+  flash after changing this stance must pair with `fastboot -w`.
+
+A generated tree carrying gated edits whose flag is now unset is deleted and
+regenerated, so a default build cannot inherit an earlier diagnostic image.
+
 ## Promotion matrix
 
 Before setting a release-manifest tier to `lab-validated`, retain all of:

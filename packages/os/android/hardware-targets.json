@@ -31,7 +31,7 @@
       "authoritativeReferences": [
         "https://developers.google.com/android/images",
         "https://source.android.com/docs/setup/build/building-pixel-kernels",
-        "https://github.com/GrapheneOS/adevtool/commit/bbc05913de19f17205b7a40311a843f36720dcaf",
+        "https://github.com/GrapheneOS/adevtool/commit/b396d9430743905fa56e5ee3e72c161614835cc0",
         "https://github.com/GrapheneOS/vendor_state/commit/afd6a0c9f6ca13d395f00e98227a0866cc14de07"
       ],
       "productName": "eliza_grizzly_phone",

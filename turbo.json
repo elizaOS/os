@@ -7,7 +7,14 @@
     "tsconfig.json",
     "tsconfig.base.json"
   ],
-  "globalPassThroughEnv": ["ELIZAOS_ELIZA_ROOT"],
+  "globalPassThroughEnv": [
+    "ELIZAOS_ELIZA_ROOT",
+    "ELIZAOS_GRIZZLY_RENDERENGINE_BACKEND",
+    "ELIZAOS_GRIZZLY_RENDERENGINE_GRAPHITE",
+    "ELIZAOS_GRIZZLY_EGL",
+    "ELIZAOS_GRIZZLY_EARLY_BOOT_PROBES",
+    "ELIZAOS_GRIZZLY_CONSERVATIVE_F2FS"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

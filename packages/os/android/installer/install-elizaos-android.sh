@@ -12,6 +12,12 @@ DEVICE_SERIAL=""
 ARTIFACT_DIR=""
 MANIFEST=""
 SLOT=""
+ANDROID_INFO=""
+ALLOW_STALE_ARTIFACTS=0
+# Loose images selected by filename can silently mix build generations; a
+# coherent image set is written within one packaging pass. One hour absorbs a
+# long target-files packaging step while still catching day-old strays.
+MAX_ARTIFACT_MTIME_SPREAD_SECONDS=3600
 FLASH_SUPPORTED_CODENAMES=""
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 POST_FLASH_VALIDATOR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/validate-post-flash.sh"
@@ -19,6 +25,8 @@ RELEASE_MANIFEST_VALIDATOR="$ROOT/scripts/validate-release-manifest.mjs"
 declare -a IMAGE_SPECS=()
 declare -a PLAN=()
 declare -a VALIDATION_PLAN=()
+declare -a MANIFEST_PARTITIONS=()
+declare -a MANIFEST_MODES=()
 
 usage() {
   cat <<'EOF'
@@ -42,10 +50,22 @@ Required image input:
 Device and safety options:
   --device SERIAL             adb/fastboot serial. Required if multiple devices
                               are attached.
-  --slot SLOT                 Pass --slot SLOT to fastboot flash commands.
+  --slot SLOT                 Pass --slot SLOT to fastboot flash commands and
+                              set it active after flashing, so a bootloader
+                              slot-fallback cannot silently boot the other
+                              (stock) slot and confound the experiment.
+  --android-info FILE         Enforce the build's android-info.txt requirements
+                              (board, version-bootloader, version-baseband,
+                              partition-exists) against fastboot getvar before
+                              flashing.
+  --allow-stale-artifacts     Skip the artifact-coherence check that refuses an
+                              artifact dir whose image mtimes span more than an
+                              hour (a signature of mixed build generations).
   --skip-preflight            Skip USB debugging and bootloader unlock checks.
   --assume-bootloader         Do not plan or run adb reboot bootloader.
   --wipe-data                 Add fastboot -w after flashing. Never implied.
+                              Required the first time the userdata/encryption
+                              contract changes (fstab stance, verity state).
   --reboot-after-flash        Reboot and run post-flash adb validation.
 
 Execution options:
@@ -56,10 +76,10 @@ Execution options:
 
 Examples:
   android/installer/install-elizaos-android.sh \
-    --artifact-dir out/target/product/eliza_tegu_phone
+    --artifact-dir out/target/product/tegu
 
   android/installer/install-elizaos-android.sh \
-    --device ABC123 --artifact-dir out/target/product/eliza_tegu_phone \
+    --device ABC123 --artifact-dir out/target/product/tegu \
     --execute --confirm-flash --reboot-after-flash
 EOF
 }
@@ -149,7 +169,17 @@ parse_args() {
       --slot)
         [[ $# -ge 2 ]] || die "--slot requires a slot name"
         SLOT="$2"
+        [[ "$SLOT" =~ ^[ab]$ ]] || die "--slot must be 'a' or 'b'"
         shift 2
+        ;;
+      --android-info)
+        [[ $# -ge 2 ]] || die "--android-info requires a file"
+        ANDROID_INFO="$2"
+        shift 2
+        ;;
+      --allow-stale-artifacts)
+        ALLOW_STALE_ARTIFACTS=1
+        shift
         ;;
       --skip-preflight)
         SKIP_PREFLIGHT=1
@@ -195,6 +225,10 @@ parse_args() {
     die "provide --artifact-dir or at least one --image PARTITION=PATH"
   fi
 
+  if [[ -n "$ANDROID_INFO" && ! -f "$ANDROID_INFO" ]]; then
+    die "--android-info file does not exist: $ANDROID_INFO"
+  fi
+
   if [[ "$CONFIRM_FLASH" -eq 1 && "$EXECUTE" -ne 1 ]]; then
     die "--confirm-flash only has an effect with --execute"
   fi
@@ -210,9 +244,33 @@ parse_args() {
 }
 
 validate_release_inputs() {
+  if [[ -n "$MANIFEST" ]]; then
+    [[ -f "$MANIFEST" ]] || die "release manifest does not exist: $MANIFEST"
+    require_tool node
+  fi
+
+  # Keep a supplied manifest's partition-mode contract available to the flash-plan
+  # builder. Logical/dynamic partitions must be flashed from fastbootd; the
+  # bootloader cannot safely substitute for that mode. Use indexed arrays
+  # instead of associative arrays because the installer also supports the
+  # system Bash 3.2 shipped by macOS.
+  if [[ -n "$MANIFEST" ]]; then
+    local manifest_modes
+    manifest_modes="$(node -e '
+      const fs = require("node:fs");
+      const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      for (const artifact of manifest.artifacts || []) {
+        process.stdout.write(`${artifact.partition}\t${artifact.fastbootMode}\n`);
+      }
+    ' "$MANIFEST" 2>/dev/null)" || die "could not read release manifest: $MANIFEST"
+    while IFS=$'\t' read -r partition mode; do
+      [[ -n "$partition" && -n "$mode" ]] || continue
+      MANIFEST_PARTITIONS+=("$partition")
+      MANIFEST_MODES+=("$mode")
+    done <<< "$manifest_modes"
+  fi
+
   [[ "$CONFIRM_FLASH" -eq 1 ]] || return 0
-  [[ -f "$MANIFEST" ]] || die "release manifest does not exist: $MANIFEST"
-  require_tool node
   node "$RELEASE_MANIFEST_VALIDATOR" "$MANIFEST" --artifact-dir "$ARTIFACT_DIR"
   FLASH_SUPPORTED_CODENAMES="$(node -e '
     const fs = require("node:fs");
@@ -224,6 +282,20 @@ validate_release_inputs() {
     if (devices.length === 0) process.exit(2);
     process.stdout.write(devices.join(" "));
   ' "$MANIFEST")" || die "release manifest has no lab-validated device codename"
+}
+
+flash_mode_for_partition() {
+  local partition="$1"
+  local index
+  for index in "${!MANIFEST_PARTITIONS[@]}"; do
+    if [[ "${MANIFEST_PARTITIONS[$index]}" == "$partition" ]]; then
+      echo "${MANIFEST_MODES[$index]}"
+      return 0
+    fi
+  done
+  # Unmanifested dry-runs predate the release-mode contract. Preserve their
+  # useful planning behavior, while confirmed flashes always have a manifest.
+  echo bootloader
 }
 
 discover_adb_device() {
@@ -269,6 +341,46 @@ preflight_adb() {
   local debug_state
   debug_state="$("${adb_cmd[@]}" shell settings get global adb_enabled 2>/dev/null | tr -d '\r' || true)"
   [[ "$debug_state" == "1" ]] || die "USB debugging is not enabled according to adb_enabled=$debug_state"
+}
+
+file_mtime() {
+  # GNU stat accepts BSD's -f flag as a filesystem-format query and exits 0,
+  # so checking it first yields labels rather than an epoch on Linux. Prefer
+  # the numeric GNU form and use BSD stat only when that probe is unavailable.
+  local mtime=""
+  mtime="$(stat -c %Y "$1" 2>/dev/null || true)"
+  if [[ "$mtime" =~ ^[0-9]+$ ]]; then
+    echo "$mtime"
+    return 0
+  fi
+  stat -f %m "$1" 2>/dev/null
+}
+
+# Images discovered by filename accumulate across builds in a shared out/
+# directory; a vbmeta from build N over a boot.img from build N-1 fails
+# verified boot with no diagnosis. A coherent set is written within a single
+# packaging pass, so an mtime spread wider than the threshold means the
+# directory is mixing build generations.
+assert_artifact_coherence() {
+  [[ "$ALLOW_STALE_ARTIFACTS" -eq 0 ]] || return 0
+  [[ $# -ge 2 ]] || return 0
+  local spec image mtime min_mtime="" max_mtime="" min_image="" max_image=""
+  for spec in "$@"; do
+    image="${spec#*=}"
+    mtime="$(file_mtime "$image")" || die "could not read mtime of $image"
+    if [[ -z "$min_mtime" || "$mtime" -lt "$min_mtime" ]]; then
+      min_mtime="$mtime"
+      min_image="$image"
+    fi
+    if [[ -z "$max_mtime" || "$mtime" -gt "$max_mtime" ]]; then
+      max_mtime="$mtime"
+      max_image="$image"
+    fi
+  done
+  local spread=$((max_mtime - min_mtime))
+  if [[ "$spread" -gt "$MAX_ARTIFACT_MTIME_SPREAD_SECONDS" ]]; then
+    die "artifact dir mixes build generations: $min_image and $max_image were written ${spread}s apart (max ${MAX_ARTIFACT_MTIME_SPREAD_SECONDS}s). Extract one coherent image set into a fresh directory, or pass --allow-stale-artifacts to override."
+  fi
 }
 
 collect_images() {
@@ -331,6 +443,12 @@ collect_images() {
       seen_partitions+="$partition "
     fi
   done
+  # Apply the coherence check to the final deduplicated set so an explicit
+  # --image override is honored instead of being rejected because the
+  # superseded artifact-dir file is stale.
+  if [[ -n "$ARTIFACT_DIR" ]]; then
+    assert_artifact_coherence "${IMAGE_SPECS[@]}"
+  fi
 }
 
 build_plan() {
@@ -345,18 +463,38 @@ build_plan() {
   add_plan "${fastboot_cmd[@]}" devices
   add_plan "${fastboot_cmd[@]}" getvar product
   add_plan "${fastboot_cmd[@]}" getvar unlocked
+  add_plan "${fastboot_cmd[@]}" getvar current-slot
   add_plan "${fastboot_cmd[@]}" flashing get_unlock_ability
 
-  local spec partition image
+  local spec partition image mode current_mode="bootloader"
   for spec in "${IMAGE_SPECS[@]}"; do
     partition="${spec%%=*}"
     image="${spec#*=}"
+    mode="$(flash_mode_for_partition "$partition")"
+    if [[ "$mode" != "bootloader" && "$mode" != "fastbootd" ]]; then
+      die "manifest artifact '$partition' has unsupported fastboot mode '$mode'"
+    fi
+    if [[ "$mode" != "$current_mode" ]]; then
+      if [[ "$mode" == "fastbootd" ]]; then
+        add_plan "${fastboot_cmd[@]}" reboot fastboot
+      else
+        add_plan "${fastboot_cmd[@]}" reboot bootloader
+      fi
+      current_mode="$mode"
+    fi
     if [[ -n "$SLOT" ]]; then
       add_plan "${fastboot_cmd[@]}" flash --slot "$SLOT" "$partition" "$image"
     else
       add_plan "${fastboot_cmd[@]}" flash "$partition" "$image"
     fi
   done
+
+  if [[ -n "$SLOT" ]]; then
+    # Pin the flashed slot as active: after repeated boot failures the
+    # bootloader falls back to the other slot (still stock), which makes the
+    # observed symptom unattributable to the flashed image.
+    add_plan "${fastboot_cmd[@]}" --set-active="$SLOT"
+  fi
 
   if [[ "$WIPE_DATA" -eq 1 ]]; then
     add_plan "${fastboot_cmd[@]}" -w
@@ -418,6 +556,54 @@ fastboot_preflight() {
       *) die "fastboot product '$product' is not lab-validated by $MANIFEST" ;;
     esac
   fi
+
+  enforce_android_info
+}
+
+fastboot_getvar_value() {
+  local fastboot_cmd
+  read -r -a fastboot_cmd <<<"$(fastboot_base)"
+  "${fastboot_cmd[@]}" getvar "$1" 2>&1 | awk -F': ' -v key="$1" '$0 ~ key": " {print $2; exit}' | tr -d '\r' || true
+}
+
+# Vendor blobs are built against the bootloader/baseband recorded in the
+# build's android-info.txt; flashing them onto a different firmware set is an
+# undetected contract violation. Each `require` line's value list is
+# |-separated alternatives, matching fastboot's own android-info handling.
+enforce_android_info() {
+  [[ -n "$ANDROID_INFO" ]] || return 0
+  local line key values value actual matched
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    case "$line" in
+      require\ *=*) ;;
+      *) continue ;;
+    esac
+    key="${line#require }"
+    values="${key#*=}"
+    key="${key%%=*}"
+    case "$key" in
+      board) actual="$(fastboot_getvar_value product)" ;;
+      version-bootloader) actual="$(fastboot_getvar_value version-bootloader)" ;;
+      version-baseband) actual="$(fastboot_getvar_value version-baseband)" ;;
+      partition-exists)
+        actual="$(fastboot_getvar_value "partition-size:$values")"
+        [[ -n "$actual" ]] || die "device is missing required partition '$values' (android-info.txt)"
+        continue
+        ;;
+      *) continue ;;
+    esac
+    matched=0
+    local IFS='|'
+    for value in $values; do
+      if [[ "$actual" == "$value" ]]; then
+        matched=1
+        break
+      fi
+    done
+    unset IFS
+    [[ "$matched" -eq 1 ]] || die "device reports $key='$actual' but $ANDROID_INFO requires '$values'; flash the matching firmware before this image set"
+  done < "$ANDROID_INFO"
 }
 
 execute_plan() {
@@ -426,6 +612,13 @@ execute_plan() {
   fi
 
   if [[ "$CONFIRM_FLASH" -ne 1 ]]; then
+    # --execute is documented to run non-flashing discovery/preflight; when
+    # the device is already in the bootloader the read-only fastboot checks
+    # (unlock state, product, android-info firmware requirements) still run
+    # so problems surface before anyone reaches for --confirm-flash.
+    if [[ "$ASSUME_BOOTLOADER" -eq 1 ]]; then
+      fastboot_preflight
+    fi
     log "execution requested without --confirm-flash; stopping before bootloader/flashing commands"
     return
   fi

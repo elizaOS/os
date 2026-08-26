@@ -140,13 +140,34 @@ export function parseArgs(argv) {
   return args;
 }
 
+// The AOSP product output directory is out/target/product/<PRODUCT_DEVICE>,
+// not <PRODUCT_NAME>: eliza_cf_arm64_phone builds into vsoc_arm64 and
+// eliza_grizzly_phone into grizzly. Derive the device dir from the brand's
+// device tree paths (vsoc_* for Cuttlefish, the vendor device segment for
+// generated Pixel trees) so the APK is resolved where the build put it.
+export function deriveProductOutDir(brand) {
+  for (const treePath of brand.aospDeviceTreePaths ?? []) {
+    const segments = treePath.split("/");
+    const vsoc = segments.find((segment) => segment.startsWith("vsoc_"));
+    if (vsoc) return vsoc;
+    const vendorIndex = segments.indexOf("google_devices");
+    if (vendorIndex >= 0 && segments[vendorIndex + 1]) {
+      return segments[vendorIndex + 1];
+    }
+  }
+  return brand.productName;
+}
+
 export function resolveBuiltPrivilegedApk({
   aospRoot,
   productName,
+  deviceDir,
   env = process.env,
 }) {
   if (!aospRoot) throw new Error("aospRoot is required");
-  if (!productName) throw new Error("productName is required");
+  if (!productName && !deviceDir) {
+    throw new Error("productName or deviceDir is required");
+  }
   const configuredOut = env.OUT_DIR?.trim() || "out";
   const outRoot = path.isAbsolute(configuredOut)
     ? configuredOut
@@ -155,7 +176,7 @@ export function resolveBuiltPrivilegedApk({
     outRoot,
     "target",
     "product",
-    productName,
+    deviceDir ?? productName,
     "system",
     "priv-app",
     "Eliza",
@@ -418,6 +439,7 @@ async function main(argv = process.argv.slice(2)) {
         const candidate = resolveBuiltPrivilegedApk({
           aospRoot: args.aospRoot,
           productName: brand.productName,
+          deviceDir: deriveProductOutDir(brand),
         });
         if (fs.existsSync(candidate)) apkPath = candidate;
       }
@@ -432,6 +454,7 @@ async function main(argv = process.argv.slice(2)) {
           ? resolveBuiltPrivilegedApk({
               aospRoot: args.aospRoot,
               productName: brand.productName,
+              deviceDir: deriveProductOutDir(brand),
             })
           : "<aosp-root>/out/target/product/<product>/system/priv-app/Eliza/Eliza.apk";
         throw new Error(

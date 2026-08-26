@@ -278,6 +278,13 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if (lock.generatedVendor) {
     assertGeneratedVendorTree(args.aospRoot, lock);
+    // Fail closed when the generated tree was prepared under different
+    // ELIZAOS_GRIZZLY_* settings than this build is running with — otherwise
+    // renderer/probe "A/B images" silently build from the wrong tree.
+    const { assertPreparedTreeMatchesEnv } = await import(
+      "./prepare-grizzly.mjs"
+    );
+    assertPreparedTreeMatchesEnv(args.aospRoot);
   }
 
   const brandConfigArgs = ["--brand-config", brand.brandConfigPath];
