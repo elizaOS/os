@@ -1273,7 +1273,7 @@ describe("AOSP build contracts", () => {
     );
     expect(checker).toContain('verify_artifact "$artifact" "$fork_ggml"');
     expect(checker).toContain(
-      'LD_LIBRARY_PATH="$(dirname "$fork_ggml")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"',
+      `LD_LIBRARY_PATH="$(dirname "$fork_ggml")\${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"`,
     );
     expect(checker).toContain('"$(basename "$exe")" = "qjl_fork_parity"');
     expect(checker).toContain("Dynamic loading not supported");
