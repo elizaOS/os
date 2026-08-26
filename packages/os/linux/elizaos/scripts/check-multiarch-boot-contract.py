@@ -747,13 +747,13 @@ def validate_runtime_matrix(errors: list[str], matrix: dict) -> None:
             and isinstance(expected_iso_sha, str)
             and SHA256_PATTERN.fullmatch(expected_iso_sha) is not None
         ):
-            iso_path = ROOT / iso
+            iso_path = _repo_path(iso)
             require(
                 errors,
-                iso_path.is_file(),
-                f"multiarch boot matrix {arch} ISO artifact missing: {iso}",
+                iso_path is not None and iso_path.is_file(),
+                f"multiarch boot matrix {arch} ISO artifact missing or unsafe: {iso}",
             )
-            if iso_path.is_file():
+            if iso_path is not None and iso_path.is_file():
                 actual_iso_sha = sha256_file(iso_path)
                 require(
                     errors,

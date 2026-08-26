@@ -1426,6 +1426,103 @@ describe("AOSP build contracts", () => {
     }
   }, 15_000);
 
+  test("riscv64 strict smoke rejects disabled QEMU with a failure report", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eliza-riscv64-no-exec-"));
+    try {
+      const elizaRoot = join(root, "eliza");
+      const report = join(root, "report.json");
+      await mkdir(join(elizaRoot, "packages/native"), { recursive: true });
+      const process = Bun.spawn(
+        [
+          "bash",
+          join(repositoryRoot, "scripts/check-riscv64-artifacts.sh"),
+          "--require-complete",
+          "--no-qemu",
+          "--out",
+          report,
+        ],
+        {
+          cwd: repositoryRoot,
+          env: {
+            ...Bun.env,
+            ELIZAOS_ELIZA_ROOT: elizaRoot,
+            ELIZA_RISCV64_SMOKE: "1",
+            HOME: root,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      expect(await process.exited).toBe(1);
+      const parsed = JSON.parse(await Bun.file(report).text());
+      expect(parsed.require_complete).toBe(true);
+      expect(parsed.qemu_run).toBe(false);
+      expect(parsed.summary).toEqual({ pass: 0, fail: 1, skip: 0 });
+      expect(parsed.final_status).toBe("FAIL");
+      expect(parsed.pre_skip_reason).toBe(
+        "strict smoke requires QEMU execution",
+      );
+      expect(parsed.artifacts).toEqual([
+        {
+          path: "qemu-riscv64-static",
+          kind: "tool",
+          status: "FAIL",
+          detail: "--require-complete cannot be combined with --no-qemu",
+          duration_ms: 0,
+        },
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  test("riscv64 strict smoke rejects a disabled smoke gate with a failure report", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eliza-riscv64-no-gate-"));
+    try {
+      const elizaRoot = join(root, "eliza");
+      const report = join(root, "report.json");
+      await mkdir(join(elizaRoot, "packages/native"), { recursive: true });
+      const process = Bun.spawn(
+        [
+          "bash",
+          join(repositoryRoot, "scripts/check-riscv64-artifacts.sh"),
+          "--require-complete",
+          "--out",
+          report,
+        ],
+        {
+          cwd: repositoryRoot,
+          env: {
+            ...Bun.env,
+            ELIZAOS_ELIZA_ROOT: elizaRoot,
+            ELIZA_RISCV64_SMOKE: "",
+            HOME: root,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      expect(await process.exited).toBe(1);
+      const parsed = JSON.parse(await Bun.file(report).text());
+      expect(parsed.require_complete).toBe(true);
+      expect(parsed.qemu_run).toBe(true);
+      expect(parsed.summary).toEqual({ pass: 0, fail: 1, skip: 0 });
+      expect(parsed.final_status).toBe("FAIL");
+      expect(parsed.pre_skip_reason).toBe("strict smoke gate is disabled");
+      expect(parsed.artifacts).toEqual([
+        {
+          path: "ELIZA_RISCV64_SMOKE",
+          kind: "configuration",
+          status: "FAIL",
+          detail: "--require-complete requires ELIZA_RISCV64_SMOKE=1",
+          duration_ms: 0,
+        },
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+
   test("riscv64 QJL reports the static-musl dlopen boundary as unavailable", async () => {
     const root = await mkdtemp(join(tmpdir(), "eliza-riscv64-qjl-"));
     try {

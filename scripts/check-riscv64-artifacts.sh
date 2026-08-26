@@ -132,7 +132,20 @@ write_final_report() {
 }
 
 # ── Gate ─────────────────────────────────────────────────────────────
+if [ "$REQUIRE_COMPLETE" = "1" ] && [ "$RUN_QEMU" != "1" ]; then
+    emit_record "qemu-riscv64-static" "tool" "FAIL" \
+        "--require-complete cannot be combined with --no-qemu" "0"
+    write_final_report "FAIL" "strict smoke requires QEMU execution"
+    exit 1
+fi
+
 if [ "${ELIZA_RISCV64_SMOKE:-0}" != "1" ]; then
+    if [ "$REQUIRE_COMPLETE" = "1" ]; then
+        emit_record "ELIZA_RISCV64_SMOKE" "configuration" "FAIL" \
+            "--require-complete requires ELIZA_RISCV64_SMOKE=1" "0"
+        write_final_report "FAIL" "strict smoke gate is disabled"
+        exit 1
+    fi
     echo "[check-riscv64-artifacts] ELIZA_RISCV64_SMOKE not set; skipping."
     echo "[check-riscv64-artifacts] To run: ELIZA_RISCV64_SMOKE=1 bun run check:riscv64-artifacts"
     write_final_report "SKIP" "ELIZA_RISCV64_SMOKE!=1 (default-CI gate)"

@@ -731,6 +731,32 @@ class MultiarchBootContractTests(unittest.TestCase):
         self.assertIn("ISO sha256 mismatch", joined)
         self.assertIn("evidence artifact missing", joined)
 
+    def test_runtime_matrix_rejects_unsafe_iso_before_hashing(self) -> None:
+        for unsafe_iso in ("../outside.iso", "linked/outside.iso"):
+            with self.subTest(unsafe_iso=unsafe_iso), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "root"
+                root.mkdir()
+                outside = root.parent / "outside.iso"
+                outside.write_bytes(b"outside")
+                if unsafe_iso.startswith("linked/"):
+                    (root / "linked").symlink_to(root.parent, target_is_directory=True)
+                row = {
+                    **complete_row("amd64"),
+                    "iso": unsafe_iso,
+                    "sha256": sha256_bytes(outside.read_bytes()),
+                }
+                errors: list[str] = []
+                with (
+                    mock.patch.object(gate, "ROOT", root),
+                    mock.patch.object(
+                        gate,
+                        "sha256_file",
+                        side_effect=AssertionError("unsafe ISO must not be hashed"),
+                    ),
+                ):
+                    gate.validate_runtime_matrix(errors, {"architectures": [row]})
+                self.assertIn("ISO artifact missing or unsafe", "\n".join(errors))
+
 
 if __name__ == "__main__":
     unittest.main()

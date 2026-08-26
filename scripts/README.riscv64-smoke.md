@@ -95,8 +95,10 @@ Without `--require-complete`, missing artifacts are reported as `SKIP` records
 with a reason so the harness is safe to re-run incrementally as each upstream
 build comes online. The CI workflow always passes `--require-complete`: every
 inventoried artifact must exist, and a missing QEMU executable or build output
-is a hard failure. A CI report therefore cannot be `PASS` merely because its
-required artifacts were absent.
+is a hard failure. Strict mode also requires `ELIZA_RISCV64_SMOKE=1` and rejects
+`--no-qemu`; those configurations produce a `FAIL` report and exit 1. A CI
+report therefore cannot be `PASS` merely because its required artifacts or
+execution boundary were absent.
 
 The QJL fork-parity executable requires `dlopen`. Zig's
 `riscv64-linux-musl` test executable is static, so `qemu-riscv64-static`
