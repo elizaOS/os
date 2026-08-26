@@ -3,34 +3,23 @@
 // and its byte-exact discovery manifest. Private material is read only from an
 // environment variable and is never serialized by this tool.
 import {
-  createHash,
   createPrivateKey,
   createPublicKey,
+  randomBytes,
   sign,
 } from "node:crypto";
-import { lstat, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, readdir, rename, unlink } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs, sha256File } from "./os-release-lib.mjs";
+import {
+  canonicalBase64,
+  loadReleaseKeyPolicy,
+} from "./release-key-policy.mjs";
 
 const architectures = ["x86_64", "arm64", "riscv64"];
 const privateKeyEnvironment =
   "ELIZAOS_RELEASE_ED25519_PRIVATE_KEY_PKCS8_BASE64";
-
-function canonicalBase64(value, label) {
-  if (
-    typeof value !== "string" ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
-      value,
-    )
-  ) {
-    throw new Error(`${label} must be canonical base64`);
-  }
-  const decoded = Buffer.from(value, "base64");
-  if (decoded.toString("base64") !== value) {
-    throw new Error(`${label} must be canonical base64`);
-  }
-  return decoded;
-}
 
 function canonicalTimestamp(value, label) {
   if (
@@ -71,10 +60,122 @@ async function nonemptyRegularFile(filePath) {
 }
 
 async function atomicWrite(filePath, bytes) {
-  const temporary = `${filePath}.tmp`;
-  await writeFile(temporary, bytes, { mode: 0o644 });
-  await rename(temporary, filePath);
+  let handle;
+  let temporary;
+  let renamed = false;
+  try {
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      temporary = `${filePath}.${randomBytes(16).toString("hex")}.tmp`;
+      try {
+        handle = await open(
+          temporary,
+          constants.O_WRONLY |
+            constants.O_CREAT |
+            constants.O_EXCL |
+            constants.O_NOFOLLOW,
+          0o644,
+        );
+        break;
+      } catch (error) {
+        if (error?.code !== "EEXIST") throw error;
+        temporary = undefined;
+      }
+    }
+    if (!handle) {
+      throw new Error(
+        `could not allocate a temporary release file: ${filePath}`,
+      );
+    }
+    const stats = await handle.stat();
+    if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1) {
+      throw new Error("temporary release output is not a private regular file");
+    }
+    await handle.writeFile(bytes);
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+    await rename(temporary, filePath);
+    renamed = true;
+  } finally {
+    await handle?.close().catch(() => {});
+    if (temporary && !renamed) {
+      await unlink(temporary).catch((error) => {
+        if (error?.code !== "ENOENT") throw error;
+      });
+    }
+  }
 }
+
+async function optionalLstat(filePath) {
+  try {
+    return await lstat(filePath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+function inodeIdentity(stats) {
+  return `${stats.dev}:${stats.ino}`;
+}
+
+async function validateOutputPaths(inputFiles, outputFiles) {
+  const inputPaths = new Set(inputFiles.map(({ filePath }) => filePath));
+  const inputInodes = new Set(
+    inputFiles.map(({ stats }) => inodeIdentity(stats)),
+  );
+  const outputPaths = new Set();
+  const outputInodes = new Set();
+  for (const filePath of outputFiles) {
+    if (inputPaths.has(filePath)) {
+      throw new Error(`release output aliases an image input: ${filePath}`);
+    }
+    if (outputPaths.has(filePath)) {
+      throw new Error(`release output paths alias each other: ${filePath}`);
+    }
+    outputPaths.add(filePath);
+    const stats = await optionalLstat(filePath);
+    if (!stats) continue;
+    if (!stats.isFile() || stats.isSymbolicLink()) {
+      throw new Error(
+        `release output is linked or not a regular file: ${filePath}`,
+      );
+    }
+    const identity = inodeIdentity(stats);
+    if (inputInodes.has(identity)) {
+      throw new Error(`release output hard-links an image input: ${filePath}`);
+    }
+    if (outputInodes.has(identity)) {
+      throw new Error(`release outputs hard-link each other: ${filePath}`);
+    }
+    outputInodes.add(identity);
+  }
+}
+
+// Validate the independently controlled public trust policy and bind the
+// private key to it before parsing release metadata, inspecting image inputs,
+// or considering any output path.
+const activePolicy = loadReleaseKeyPolicy();
+const keyBytes = canonicalBase64(
+  process.env[privateKeyEnvironment],
+  privateKeyEnvironment,
+);
+const privateKey = createPrivateKey({
+  key: keyBytes,
+  format: "der",
+  type: "pkcs8",
+});
+if (privateKey.asymmetricKeyType !== "ed25519") {
+  throw new Error("release signing key must be an Ed25519 PKCS#8 private key");
+}
+const publicKey = createPublicKey(privateKey);
+const publicKeyDer = publicKey.export({ format: "der", type: "spki" });
+if (!publicKeyDer.equals(activePolicy.publicKeyDer)) {
+  throw new Error(
+    "release signing private key does not match the independently pinned active public key",
+  );
+}
+const publicKeyFingerprint = activePolicy.publicKeyFingerprint;
 
 const args = parseArgs(process.argv.slice(2));
 const required = [
@@ -130,24 +231,6 @@ const output = path.resolve(args.output);
 if (path.dirname(output) !== root) {
   throw new Error("--output must be a direct child of --artifact-root");
 }
-const keyBytes = canonicalBase64(
-  process.env[privateKeyEnvironment],
-  privateKeyEnvironment,
-);
-const privateKey = createPrivateKey({
-  key: keyBytes,
-  format: "der",
-  type: "pkcs8",
-});
-if (privateKey.asymmetricKeyType !== "ed25519") {
-  throw new Error("release signing key must be an Ed25519 PKCS#8 private key");
-}
-const publicKey = createPublicKey(privateKey);
-const publicKeyDer = publicKey.export({ format: "der", type: "spki" });
-const publicKeyFingerprint = createHash("sha256")
-  .update(publicKeyDer)
-  .digest("hex");
-
 const minimumDeviceBytes = Number(args["min-device-bytes"] ?? 32_000_000_000);
 if (
   !Number.isSafeInteger(minimumDeviceBytes) ||
@@ -159,6 +242,8 @@ if (
 }
 
 const artifacts = [];
+const inputFiles = [];
+const artifactSignaturePaths = [];
 for (const architecture of architectures) {
   const basename = `elizaos-${args.version}-${architecture}.raw.zst`;
   const compressedPath = path.join(root, basename);
@@ -167,6 +252,10 @@ for (const architecture of architectures) {
     nonemptyRegularFile(compressedPath),
     nonemptyRegularFile(expandedPath),
   ]);
+  inputFiles.push(
+    { filePath: compressedPath, stats: compressedStats },
+    { filePath: expandedPath, stats: expandedStats },
+  );
   if (expandedStats.size < compressedStats.size) {
     throw new Error(
       `${architecture} expanded image is smaller than compressed bytes`,
@@ -198,10 +287,7 @@ for (const architecture of architectures) {
       `${architecture} compressed and expanded digests are identical`,
     );
   }
-  await atomicWrite(
-    `${compressedPath}.sig`,
-    sign(null, artifactSignaturePayload(artifact), privateKey),
-  );
+  artifactSignaturePaths.push(`${compressedPath}.sig`);
   artifacts.push(artifact);
 }
 
@@ -219,6 +305,19 @@ const unexpectedImages = (await readdir(root)).filter(
 if (unexpectedImages.length > 0) {
   throw new Error(
     `artifact root contains unexpected images: ${unexpectedImages.join(", ")}`,
+  );
+}
+
+await validateOutputPaths(inputFiles, [
+  ...artifactSignaturePaths,
+  output,
+  `${output}.sig`,
+]);
+
+for (let index = 0; index < artifacts.length; index += 1) {
+  await atomicWrite(
+    artifactSignaturePaths[index],
+    sign(null, artifactSignaturePayload(artifacts[index]), privateKey),
   );
 }
 

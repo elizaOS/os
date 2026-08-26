@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash, generateKeyPairSync } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import {
+  link,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -37,25 +46,26 @@ async function fixture() {
   };
 }
 
-async function signRelease(paths) {
+async function signRelease(paths, overrides = {}) {
   return execFileAsync(
     process.execPath,
     [
       "packages/os/scripts/sign-image-release.mjs",
       "--artifact-root",
-      paths.root,
+      overrides.artifactRoot ?? paths.root,
       "--version",
-      "1.2.3-beta.4",
+      overrides.version ?? "1.2.3-beta.4",
       "--channel",
-      "beta",
+      overrides.channel ?? "beta",
       "--sequence",
-      "42",
+      overrides.sequence ?? "42",
       "--expires",
-      "2099-01-01T00:00:00.000Z",
+      overrides.expires ?? "2099-01-01T00:00:00.000Z",
       "--base-url",
-      "https://download.elizaos.ai/os/releases/v1.2.3-beta.4/",
+      overrides.baseUrl ??
+        "https://download.elizaos.ai/os/releases/v1.2.3-beta.4/",
       "--output",
-      paths.manifest,
+      overrides.output ?? paths.manifest,
     ],
     {
       cwd: repoRoot,
@@ -63,6 +73,11 @@ async function signRelease(paths) {
         ...process.env,
         SOURCE_DATE_EPOCH: "1700000000",
         ELIZAOS_RELEASE_ED25519_PRIVATE_KEY_PKCS8_BASE64: paths.privateKey,
+        ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64: paths.publicKey,
+        ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256:
+          paths.publicKeyFingerprint,
+        ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S:
+          paths.revokedKeyFingerprints ?? "",
       },
     },
   );
@@ -85,14 +100,34 @@ async function verifyRelease(paths) {
         ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64: paths.publicKey,
         ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256:
           paths.publicKeyFingerprint,
-        ...(paths.revokedKeyFingerprints
-          ? {
-              ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S:
-                paths.revokedKeyFingerprints,
-            }
-          : {}),
+        ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S:
+          paths.revokedKeyFingerprints ?? "",
       },
     },
+  );
+}
+
+function artifactSignaturePath(paths, architecture) {
+  return path.join(
+    paths.root,
+    `elizaos-1.2.3-beta.4-${architecture}.raw.zst.sig`,
+  );
+}
+
+async function assertNoNewReleaseOutputs(paths, ignored = new Set()) {
+  for (const filePath of [
+    paths.manifest,
+    `${paths.manifest}.sig`,
+    ...architectures.map((architecture) =>
+      artifactSignaturePath(paths, architecture),
+    ),
+  ]) {
+    if (ignored.has(filePath)) continue;
+    await assert.rejects(lstat(filePath), /ENOENT/);
+  }
+  assert.deepEqual(
+    (await readdir(paths.root)).filter((name) => name.endsWith(".tmp")),
+    [],
   );
 }
 
@@ -147,6 +182,106 @@ test("canonical image verification rejects a revoked release key", async () => {
   await signRelease(paths);
   paths.revokedKeyFingerprints = paths.publicKeyFingerprint;
   await assert.rejects(verifyRelease(paths), /verification key is revoked/);
+});
+
+test("signing refuses a stale private key after active-key rotation before writing output", async () => {
+  const paths = await fixture();
+  const rotated = await fixture();
+  paths.publicKey = rotated.publicKey;
+  paths.publicKeyFingerprint = rotated.publicKeyFingerprint;
+  await assert.rejects(
+    signRelease(paths, {
+      artifactRoot: path.join(paths.root, "inaccessible"),
+      channel: "invalid",
+      output: path.join(paths.root, "inaccessible", "manifest.json"),
+    }),
+    /private key does not match the independently pinned active public key/,
+  );
+  await assertNoNewReleaseOutputs(paths);
+});
+
+test("signing refuses a revoked active key before writing output", async () => {
+  const paths = await fixture();
+  paths.revokedKeyFingerprints = paths.publicKeyFingerprint;
+  await assert.rejects(
+    signRelease(paths, {
+      artifactRoot: path.join(paths.root, "inaccessible"),
+      channel: "invalid",
+      output: path.join(paths.root, "inaccessible", "manifest.json"),
+    }),
+    /verification key is revoked/,
+  );
+  await assertNoNewReleaseOutputs(paths);
+});
+
+test("signing rejects linked output before writing or following the link", async () => {
+  const paths = await fixture();
+  const victim = path.join(paths.root, "must-not-be-overwritten");
+  const linkedSignature = artifactSignaturePath(paths, architectures[0]);
+  await writeFile(victim, "original-victim-bytes\n");
+  await symlink(victim, linkedSignature);
+  await assert.rejects(signRelease(paths), /output is linked/);
+  assert.equal(await readFile(victim, "utf8"), "original-victim-bytes\n");
+  assert.equal((await lstat(linkedSignature)).isSymbolicLink(), true);
+  await assertNoNewReleaseOutputs(paths, new Set([linkedSignature]));
+});
+
+test("signing never follows a pre-created predictable temporary symlink", async () => {
+  const paths = await fixture();
+  const victim = path.join(paths.root, "temporary-link-victim");
+  const legacyTemporary = `${artifactSignaturePath(paths, architectures[0])}.tmp`;
+  await writeFile(victim, "original-victim-bytes\n");
+  await symlink(victim, legacyTemporary);
+  await signRelease(paths);
+  assert.equal(await readFile(victim, "utf8"), "original-victim-bytes\n");
+  assert.equal((await lstat(legacyTemporary)).isSymbolicLink(), true);
+  assert.equal(
+    (await readdir(paths.root)).some(
+      (name) =>
+        name.endsWith(".tmp") && name !== path.basename(legacyTemporary),
+    ),
+    false,
+  );
+  await verifyRelease(paths);
+});
+
+test("signing rejects an output path that aliases an image input", async () => {
+  const paths = await fixture();
+  const compressed = path.join(
+    paths.root,
+    "elizaos-1.2.3-beta.4-x86_64.raw.zst",
+  );
+  const original = await readFile(compressed);
+  await assert.rejects(
+    signRelease(paths, { output: compressed }),
+    /output aliases an image input/,
+  );
+  assert.deepEqual(await readFile(compressed), original);
+  await assertNoNewReleaseOutputs(paths);
+});
+
+test("signing rejects a hard-linked output alias without touching inputs", async () => {
+  const paths = await fixture();
+  const compressed = path.join(
+    paths.root,
+    "elizaos-1.2.3-beta.4-x86_64.raw.zst",
+  );
+  const original = await readFile(compressed);
+  await link(compressed, paths.manifest);
+  await assert.rejects(signRelease(paths), /output hard-links an image input/);
+  assert.deepEqual(await readFile(compressed), original);
+  assert.deepEqual(await readFile(paths.manifest), original);
+  await assertNoNewReleaseOutputs(paths, new Set([paths.manifest]));
+});
+
+test("signing rejects manifest and artifact signature path aliases", async () => {
+  const paths = await fixture();
+  const signature = artifactSignaturePath(paths, architectures[0]);
+  await assert.rejects(
+    signRelease(paths, { output: signature }),
+    /output paths alias each other/,
+  );
+  await assertNoNewReleaseOutputs(paths);
 });
 
 test("canonical image signing rejects incomplete architecture sets", async () => {

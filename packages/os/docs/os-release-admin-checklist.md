@@ -60,8 +60,12 @@ confirmation-only step.
 During emergency key revocation, set the protected optional secret
 `ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S` to a sorted, unique,
 comma-separated list of revoked SPKI digests. A matching signing key is denied
-before release metadata is parsed. Removing a digest requires the same
-protected-environment review as changing the active public key or its pin.
+before release metadata or image inputs are inspected and before any release
+signature or manifest is written. Key rotation must update
+the private key, public SPKI, and independently reviewed SPKI digest as one
+protected-environment change; the signer rejects a stale private key before it
+writes output. Removing a digest requires the same protected-environment review
+as changing the active public key or its pin.
 
 The desktop workflows import certificates into temporary runner storage,
 verify Apple notarization or Windows Authenticode after packaging, and remove
