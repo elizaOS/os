@@ -21,6 +21,8 @@
 #   ELIZA_RISCV64_SMOKE=1 bash scripts/check-riscv64-artifacts.sh
 #   ELIZA_RISCV64_SMOKE=1 bash scripts/check-riscv64-artifacts.sh --out build/reports/foo.json
 #   ELIZA_RISCV64_SMOKE=1 bash scripts/check-riscv64-artifacts.sh --no-qemu  # ELF-tag check only
+#   ELIZA_RISCV64_SMOKE=1 bash scripts/check-riscv64-artifacts.sh --require-complete
+#       # CI mode: every inventoried artifact must exist; missing output is FAIL
 #
 # Exit code:
 #   0 — every artifact is PASS or a documented SKIP
@@ -40,6 +42,7 @@ cd "$repo_root"
 OUT="$repo_root/build/reports/riscv64_artifacts.json"
 QEMU_TIMEOUT="${ELIZA_RISCV64_QEMU_TIMEOUT:-60}"
 RUN_QEMU=1
+REQUIRE_COMPLETE=0
 NODE_BIN="${NODE_BIN:-$(command -v node || true)}"
 RM_PATH_RECURSIVE="$repo_root/packages/scripts/rm-path-recursive.mjs"
 
@@ -47,6 +50,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --out) OUT="$2"; shift 2;;
         --no-qemu) RUN_QEMU=0; shift;;
+        --require-complete) REQUIRE_COMPLETE=1; shift;;
         --timeout) QEMU_TIMEOUT="$2"; shift 2;;
         -h|--help)
             awk '/^# /{print substr($0,3)} /^#$/{print ""} !/^#/{exit}' "$0"
@@ -106,6 +110,7 @@ write_final_report() {
         printf '  "eliza_riscv64_smoke": "%s",\n' "${ELIZA_RISCV64_SMOKE:-}"
         printf '  "qemu_bin": "%s",\n' "${QEMU_BIN:-}"
         printf '  "qemu_run": %s,\n' "$([ "$RUN_QEMU" = "1" ] && echo true || echo false)"
+        printf '  "require_complete": %s,\n' "$([ "$REQUIRE_COMPLETE" = "1" ] && echo true || echo false)"
         printf '  "qemu_timeout_seconds": %s,\n' "$QEMU_TIMEOUT"
         printf '  "summary": {"pass": %d, "fail": %d, "skip": %d},\n' "$PASS_N" "$FAIL_N" "$SKIP_N"
         printf '  "final_status": "%s",\n' "$final_status"
@@ -148,10 +153,20 @@ Install (Fedora/RHEL):
 
 Re-run, or pass --no-qemu to ELF-tag-only the artifacts.
 
-Treating this run as SKIP (exit 0) so default CI stays green.
+Incremental mode treats this run as SKIP. --require-complete fails because the
+    requested execution boundary is unavailable.
 EOF
-    write_final_report "SKIP" "qemu-riscv64-static missing"
-    exit 0
+    if [ "$REQUIRE_COMPLETE" = "1" ]; then
+        emit_record "qemu-riscv64-static" "tool" "FAIL" \
+            "required QEMU executable is not installed or not on PATH" "0"
+        write_final_report "FAIL" "qemu-riscv64-static missing"
+        exit 1
+    else
+        emit_record "qemu-riscv64-static" "tool" "SKIP" \
+            "QEMU executable is not installed or not on PATH" "0"
+        write_final_report "SKIP" "qemu-riscv64-static missing"
+        exit 0
+    fi
 fi
 
 echo "[check-riscv64-artifacts] qemu_bin=${QEMU_BIN:-<elf-tag only>}  timeout=${QEMU_TIMEOUT}s"
@@ -290,7 +305,11 @@ verify_artifact() {
     # Determines kind by extension / executable bit.
     local p="$1"; shift
     if [ ! -e "$p" ]; then
-        emit_record "$p" "missing" "SKIP" "artifact not built yet" "0"
+        if [ "$REQUIRE_COMPLETE" = "1" ]; then
+            emit_record "$p" "missing" "FAIL" "required artifact was not built" "0"
+        else
+            emit_record "$p" "missing" "SKIP" "artifact not built yet" "0"
+        fi
         return
     fi
     case "$p" in
@@ -438,8 +457,13 @@ for entry in "${NATIVE_PLUGINS[@]}"; do
             LD_LIBRARY_PATH="$(dirname "$fork_ggml")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
                 verify_artifact "$artifact" "$fork_ggml"
         else
-            emit_record "$artifact" "executable" "SKIP" \
-                "fork libggml-cpu.so not built; parity argument unavailable" "0"
+            if [ "$REQUIRE_COMPLETE" = "1" ]; then
+                emit_record "$artifact" "executable" "FAIL" \
+                    "required fork libggml-cpu.so was not built; parity argument unavailable" "0"
+            else
+                emit_record "$artifact" "executable" "SKIP" \
+                    "fork libggml-cpu.so not built; parity argument unavailable" "0"
+            fi
         fi
     else
         verify_artifact "$artifact"
@@ -460,8 +484,13 @@ for basename in "${LLAMA_FAMILY_BASENAMES[@]}"; do
         verify_artifact "$found"
     else
         # Synthesize a path for the report — caller knows what's missing.
-        emit_record "$eliza_root/${LLAMA_FAMILY_SEARCH_DIRS[0]}/$basename" "shared-library" "SKIP" \
-            "not built; run \`bun run build:riscv64-artifacts\` (libllama for linux-riscv64-cpu + android-riscv64-cpu)" "0"
+        if [ "$REQUIRE_COMPLETE" = "1" ]; then
+            emit_record "$eliza_root/${LLAMA_FAMILY_SEARCH_DIRS[0]}/$basename" "shared-library" "FAIL" \
+                "required artifact was not built; run \`bun run build:riscv64-artifacts\`" "0"
+        else
+            emit_record "$eliza_root/${LLAMA_FAMILY_SEARCH_DIRS[0]}/$basename" "shared-library" "SKIP" \
+                "not built; run \`bun run build:riscv64-artifacts\` (libllama for linux-riscv64-cpu + android-riscv64-cpu)" "0"
+        fi
     fi
 done
 
@@ -474,8 +503,13 @@ done
 if [ -n "$s_found" ]; then
     verify_artifact "$s_found"
 else
-    emit_record "${SIGSYS_SEARCH[0]}" "shared-library" "SKIP" \
-        "not built; run the elizaOS/eliza compile-shim.mjs with --abi riscv64" "0"
+    if [ "$REQUIRE_COMPLETE" = "1" ]; then
+        emit_record "${SIGSYS_SEARCH[0]}" "shared-library" "FAIL" \
+            "required artifact was not built; run the elizaOS/eliza compile-shim.mjs with --abi riscv64" "0"
+    else
+        emit_record "${SIGSYS_SEARCH[0]}" "shared-library" "SKIP" \
+            "not built; run the elizaOS/eliza compile-shim.mjs with --abi riscv64" "0"
+    fi
 fi
 
 # ── Verdict ──────────────────────────────────────────────────────────

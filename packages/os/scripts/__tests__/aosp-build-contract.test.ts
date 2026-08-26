@@ -15,7 +15,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   assertApkProvenanceEntries,
@@ -1280,7 +1280,151 @@ describe("AOSP build contracts", () => {
     expect(checker).toContain(
       "qemu fork parity unavailable (static musl has no dlopen)",
     );
+
+    const workflow = readFileSync(
+      join(repositoryRoot, ".github/workflows/riscv64-smoke.yml"),
+      "utf8",
+    );
+    expect(workflow).toContain(
+      "bun run check:riscv64-artifacts --require-complete",
+    );
+
+    const architecture = readFileSync(
+      join(repositoryRoot, "packages/os/docs/two-fork-architecture.md"),
+      "utf8",
+    );
+    expect(architecture).toContain(
+      "no physical riscv64 board is qualified yet",
+    );
+    expect(architecture).not.toContain("any UEFI x86_64 / riscv64 SBC");
   });
+
+  test("riscv64 strict smoke fails when required artifacts are absent", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eliza-riscv64-missing-"));
+    try {
+      const elizaRoot = join(root, "eliza");
+      const fakeBin = join(root, "bin");
+      const report = join(root, "report.json");
+      await Promise.all([
+        mkdir(join(elizaRoot, "packages/native"), { recursive: true }),
+        mkdir(fakeBin, { recursive: true }),
+      ]);
+      const fakeQemu = join(fakeBin, "qemu-riscv64-static");
+      await writeFile(fakeQemu, "#!/bin/sh\nexit 0\n");
+      await chmod(fakeQemu, 0o755);
+
+      const process = Bun.spawn(
+        [
+          "bash",
+          join(repositoryRoot, "scripts/check-riscv64-artifacts.sh"),
+          "--require-complete",
+          "--out",
+          report,
+        ],
+        {
+          cwd: repositoryRoot,
+          env: {
+            ...Bun.env,
+            ELIZAOS_ELIZA_ROOT: elizaRoot,
+            ELIZA_RISCV64_SMOKE: "1",
+            HOME: root,
+            PATH: `${fakeBin}:${Bun.env.PATH ?? ""}`,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      const exitCode = await process.exited;
+      expect(exitCode).toBe(1);
+      const parsed = JSON.parse(await Bun.file(report).text());
+      expect(parsed.require_complete).toBe(true);
+      expect(parsed.summary.fail).toBeGreaterThan(0);
+      expect(parsed.final_status).toBe("FAIL");
+      expect(
+        parsed.artifacts.some(
+          (artifact: { status: string }) => artifact.status === "FAIL",
+        ),
+      ).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  test("riscv64 strict smoke records a missing QEMU failure", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eliza-riscv64-no-qemu-"));
+    try {
+      const elizaRoot = join(root, "eliza");
+      const fakeBin = join(root, "bin");
+      const report = join(root, "report.json");
+      await Promise.all([
+        mkdir(join(elizaRoot, "packages/native"), { recursive: true }),
+        mkdir(fakeBin, { recursive: true }),
+      ]);
+      const resolveExecutable = (name: string): string => {
+        for (const directory of (Bun.env.PATH ?? "").split(delimiter)) {
+          const candidate = join(directory, name);
+          try {
+            fs.accessSync(candidate, fs.constants.X_OK);
+            return candidate;
+          } catch {}
+        }
+        throw new Error(`required test tool is missing: ${name}`);
+      };
+      for (const tool of [
+        "awk",
+        "cat",
+        "date",
+        "dirname",
+        "mkdir",
+        "mktemp",
+        "python3",
+        "rm",
+      ]) {
+        await symlink(resolveExecutable(tool), join(fakeBin, tool));
+      }
+
+      const process = Bun.spawn(
+        [
+          resolveExecutable("bash"),
+          join(repositoryRoot, "scripts/check-riscv64-artifacts.sh"),
+          "--require-complete",
+          "--out",
+          report,
+        ],
+        {
+          cwd: repositoryRoot,
+          env: {
+            ...Bun.env,
+            ELIZAOS_ELIZA_ROOT: elizaRoot,
+            ELIZA_RISCV64_SMOKE: "1",
+            HOME: root,
+            PATH: fakeBin,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      const exitCode = await process.exited;
+      expect(exitCode).toBe(1);
+      const parsed = JSON.parse(await Bun.file(report).text());
+      expect(parsed.require_complete).toBe(true);
+      expect(parsed.qemu_bin).toBe("");
+      expect(parsed.summary).toEqual({ pass: 0, fail: 1, skip: 0 });
+      expect(parsed.final_status).toBe("FAIL");
+      expect(parsed.pre_skip_reason).toBe("qemu-riscv64-static missing");
+      expect(parsed.artifacts).toEqual([
+        {
+          path: "qemu-riscv64-static",
+          kind: "tool",
+          status: "FAIL",
+          detail: "required QEMU executable is not installed or not on PATH",
+          duration_ms: 0,
+        },
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
 
   test("riscv64 QJL reports the static-musl dlopen boundary as unavailable", async () => {
     const root = await mkdtemp(join(tmpdir(), "eliza-riscv64-qjl-"));
