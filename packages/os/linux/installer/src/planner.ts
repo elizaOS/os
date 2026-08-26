@@ -79,6 +79,12 @@ export function validateDiskInventory(disk: DiskInventory): void {
   if (!disk.stableId.trim() || !disk.path.trim())
     throw new Error("Disk stableId and path are required.");
   if (
+    disk.kernelDeviceIdentity !== undefined &&
+    !disk.kernelDeviceIdentity.trim()
+  ) {
+    throw new Error("Kernel device identity must be non-empty when present.");
+  }
+  if (
     !disk.hardwareIdentity.serial.trim() ||
     !disk.hardwareIdentity.firmwarePath.trim() ||
     (disk.hardwareIdentity.wwn !== undefined &&
@@ -280,6 +286,7 @@ export function createDiskInventoryFingerprint(disk: DiskInventory): string {
       schemaVersion: 1,
       stableId: disk.stableId,
       path: disk.path,
+      kernelDeviceIdentity: disk.kernelDeviceIdentity ?? null,
       hardwareIdentity: {
         serial: disk.hardwareIdentity.serial,
         wwn: disk.hardwareIdentity.wwn ?? null,
@@ -302,6 +309,26 @@ export function createDiskInventoryFingerprint(disk: DiskInventory): string {
 
 export function createDiskConfirmationToken(disk: DiskInventory): string {
   return sha256(`elizaos-install-v2\n${createDiskInventoryFingerprint(disk)}`);
+}
+
+/**
+ * Alias-independent physical identity used for cross-plan serialization.
+ * Mutable partition-table state and caller-selected by-id/path spellings are
+ * deliberately excluded. Kernel generation remains a separate, plan-bound
+ * value so an interrupted lock survives device re-enumeration and reboot.
+ */
+export function createDiskExecutionIdentity(disk: DiskInventory): string {
+  validateDiskInventory(disk);
+  return sha256(
+    JSON.stringify({
+      schemaVersion: 1,
+      serial: disk.hardwareIdentity.serial,
+      wwn: disk.hardwareIdentity.wwn ?? null,
+      firmwarePath: disk.hardwareIdentity.firmwarePath,
+      sizeBytes: disk.sizeBytes,
+      logicalSectorBytes: disk.logicalSectorBytes,
+    }),
+  );
 }
 
 function assertTarget(request: InstallRequest, disk: DiskInventory): void {
@@ -654,6 +681,9 @@ function planBody(
     target: {
       stableId: disk.stableId,
       path: disk.path,
+      ...(disk.kernelDeviceIdentity
+        ? { kernelDeviceIdentity: disk.kernelDeviceIdentity }
+        : {}),
       hardwareIdentity: { ...disk.hardwareIdentity },
       sizeBytes: disk.sizeBytes,
       logicalSectorBytes: disk.logicalSectorBytes,

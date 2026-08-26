@@ -2,8 +2,9 @@
 
 These are implementation issues, not claims of completed installation support.
 The current package produces deterministic plans with `executable: false` and
-contains a fail-closed authorization/journal orchestration boundary. No
-root-owned service or privileged operation backend is connected, so the
+contains a fail-closed authorization/journal orchestration boundary plus a
+root-side local request core. No production Unix socket/logind adapter, OS
+credential verifier, or privileged operation backend is connected, so the
 package never changes a partition table.
 
 ## P0 — trusted inventory and execution boundary
@@ -44,9 +45,16 @@ package never changes a partition table.
   owner credential, re-enumerates before every typed action, and stops on
   identity, journal, or inventory drift. Its file-backed journal durably syncs
   every record and directory update, serializes and head-checks appends, and
-  fails closed on unsafe files or interrupted locks. Provision its owner-only
-  state directory, implement the OS credential verifier, and ensure the service
-  accepts no renderer-supplied commands or device paths.
+  fails closed on unsafe files or interrupted locks. The root-side service core
+  now accepts only a bounded typed plan request, binds kernel-authenticated Unix
+  peer credentials plus a non-reusable process token to the active unlocked
+  owner session, rechecks that session immediately before every privileged
+  mutation, durably consumes bounded owner nonces under a hard fail-closed
+  quota, and serializes every alias for one physical disk identity. Provision
+  its owner-only state topology
+  and journal, implement the Unix socket/peer-credential and logind adapters,
+  and implement the OS credential verifier. None of those trusted values may
+  come from renderer request data.
 - **Implement recoverable GPT mutation.** Save and verify both GPT headers and
   partition entries to separate recovery media/state, perform typed operations,
   reread the kernel partition table, and prove rollback after every injected
