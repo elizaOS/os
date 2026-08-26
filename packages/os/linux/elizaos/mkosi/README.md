@@ -50,7 +50,10 @@ the output.
 
 The recovery copy is selected by the `elizaOS Recovery` GRUB entry and boots
 `rescue.target`, which does not activate the GNOME user agent units. This is a
-recovery foundation, not proof of a finished graphical recovery workflow.
+recovery foundation, not proof of a finished graphical recovery workflow. The
+entry's `r` hotkey gives the QEMU qualifier an explicit selection mechanism.
+A recovery-only oneshot emits its evidence marker only after confirming the
+privileged broker service/socket and every user service manager are inactive.
 
 The initial image is intentionally suitable for a 32 GB or larger USB drive.
 An early-boot, recovery-disabled `systemd-repart` service resolves the current
@@ -197,6 +200,15 @@ scripts/mkosi-qemu-qualify.py \
   --firmware-vars /path/to/OVMF_VARS.fd \
   --transcript evidence/qemu-amd64.log \
   --evidence evidence/qemu-amd64.json
+
+# Select the GRUB recovery entry and require the recovery-only service marker.
+scripts/mkosi-qemu-qualify.py \
+  --architecture amd64 --boot-mode recovery \
+  --image out/mkosi/elizaos-linux-x86-64.raw \
+  --firmware-code /path/to/OVMF_CODE.fd \
+  --firmware-vars /path/to/OVMF_VARS.fd \
+  --transcript evidence/recovery-amd64.log \
+  --evidence evidence/recovery-amd64.json
 
 sudo scripts/mkosi-persistence-qualify.py \
   --architecture amd64 \

@@ -10,6 +10,7 @@ import os
 import platform
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -28,10 +29,14 @@ LINUX_MACHINES = {
     "arm64": "virt,accel=kvm:tcg,gic-version=max",
     "riscv64": "virt,accel=kvm:tcg",
 }
-DEFAULT_MARKERS = (
+GRAPHICAL_MARKERS = (
     "Linux version",
     "Started gdm.service - GNOME Display Manager",
     "Reached target Graphical Interface",
+)
+RECOVERY_MARKERS = (
+    "Linux version",
+    "elizaOS recovery boundary verified: Eliza agent and privileged broker unavailable",
 )
 FORBIDDEN_MARKERS = (
     "Kernel panic - not syncing",
@@ -67,15 +72,43 @@ def sha256_file(path: Path) -> str:
 
 def write_evidence(path: Path, document: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
-    temporary.replace(path)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            temporary.write(json.dumps(document, indent=2, sort_keys=True) + "\n")
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.link(temporary_path, path)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+def send_recovery_hotkey(monitor_socket: Path) -> bool:
+    """Send the recovery hotkey through QEMU's keyboard monitor boundary."""
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(0.2)
+            connection.connect(str(monitor_socket))
+            connection.sendall(b"sendkey r\n")
+        return True
+    except OSError:
+        return False
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--architecture", choices=sorted(QEMU), required=True)
     parser.add_argument("--image", type=Path, required=True)
+    parser.add_argument("--boot-mode", choices=("graphical", "recovery"), default="graphical")
     parser.add_argument("--firmware-mode", choices=("pflash", "bios"), default="pflash")
     parser.add_argument("--firmware-code", type=Path)
     parser.add_argument("--firmware-vars", type=Path)
@@ -90,13 +123,27 @@ def main() -> int:
     parser.add_argument("--required-marker", action="append", dest="markers")
     parser.add_argument("--preflight-only", action="store_true")
     args = parser.parse_args()
-    markers = tuple((*DEFAULT_MARKERS, *(args.markers or ())))
+    default_markers = (
+        RECOVERY_MARKERS if args.boot_mode == "recovery" else GRAPHICAL_MARKERS
+    )
+    markers = tuple((*default_markers, *(args.markers or ())))
+    forbidden_markers = (
+        (*FORBIDDEN_MARKERS, *GRAPHICAL_MARKERS[1:])
+        if args.boot_mode == "recovery"
+        else FORBIDDEN_MARKERS
+    )
     started = time.monotonic()
+    selection_attempts = 0
     errors: list[str] = []
     document: dict[str, object] = {
         "schema": SCHEMA,
-        "claimBoundary": "qemu_graphical_target_only_no_login_agent_computer_control_or_hardware_claim",
+        "claimBoundary": (
+            "qemu_recovery_selection_and_service_unavailability_only_no_repair_or_hardware_claim"
+            if args.boot_mode == "recovery"
+            else "qemu_graphical_target_only_no_login_agent_computer_control_or_hardware_claim"
+        ),
         "architecture": args.architecture,
+        "bootMode": args.boot_mode,
         "host": {"system": platform.system(), "machine": platform.machine()},
         "startedAt": now(),
         "completedAt": None,
@@ -110,6 +157,8 @@ def main() -> int:
         "errors": errors,
         "command": None,
         "returnCode": None,
+        "selectionMethod": "grub-hotkey-r" if args.boot_mode == "recovery" else "firmware-default",
+        "selectionAttempts": 0,
     }
 
     host_system = platform.system()
@@ -166,11 +215,18 @@ def main() -> int:
                 "-m", str(args.memory_mib),
                 "-smp", str(args.cpus),
                 "-display", "none",
-                "-monitor", "none",
                 "-serial", "stdio",
                 "-no-reboot",
                 "-snapshot",
             ]
+            monitor_socket: Path | None = None
+            if args.boot_mode == "recovery":
+                monitor_socket = Path(temporary) / "monitor.sock"
+                command.extend(
+                    ("-monitor", f"unix:{monitor_socket},server=on,wait=off")
+                )
+            else:
+                command.extend(("-monitor", "none"))
             if args.cpu:
                 command.extend(("-cpu", args.cpu))
             elif acceleration == "hvf":
@@ -205,7 +261,10 @@ def main() -> int:
                 termination_reason = "launch-failed"
                 try:
                     process = subprocess.Popen(
-                        command, stdout=transcript, stderr=subprocess.STDOUT
+                        command,
+                        stdin=subprocess.DEVNULL,
+                        stdout=transcript,
+                        stderr=subprocess.STDOUT,
                     )
                 except OSError as exc:
                     errors.append(f"QEMU launch failed: {exc}")
@@ -217,11 +276,17 @@ def main() -> int:
                         if time.monotonic() >= deadline:
                             termination_reason = "timeout"
                             break
-                        time.sleep(1)
+                        if (
+                            monitor_socket is not None
+                            and send_recovery_hotkey(monitor_socket)
+                        ):
+                            selection_attempts += 1
+                            document["selectionAttempts"] = selection_attempts
+                        time.sleep(0.25 if args.boot_mode == "recovery" else 1)
                         text = normalized_console_text(
                             args.transcript.read_text(encoding="utf-8", errors="replace")
                         )
-                        if any(marker in text for marker in FORBIDDEN_MARKERS):
+                        if any(marker in text for marker in forbidden_markers):
                             termination_reason = "forbidden-marker"
                             break
                         if all(marker in text for marker in markers):
@@ -241,11 +306,13 @@ def main() -> int:
             args.transcript.read_text(encoding="utf-8", errors="replace")
         )
         found = [marker for marker in markers if marker in transcript_text]
-        forbidden = [marker for marker in FORBIDDEN_MARKERS if marker in transcript_text]
+        forbidden = [marker for marker in forbidden_markers if marker in transcript_text]
         document["markersFound"] = found
         document["forbiddenMarkersFound"] = forbidden
         if len(found) != len(markers):
             errors.append("QEMU transcript is missing one or more required boot markers")
+        if args.boot_mode == "recovery" and selection_attempts < 1:
+            errors.append("QEMU recovery hotkey was never accepted by the monitor")
         if document.get("terminationReason") != "required-markers":
             errors.append("QEMU did not reach markers under harness control")
         if forbidden:
@@ -278,7 +345,11 @@ def main() -> int:
 
     document["completedAt"] = now()
     document["durationSeconds"] = round(time.monotonic() - started, 3)
-    write_evidence(args.evidence, document)
+    try:
+        write_evidence(args.evidence, document)
+    except OSError as exc:
+        print(f"[mkosi-qemu] evidence publication failed: {exc}", file=sys.stderr)
+        return 1
     if errors:
         for error in errors:
             print(f"[mkosi-qemu] {error}", file=sys.stderr)

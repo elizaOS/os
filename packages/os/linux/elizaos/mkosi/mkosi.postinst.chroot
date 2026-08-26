@@ -168,6 +168,7 @@ if [ "$control_installed" -eq 1 ]; then
     systemctl enable eliza-control-broker.socket
 fi
 systemctl enable elizaos-grow-persistent.service
+systemctl enable elizaos-recovery-verify.service
 systemctl set-default graphical.target
 systemctl --global enable elizaos-session.target
 

@@ -9,7 +9,7 @@ initrd="$(find /boot -maxdepth 1 -name 'initrd.img-*' -print | sort -V | tail -n
 kernel="$(basename "$kernel")"
 initrd="$(basename "$initrd")"
 cat <<EOF
-menuentry 'elizaOS Recovery' --id elizaos-recovery {
+menuentry 'elizaOS Recovery' --id elizaos-recovery --hotkey=r {
     search --no-floppy --label --set=recovery elizaos-recovery
     linux (\$recovery)/boot/$kernel root=LABEL=elizaos-recovery ro systemd.unit=rescue.target elizaos.recovery=1
     initrd (\$recovery)/boot/$initrd
