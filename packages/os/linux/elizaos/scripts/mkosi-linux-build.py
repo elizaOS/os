@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -53,9 +54,55 @@ def configuration_digest(path: Path) -> str:
 
 def write_evidence(path: Path, document: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
-    temporary.replace(path)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            temporary.write(json.dumps(document, indent=2, sort_keys=True) + "\n")
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.link(temporary_path, path)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+def git_identity(git: str, repository: Path) -> tuple[str, bool]:
+    commit = subprocess.run(
+        [git, "-C", str(repository), "rev-parse", "HEAD"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    status = subprocess.run(
+        [git, "-C", str(repository), "status", "--porcelain", "--untracked-files=all"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if commit.returncode != 0 or status.returncode != 0:
+        raise RuntimeError("Git source identity inspection failed")
+    return commit.stdout.strip(), bool(status.stdout.strip())
+
+
+def artifact_inputs(path: Path) -> list[dict[str, object]]:
+    if any(candidate.is_symlink() or not candidate.is_file() for candidate in path.iterdir()):
+        raise ValueError("artifact staging directory contains a link or non-file")
+    return [
+        {
+            "path": candidate.name,
+            "size": candidate.stat().st_size,
+            "sha256": sha256_file(candidate),
+        }
+        for candidate in sorted(path.iterdir())
+    ]
 
 
 def main() -> int:
@@ -84,6 +131,7 @@ def main() -> int:
         "durationSeconds": None,
         "preflightOnly": args.preflight_only,
         "buildMode": args.build_mode,
+        "profile": args.profile,
         "success": False,
         "errors": [],
         "command": None,
@@ -92,6 +140,7 @@ def main() -> int:
     }
     started = time.monotonic()
     errors: list[str] = document["errors"]  # type: ignore[assignment]
+    repository: Path | None = None
 
     if platform.system() != "Linux":
         errors.append("mkosi image assembly is supported only on a Linux host")
@@ -113,23 +162,12 @@ def main() -> int:
             errors.append("mkosi directory is not in a Git worktree")
         else:
             repository = Path(root_result.stdout.strip())
-            commit_result = subprocess.run(
-                [git, "-C", str(repository), "rev-parse", "HEAD"],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            status_result = subprocess.run(
-                [git, "-C", str(repository), "status", "--porcelain", "--untracked-files=all"],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            if commit_result.returncode != 0 or status_result.returncode != 0:
-                errors.append("Git source identity inspection failed")
+            try:
+                source_commit, source_dirty = git_identity(git, repository)
+            except RuntimeError as exc:
+                errors.append(str(exc))
             else:
-                source_dirty = bool(status_result.stdout.strip())
-                document["sourceCommit"] = commit_result.stdout.strip()
+                document["sourceCommit"] = source_commit
                 document["sourceDirty"] = source_dirty
                 if source_dirty and (
                     args.build_mode == "release" or not args.allow_dirty_development
@@ -213,20 +251,11 @@ def main() -> int:
                     for path in artifact_dir.iterdir()
                     if path.is_file() and not path.is_symlink()
                 }
-                if any(path.is_symlink() or not path.is_file() for path in artifact_dir.iterdir()):
-                    raise ValueError("artifact staging directory contains a link or non-file")
                 if actual_files != expected_names:
                     raise ValueError(
                         "artifact staging directory must contain exactly manifest, both signatures, archive, and public key"
                     )
-                document["desktopArtifactInputs"] = [
-                    {
-                        "path": path.name,
-                        "size": path.stat().st_size,
-                        "sha256": sha256_file(path),
-                    }
-                    for path in sorted(artifact_dir.iterdir())
-                ]
+                document["desktopArtifactInputs"] = artifact_inputs(artifact_dir)
             except (OSError, UnicodeError, json.JSONDecodeError, KeyError, ValueError) as exc:
                 errors.append(f"desktop artifact staging contract failed: {exc}")
     if args.package_cache_dir:
@@ -275,6 +304,21 @@ def main() -> int:
         with log_path.open("wb") as log:
             process = subprocess.run(command, cwd=args.mkosi_dir, stdout=log, stderr=subprocess.STDOUT, check=False)
         document["returnCode"] = process.returncode
+        try:
+            if git and repository is not None:
+                final_commit, final_dirty = git_identity(git, repository)
+                if (
+                    final_commit != document.get("sourceCommit")
+                    or final_dirty != document.get("sourceDirty")
+                ):
+                    errors.append("source identity changed during mkosi build")
+            if configuration_digest(args.mkosi_dir) != document.get("configurationSha256"):
+                errors.append("mkosi configuration changed during build")
+            if args.build_mode == "release" and args.desktop_artifact_dir:
+                if artifact_inputs(args.desktop_artifact_dir) != document.get("desktopArtifactInputs"):
+                    errors.append("desktop artifact inputs changed during mkosi build")
+        except (OSError, RuntimeError, ValueError) as exc:
+            errors.append(f"post-build input verification failed: {exc}")
         candidates = sorted(
             path
             for path in args.output_dir.iterdir()

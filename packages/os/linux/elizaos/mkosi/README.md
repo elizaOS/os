@@ -206,6 +206,16 @@ sudo scripts/mkosi-persistence-qualify.py \
   --firmware-vars /path/to/OVMF_VARS.fd \
   --transcript-directory evidence/persistence-amd64 \
   --evidence evidence/persistence-amd64.json
+
+scripts/mkosi-reproducibility-qualify.py \
+  --build-a-evidence evidence/build-a.json \
+  --build-b-evidence evidence/build-b.json \
+  --compressed-a isolated-a/elizaos-linux-x86-64.raw.zst \
+  --compressed-b isolated-b/elizaos-linux-x86-64.raw.zst \
+  --image-a isolated-a/elizaos-linux-x86-64.raw \
+  --image-b isolated-b/elizaos-linux-x86-64.raw \
+  --evidence evidence/reproducibility-amd64.json \
+  --diffoscope-report evidence/reproducibility-amd64.diffoscope.txt
 ```
 
 The builder defaults to an explicitly identified development build and rejects
@@ -221,6 +231,20 @@ before the post-install verifier runs. Evidence records the Git commit, dirty
 state, mkosi configuration-tree digest, build mode, snapshot, output hashes,
 staged input hashes, and the bounded assembly-only claim. It is local evidence,
 not a signature or promotion record.
+
+The reproducibility qualifier accepts two distinct clean release-build records
+and their exact compressed/expanded image pairs. It rejects drift in the source
+commit, mkosi configuration, profile, Debian snapshot, `SOURCE_DATE_EPOCH`,
+mkosi version, or signed desktop inputs before comparing outputs. Each expanded
+image must reproduce the `.raw.zst` bytes bound by its build record. The tool
+then resolves and hashes the architecture-specific Discoverable Partitions root
+GPT range, allowing unrelated GPT disk identifiers to differ without weakening
+the root-filesystem claim. A
+root mismatch fails and invokes diffoscope on bounded root-partition extracts;
+the diagnostic report is retained in the JSON evidence. This tool proves only
+the two-build root-byte boundary, not that builds were run, booted, or isolated;
+release orchestration must supply records from two genuinely isolated builds.
+Both evidence output paths must be new and distinct from every input path.
 
 The build evidence claim ends at disk assembly and requires exactly one raw
 disk plus a JSON manifest and checksum output. The QEMU lane requires a
