@@ -96,6 +96,82 @@ assert_contains "$INSTALL_OUT" "fastboot flash vendor_kernel_boot"
 assert_contains "$INSTALL_OUT" "fastboot flash super"
 pass "installer dry-run plans discovered images"
 
+SLOT_OUT="$TMP_DIR/slot.out"
+"$ROOT/install-elizaos-android.sh" --artifact-dir "$ARTIFACT_DIR" --slot a >"$SLOT_OUT"
+assert_contains "$SLOT_OUT" "fastboot flash --slot a boot"
+assert_contains "$SLOT_OUT" "fastboot --set-active=a"
+assert_contains "$SLOT_OUT" "fastboot getvar current-slot"
+pass "installer pins the flashed slot active"
+
+INVALID_SLOT_OUT="$TMP_DIR/invalid-slot.out"
+if "$ROOT/install-elizaos-android.sh" --artifact-dir "$ARTIFACT_DIR" --slot c >"$INVALID_SLOT_OUT" 2>&1; then
+  fail "installer accepted an invalid slot"
+fi
+assert_contains "$INVALID_SLOT_OUT" "--slot must be 'a' or 'b'"
+pass "installer rejects invalid slots"
+
+STALE_ARTIFACT_DIR="$TMP_DIR/artifacts-stale"
+mkdir -p "$STALE_ARTIFACT_DIR"
+cp "$ARTIFACT_DIR/boot.img" "$STALE_ARTIFACT_DIR/boot.img"
+cp "$ARTIFACT_DIR/vendor_boot.img" "$STALE_ARTIFACT_DIR/vendor_boot.img"
+touch -t 202001010000 "$STALE_ARTIFACT_DIR/vendor_boot.img"
+STALE_OUT="$TMP_DIR/stale.out"
+if "$ROOT/install-elizaos-android.sh" --artifact-dir "$STALE_ARTIFACT_DIR" >"$STALE_OUT" 2>&1; then
+  fail "installer accepted an artifact dir mixing build generations"
+fi
+assert_contains "$STALE_OUT" "mixes build generations"
+STALE_OVERRIDE_OUT="$TMP_DIR/stale-override.out"
+"$ROOT/install-elizaos-android.sh" --artifact-dir "$STALE_ARTIFACT_DIR" --allow-stale-artifacts >"$STALE_OVERRIDE_OUT"
+assert_contains "$STALE_OVERRIDE_OUT" "Dry-run only. No commands were executed."
+pass "installer refuses mixed-generation artifact dirs"
+
+ANDROID_INFO_FILE="$TMP_DIR/android-info.txt"
+cat >"$ANDROID_INFO_FILE" <<'INFO'
+require board=tegu
+require version-bootloader=fixture-bl-1.0
+require partition-exists=vendor_kernel_boot
+INFO
+cat >"$BIN_DIR/fastboot" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  *"getvar unlocked"*) echo 'unlocked: yes' >&2 ;;
+  *"getvar product"*) echo 'product: tegu' >&2 ;;
+  *"getvar version-bootloader"*) echo "version-bootloader: ${FAKE_BOOTLOADER_VERSION:-fixture-bl-1.0}" >&2 ;;
+  *"getvar partition-size:vendor_kernel_boot"*) echo 'partition-size:vendor_kernel_boot: 0x1000000' >&2 ;;
+  *) echo "fake fastboot $*" ;;
+esac
+EOF
+chmod +x "$BIN_DIR/fastboot"
+ANDROID_INFO_OUT="$TMP_DIR/android-info.out"
+"$ROOT/install-elizaos-android.sh" \
+  --artifact-dir "$ARTIFACT_DIR" \
+  --android-info "$ANDROID_INFO_FILE" \
+  --assume-bootloader --execute >"$ANDROID_INFO_OUT"
+assert_contains "$ANDROID_INFO_OUT" "execution requested without --confirm-flash"
+ANDROID_INFO_MISMATCH_OUT="$TMP_DIR/android-info-mismatch.out"
+if FAKE_BOOTLOADER_VERSION=other-bl-9.9 "$ROOT/install-elizaos-android.sh" \
+  --artifact-dir "$ARTIFACT_DIR" \
+  --android-info "$ANDROID_INFO_FILE" \
+  --assume-bootloader --execute >"$ANDROID_INFO_MISMATCH_OUT" 2>&1; then
+  fail "installer accepted a mismatched bootloader version"
+fi
+assert_contains "$ANDROID_INFO_MISMATCH_OUT" "requires 'fixture-bl-1.0'"
+pass "installer enforces android-info firmware requirements"
+
+MODE_MANIFEST="$TMP_DIR/mode-manifest.json"
+node - "$ROOT/manifests/android-release-manifest.example.json" "$MODE_MANIFEST" <<'NODE'
+const { readFileSync, writeFileSync } = require('node:fs');
+const [source, target] = process.argv.slice(2);
+const manifest = JSON.parse(readFileSync(source, 'utf8'));
+writeFileSync(target, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
+MODE_OUT="$TMP_DIR/mode.out"
+"$ROOT/install-elizaos-android.sh" \
+  --artifact-dir "$ARTIFACT_DIR" \
+  --manifest "$MODE_MANIFEST" >"$MODE_OUT"
+assert_contains "$MODE_OUT" "fastboot reboot fastboot"
+pass "installer honors manifest fastbootd mode transitions"
+
 FLASH_REFUSAL_OUT="$TMP_DIR/flash-refusal.out"
 if "$ROOT/install-elizaos-android.sh" \
   --artifact-dir "$ARTIFACT_DIR" \

@@ -60,7 +60,7 @@ INFERENCE_TARGETS_arm64 := android-arm64-cpu-fused
 INFERENCE_TARGETS_riscv64 := android-arm64-cpu-fused android-riscv64-cpu-fused
 INFERENCE_TARGETS := $(INFERENCE_TARGETS_$(ARCH))
 
-.PHONY: help bootstrap bootstrap-grizzly prepare-grizzly provision-e1 build build-e1 build-grizzly bundle-grizzly native-inference native-inference-grizzly sim splash bootanimation check-arch
+.PHONY: help bootstrap bootstrap-grizzly prepare-grizzly evidence-grizzly attest-grizzly verify-grizzly provision-e1 build build-e1 build-grizzly bundle-grizzly native-inference native-inference-grizzly sim splash bootanimation check-arch
 
 help:
 	@echo "elizaOS Mobile (AOSP) targets:"
@@ -69,6 +69,9 @@ help:
 	@echo "  make prepare-grizzly                    # generate grizzly vendor/device support from stock"
 	@echo "  make build-grizzly                      # build the Pixel 11 Pro image (does not flash)"
 	@echo "  make bundle-grizzly                     # build the complete Pixel 11 Pro flash handoff"
+	@echo "  make evidence-grizzly                   # capture bootloader/adb/pstore boot evidence"
+	@echo "  make attest-grizzly                     # (build host) verify staged images match the prepare stamp, write sha256 manifest"
+	@echo "  make verify-grizzly MANIFEST=… DIR=…    # (flash host) verify local images against the attestation manifest"
 	@echo "  make build ARCH=x86_64|arm64|riscv64   # build + launch + boot-validate"
 	@echo "  make build-e1                           # build + validate the pinned E1 Cuttlefish simulator"
 	@echo "  make sim   ARCH=<arch>                  # validate an already-built image"
@@ -119,6 +122,15 @@ bundle-grizzly: prepare-grizzly native-inference-grizzly bootanimation
 	@test -n "$$SOURCE_DATE_EPOCH" || (echo "ERROR: SOURCE_DATE_EPOCH is required" >&2; exit 64)
 	ELIZAOS_ELIZA_ROOT="$(ELIZAOS_ELIZA_ROOT)" ELIZA_BUN_RISCV64_OPTIONAL=1 node $(DISTRO)/build-aosp.mjs --brand-config $(DISTRO)/brand.eliza-grizzly.json --aosp-root "$(AOSP_GRIZZLY_ROOT)" --rebuild-privileged-apk --skip-build $(ARGS)
 	node $(REPO_ROOT)/scripts/aosp/build-grizzly-bundle.mjs --aosp-root "$(AOSP_GRIZZLY_ROOT)" --output-dir "$(BUNDLE_DIR)" --jobs $(or $(JOBS),$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1))
+
+evidence-grizzly:
+	node $(DISTRO)/grizzly-evidence.mjs $(ARGS)
+
+attest-grizzly:
+	node $(DISTRO)/verify-grizzly-artifacts.mjs attest --aosp-root "$(AOSP_GRIZZLY_ROOT)" $(ARGS)
+
+verify-grizzly:
+	node $(DISTRO)/verify-grizzly-artifacts.mjs check --manifest "$(MANIFEST)" --artifact-dir "$(DIR)"
 
 sim: check-arch
 	node $(DISTRO)/sim.mjs --brand-config $(BRAND_CONFIG) --device-dir $(DEVICE_DIR) --aosp-root $(AOSP_ROOT) $(ARGS)

@@ -33,7 +33,7 @@ prints the exact command plan without touching the device:
 
 ```bash
 android/installer/install-elizaos-android.sh \
-  --artifact-dir out/target/product/eliza_tegu_phone
+  --artifact-dir out/target/product/tegu
 ```
 
 If multiple Android devices are connected, pass the serial shown by
@@ -42,7 +42,7 @@ If multiple Android devices are connected, pass the serial shown by
 ```bash
 android/installer/install-elizaos-android.sh \
   --device ABC123 \
-  --artifact-dir out/target/product/eliza_tegu_phone
+  --artifact-dir out/target/product/tegu
 ```
 
 ## Image inputs
@@ -73,10 +73,10 @@ image:
 
 ```bash
 android/installer/install-elizaos-android.sh \
-  --image boot=out/target/product/eliza_tegu_phone/boot.img \
-  --image vendor_boot=out/target/product/eliza_tegu_phone/vendor_boot.img \
-  --image vendor_kernel_boot=out/target/product/eliza_tegu_phone/vendor_kernel_boot.img \
-  --image super=out/target/product/eliza_tegu_phone/super.img
+  --image boot=out/target/product/tegu/boot.img \
+  --image vendor_boot=out/target/product/tegu/vendor_boot.img \
+  --image vendor_kernel_boot=out/target/product/tegu/vendor_kernel_boot.img \
+  --image super=out/target/product/tegu/super.img
 ```
 
 For A/B devices that need an explicit slot, add `--slot a`, `--slot b`, or the
@@ -100,7 +100,7 @@ helper skips ADB discovery and starts with fastboot preflight:
 android/installer/install-elizaos-android.sh \
   --assume-bootloader \
   --device ABC123 \
-  --artifact-dir out/target/product/eliza_tegu_phone
+  --artifact-dir out/target/product/tegu
 ```
 
 `--skip-preflight` is available only for non-flashing diagnostics. The helper
@@ -114,7 +114,7 @@ inputs and add both execution flags:
 ```bash
 android/installer/install-elizaos-android.sh \
   --device ABC123 \
-  --artifact-dir out/target/product/eliza_tegu_phone \
+  --artifact-dir out/target/product/tegu \
   --manifest path/to/release-manifest.json \
   --execute \
   --confirm-flash
@@ -126,7 +126,7 @@ Android:
 ```bash
 android/installer/install-elizaos-android.sh \
   --device ABC123 \
-  --artifact-dir out/target/product/eliza_tegu_phone \
+  --artifact-dir out/target/product/tegu \
   --manifest path/to/release-manifest.json \
   --execute \
   --confirm-flash \
@@ -182,7 +182,7 @@ file sizes and SHA-256 values:
 ```bash
 node android/installer/scripts/validate-release-manifest.mjs \
   path/to/release-manifest.json \
-  --artifact-dir out/target/product/eliza_tegu_phone
+  --artifact-dir out/target/product/tegu
 ```
 
 On Windows, the PowerShell wrapper keeps the same dry-run default and forwards
@@ -191,7 +191,7 @@ available:
 
 ```powershell
 packages\os\android\installer\install-elizaos-android.ps1 `
-  -ArtifactDir out\target\product\eliza_tegu_phone `
+  -ArtifactDir out\target\product\tegu `
   -Manifest path\to\release-manifest.json
 ```
 
