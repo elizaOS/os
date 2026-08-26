@@ -175,19 +175,56 @@ export function parseUnixInstallWireFrame(
 async function readSingleFrame(
   socket: Socket,
 ): Promise<LocalInstallExecutionRequest> {
-  const chunks: Buffer[] = [];
-  let received = 0;
-  for await (const chunk of socket) {
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    received += bytes.length;
-    if (received > MAX_UNIX_INSTALL_FRAME_BYTES + FRAME_HEADER_BYTES) {
-      throw new Error(
-        "Installer IPC connection exceeded the bounded frame size.",
-      );
-    }
-    chunks.push(bytes);
-  }
-  return parseUnixInstallWireFrame(Buffer.concat(chunks));
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let received = 0;
+    let ended = false;
+
+    const cleanup = () => {
+      socket.off("data", onData);
+      socket.off("end", onEnd);
+      socket.off("error", onError);
+      socket.off("close", onClose);
+    };
+    const fail = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const onData = (chunk: Buffer | string) => {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      received += bytes.length;
+      if (received > MAX_UNIX_INSTALL_FRAME_BYTES + FRAME_HEADER_BYTES) {
+        socket.pause();
+        fail(
+          new Error(
+            "Installer IPC connection exceeded the bounded frame size.",
+          ),
+        );
+        return;
+      }
+      chunks.push(bytes);
+    };
+    const onEnd = () => {
+      ended = true;
+      cleanup();
+      try {
+        resolve(parseUnixInstallWireFrame(Buffer.concat(chunks)));
+      } catch (error) {
+        reject(error);
+      }
+    };
+    const onError = (error: Error) => fail(error);
+    const onClose = () => {
+      if (!ended) {
+        fail(new Error("Installer IPC connection closed before its frame."));
+      }
+    };
+
+    socket.on("data", onData);
+    socket.once("end", onEnd);
+    socket.once("error", onError);
+    socket.once("close", onClose);
+  });
 }
 
 function writeResponse(socket: Socket, value: unknown): void {
