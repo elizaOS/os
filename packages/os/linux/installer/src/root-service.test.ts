@@ -395,6 +395,14 @@ describe("privileged installer root-service core", () => {
     );
   });
 
+  it("rejects malformed UTF-8 instead of decoding replacement characters", () => {
+    expect(() =>
+      parseLocalInstallExecutionFrame(
+        Uint8Array.from([0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xff, 0x22, 0x7d]),
+      ),
+    ).toThrow(/UTF-8/);
+  });
+
   it("rejects unsupported IPC fields instead of forwarding renderer data", async () => {
     const { message, target } = fixture();
     const deps = dependencies(target);

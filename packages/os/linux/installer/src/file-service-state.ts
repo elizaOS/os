@@ -7,7 +7,7 @@ import {
   readdir,
   unlink,
 } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { InstallRecoveryRequiredError } from "./executor";
 import type {
   InstallAuthorizationReplayStore,
@@ -103,6 +103,34 @@ export class DurableFileInstallServiceState
   }
 
   private async assertTopology(): Promise<void> {
+    const filesystemOwnerUid = (await lstat("/")).uid;
+    let ancestor = this.directory;
+    while (true) {
+      let stats: Stats;
+      try {
+        stats = await lstat(ancestor);
+      } catch {
+        throw recoveryRequired("a state-path ancestor is unavailable.");
+      }
+      const writableByOthers = (stats.mode & 0o022) !== 0;
+      const trustedStickyDirectory =
+        stats.isDirectory() &&
+        stats.uid === filesystemOwnerUid &&
+        (stats.mode & 0o1000) !== 0;
+      if (
+        !stats.isDirectory() ||
+        stats.isSymbolicLink() ||
+        (stats.uid !== operatingUid() && stats.uid !== filesystemOwnerUid) ||
+        (writableByOthers && !trustedStickyDirectory)
+      ) {
+        throw recoveryRequired(
+          "state-path ancestors must be trusted real directories that cannot be replaced by another user.",
+        );
+      }
+      const parent = dirname(ancestor);
+      if (parent === ancestor) break;
+      ancestor = parent;
+    }
     await this.assertDirectory(this.directory);
     await this.assertDirectory(this.authorizationsDirectory);
     await this.assertDirectory(this.targetsDirectory);
@@ -272,6 +300,7 @@ export class DurableFileInstallServiceState
       !SHA256_PATTERN.test(planId) ||
       (kernelDeviceIdentity !== undefined &&
         (!kernelDeviceIdentity.trim() ||
+          kernelDeviceIdentity.includes("\0") ||
           Buffer.byteLength(kernelDeviceIdentity, "utf8") >
             MAX_KERNEL_IDENTITY_BYTES))
     ) {

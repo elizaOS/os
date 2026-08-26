@@ -43,7 +43,8 @@ single-use, and every plan targeting the same physical disk is serialized even
 when its plan id or `/dev/disk/by-id` alias differs.
 
 `DurableFileInstallServiceState` supplies the replay and target-lock storage
-for that boundary. Its pre-provisioned state topology must be owner-only;
+for that boundary. Its pre-provisioned state topology must be owner-only and
+must be reached only through trusted, non-symlink directory ancestors;
 single-use owner/nonce claims are atomically created and synced without
 persisting credentials. Claims have strict field bounds and a durably
 serialized hard capacity; consumed records are never automatically removed,

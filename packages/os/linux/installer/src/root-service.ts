@@ -1,3 +1,4 @@
+import { TextDecoder } from "node:util";
 import type {
   InstallExecutionDependencies,
   InstallExecutionResult,
@@ -214,9 +215,11 @@ export function parseLocalInstallExecutionFrame(
   }
   let decoded: unknown;
   try {
-    decoded = JSON.parse(bytes.toString("utf8"));
+    decoded = JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+    );
   } catch {
-    throw new Error("Installer IPC frame is not valid JSON.");
+    throw new Error("Installer IPC frame is not valid UTF-8 JSON.");
   }
   return parseIpcRequest(decoded);
 }

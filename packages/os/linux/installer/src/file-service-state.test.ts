@@ -163,6 +163,24 @@ describe("durable installer root-service state", () => {
     );
   });
 
+  it("rejects a state root reached through a symbolic-link ancestor", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "elizaos-installer-ancestor-"));
+    temporaryDirectories.push(parent);
+    const real = join(parent, "real");
+    const root = join(real, "state");
+    await mkdir(real, { mode: 0o700 });
+    await mkdir(root, { mode: 0o700 });
+    await mkdir(join(root, "authorizations"), { mode: 0o700 });
+    await mkdir(join(root, "targets"), { mode: 0o700 });
+    const alias = join(parent, "alias");
+    await symlink(real, alias);
+    const state = new DurableFileInstallServiceState(join(alias, "state"));
+
+    await expect(state.claim(authorization())).rejects.toBeInstanceOf(
+      InstallRecoveryRequiredError,
+    );
+  });
+
   it("uses hashed filenames rather than caller-controlled paths", async () => {
     const { root, state } = await stateFixture();
     const value = authorization();
@@ -199,5 +217,19 @@ describe("durable installer root-service state", () => {
     const value = authorization();
     value.nonce = "n".repeat(257);
     await expect(state.claim(value)).rejects.toThrow(/oversized/);
+  });
+
+  it("rejects a control-character kernel identity before persisting a lock", async () => {
+    const { root, state } = await stateFixture();
+
+    await expect(
+      state.runExclusive(
+        "c".repeat(64),
+        "8:0\0forged",
+        "a".repeat(64),
+        async () => "must-not-run",
+      ),
+    ).rejects.toThrow(/identity is invalid/);
+    expect(await readdir(join(root, "targets"))).toEqual([]);
   });
 });
