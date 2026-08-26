@@ -13,7 +13,7 @@ format, and boot chain.
 | Sandboxing | SELinux `untrusted_app` + seccomp | systemd unit + namespaces |
 | Distribution | OTA / sideload | USB installer / OTA |
 | Supported arches | arm64-v8a, x86_64, riscv64 | x86_64, arm64, riscv64 build targets of the same Debian fork |
-| Real-device targets | Pixel (oriole/panther/shiba/caiman/tegu), e1 SoC | any UEFI x86_64 / riscv64 SBC |
+| Real-device targets | Pixel (oriole/panther/shiba/caiman/tegu), e1 SoC | individually qualified x86_64 systems; no physical riscv64 board is qualified yet |
 | Virtual targets | Cuttlefish (`vsoc_x86_64_only`, `vsoc_riscv64_only`) | QEMU virt + UEFI |
 
 ## What is shared

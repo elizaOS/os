@@ -12,7 +12,7 @@ Both wrappers are exposed at the repo root as bun scripts:
 
 ```bash
 ELIZA_RISCV64_SMOKE=1 bun run build:riscv64-artifacts
-ELIZA_RISCV64_SMOKE=1 bun run check:riscv64-artifacts
+ELIZA_RISCV64_SMOKE=1 bun run check:riscv64-artifacts --require-complete
 ```
 
 With `ELIZA_RISCV64_SMOKE` unset they are intentional no-ops — that
@@ -91,9 +91,14 @@ alone:
 ELIZA_RISCV64_SMOKE=1 bun run check:riscv64-artifacts
 ```
 
-Missing artifacts are reported as `SKIP` records with a reason, not
-`FAIL` — so the harness is safe to re-run incrementally as each
-upstream build comes online.
+Without `--require-complete`, missing artifacts are reported as `SKIP` records
+with a reason so the harness is safe to re-run incrementally as each upstream
+build comes online. The CI workflow always passes `--require-complete`: every
+inventoried artifact must exist, and a missing QEMU executable or build output
+is a hard failure. Strict mode also requires `ELIZA_RISCV64_SMOKE=1` and rejects
+`--no-qemu`; those configurations produce a `FAIL` report and exit 1. A CI
+report therefore cannot be `PASS` merely because its required artifacts or
+execution boundary were absent.
 
 The QJL fork-parity executable requires `dlopen`. Zig's
 `riscv64-linux-musl` test executable is static, so `qemu-riscv64-static`
@@ -119,8 +124,8 @@ but does not run any executable.
 
 | code | meaning                                          |
 | ---- | ------------------------------------------------ |
-| 0    | every artifact PASSed or SKIPped with reason     |
-| 1    | at least one artifact FAILed                     |
+| 0    | every artifact PASSed or documented runtime-only SKIPped |
+| 1    | at least one artifact FAILed (including missing output in `--require-complete` mode) |
 | 2    | invalid CLI args / missing toolchain (build-only)|
 
 ## CI integration

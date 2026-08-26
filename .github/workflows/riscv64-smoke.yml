@@ -159,7 +159,7 @@ jobs:
 
       - name: QEMU smoke every riscv64 artifact
         run: |
-          bun run check:riscv64-artifacts
+          bun run check:riscv64-artifacts --require-complete
 
       - name: Upload JSON report
         if: always()
