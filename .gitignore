@@ -60,3 +60,6 @@ characters/**/*.env
 .vscode/
 xcuserdata/
 *.xcuserstate
+
+# Local evidence and validation output (never committed per repo policy)
+reports/
