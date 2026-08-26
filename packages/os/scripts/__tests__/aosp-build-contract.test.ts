@@ -22,7 +22,10 @@ import {
   parseArgs as parseDeployArgs,
   resolveBuiltPrivilegedApk,
 } from "../../../../scripts/aosp/deploy-pixel.mjs";
-import { parseSmokeArgs } from "../../../../scripts/aosp/smoke-cuttlefish.mjs";
+import {
+  parseAgentServiceProcessState,
+  parseSmokeArgs,
+} from "../../../../scripts/aosp/smoke-cuttlefish.mjs";
 import {
   parseAdbDevicesOutput,
   selectBrandDeviceSerial,
@@ -83,6 +86,27 @@ async function createGitFixture(root: string, files: string[]) {
 }
 
 describe("AOSP build contracts", () => {
+  test("agent smoke distinguishes a running service from a pending record", () => {
+    expect(
+      parseAgentServiceProcessState(
+        `ACTIVITY MANAGER SERVICES\n  * ServiceRecord{abc u0 ai.elizaos.app/.ElizaAgentService c:com.android.shell}\n    packageName=ai.elizaos.app\n    app=null\n  * ServiceRecord{def u0 ai.elizaos.app/.ElizaVoiceInteractionService c:android}\n    app=ProcessRecord{123 ai.elizaos.app/u0a1}`,
+        "ai.elizaos.app",
+      ),
+    ).toBe("pending");
+    expect(
+      parseAgentServiceProcessState(
+        `ACTIVITY MANAGER SERVICES\n  * ServiceRecord{abc u0 ai.elizaos.app/.ElizaAgentService c:android}\n    packageName=ai.elizaos.app\n    app=ProcessRecord{123 ai.elizaos.app/u0a1}`,
+        "ai.elizaos.app",
+      ),
+    ).toBe("running");
+    expect(
+      parseAgentServiceProcessState(
+        "ACTIVITY MANAGER SERVICES (dumpsys activity services)",
+        "ai.elizaos.app",
+      ),
+    ).toBe("missing");
+  });
+
   test("boot validation selects the branded Cuttlefish device, not an attached stock phone", () => {
     expect(
       parseAdbDevicesOutput(

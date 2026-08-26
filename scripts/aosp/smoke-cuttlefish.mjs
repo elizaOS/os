@@ -112,6 +112,12 @@ const HEALTH_POLL_INTERVAL_MS = 2_000;
 // AOSP_BUILD=true. Real phone hardware resolves in seconds, so this
 // only matters for cvd runs.
 const CHAT_TIMEOUT_MS = 3_600_000;
+// Starting the Android Service object is cheap even when extracting the agent
+// payload takes minutes. Do not misreport an activity-launch fallback as a
+// service start and then spend the full health deadline waiting for a process
+// that never existed (notably on locked retail devices where no local runtime
+// choice has been committed).
+const SERVICE_START_TIMEOUT_MS = 30_000;
 
 // ANSI color helpers; output is human-readable, no JSON for now.
 const RESET = "[0m";
@@ -145,6 +151,19 @@ export function summarize(results) {
   return { line: `Smoke test: ${tag}`, allPassed };
 }
 
+export function parseAgentServiceProcessState(output, packageName) {
+  const records = output.split(/\n(?=\s*\* ServiceRecord\{)/);
+  const record = records.find(
+    (candidate) =>
+      candidate.includes(`${packageName}/.ElizaAgentService`) ||
+      candidate.includes(`${packageName}/${packageName}.ElizaAgentService`),
+  );
+  if (!record) return "missing";
+  if (/\n\s*app=ProcessRecord\{/.test(record)) return "running";
+  if (/\n\s*app=null\b/.test(record)) return "pending";
+  return "unknown";
+}
+
 // Helper: synchronous adb invocation. Returns { stdout, stderr, status }.
 // `serial` lets the caller target a specific device when more than one
 // is attached (cvd commonly registers 0.0.0.0:6520).
@@ -164,6 +183,21 @@ function adb(args, { serial = null, timeout = 10_000 } = {}) {
 
 async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForAgentServiceProcess({ adbImpl, serial, packageName }) {
+  const deadline = Date.now() + SERVICE_START_TIMEOUT_MS;
+  let state = "missing";
+  while (Date.now() < deadline) {
+    const services = adbImpl(
+      ["shell", "dumpsys", "activity", "services", packageName],
+      { serial },
+    );
+    state = parseAgentServiceProcessState(services.stdout, packageName);
+    if (state === "running") return state;
+    await sleep(500);
+  }
+  return state;
 }
 
 async function pollHealth(deadline) {
@@ -370,7 +404,26 @@ export async function runSmoke({
       }
     }
   }
-  results.push({ step: 3, label: "ElizaAgentService start", ok: true });
+  const serviceState = await waitForAgentServiceProcess({
+    adbImpl,
+    serial,
+    packageName,
+  });
+  if (serviceState !== "running") {
+    results.push({
+      step: 3,
+      label: "ElizaAgentService start",
+      ok: false,
+      detail: `service process was ${serviceState} after ${SERVICE_START_TIMEOUT_MS / 1000}s; direct start: ${svcText.slice(0, 120) || "<no output>"}. On stock Android, commit the Local runtime choice in onboarding before running this lane.`,
+    });
+    return results;
+  }
+  results.push({
+    step: 3,
+    label: "ElizaAgentService start",
+    ok: true,
+    detail: "service process running",
+  });
 
   // Step 4: wait for /api/health via adb forward.
   logStep(4, `Waiting up to ${HEALTH_TIMEOUT_MS / 1000}s for /api/health`);
