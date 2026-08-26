@@ -58,8 +58,10 @@ import {
   aospBuildEnvironment,
   assertBuildHost,
   closeAospBuildEnvironment,
+  cuttlefishLaunchCommand,
   prepareAospBuildEnvironment,
   revalidateAospBuildEnvironment,
+  resolveCuttlefishGpuMode,
 } from "../../../../scripts/distro-android/build-aosp.mjs";
 import {
   GRAPHICS_PROBES,
@@ -1641,6 +1643,40 @@ describe("AOSP build contracts", () => {
         kvmPath: "/definitely/missing/kvm",
       }),
     ).toThrow("Cuttlefish launch requires /dev/kvm");
+  });
+
+  test("Cuttlefish launch pins accelerated graphics instead of auto mode", () => {
+    const brand = {
+      lunchTarget: "eliza_cf_x86_64_phone-trunk_staging-userdebug",
+      productName: "eliza_cf_x86_64_phone",
+    };
+    expect(resolveCuttlefishGpuMode(brand, {})).toBe("gfxstream");
+    const command = cuttlefishLaunchCommand(brand, {});
+    expect(command).toContain("cvd start --daemon --gpu_mode=gfxstream");
+    expect(command).toContain("launch_cvd --daemon --gpu_mode=gfxstream");
+    expect(command).toContain("if command -v cvd");
+    expect(command).not.toContain("gpu_mode=auto");
+    expect(command).not.toContain("2>/dev/null ||");
+  });
+
+  test("Cuttlefish GPU selection is explicit and rejects shell input", () => {
+    const riscvBrand = {
+      lunchTarget: "eliza_cf_riscv64_phone-trunk_staging-userdebug",
+      productName: "eliza_cf_riscv64_phone",
+    };
+    expect(resolveCuttlefishGpuMode(riscvBrand, {})).toBe(
+      "guest_swiftshader",
+    );
+    expect(
+      resolveCuttlefishGpuMode(riscvBrand, {
+        ELIZA_CUTTLEFISH_GPU_MODE: "none",
+      }),
+    ).toBe("none");
+    expect(() =>
+      resolveCuttlefishGpuMode(riscvBrand, {
+        ELIZA_CUTTLEFISH_GPU_MODE: "gfxstream; touch /tmp/unsafe",
+      }),
+    ).toThrow("ELIZA_CUTTLEFISH_GPU_MODE must be one of");
   });
 
   test("the grizzly handoff requires and digest-binds every flash input", async () => {

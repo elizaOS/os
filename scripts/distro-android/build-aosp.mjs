@@ -460,17 +460,54 @@ function runAospBuild(aospRoot, jobs, brand) {
   }
 }
 
+const CUTTLEFISH_GPU_MODES = new Set([
+  "gfxstream",
+  "gfxstream_guest_angle",
+  "gfxstream_guest_angle_host_swiftshader",
+  "guest_swiftshader",
+  "drm_virgl",
+  "none",
+]);
+
+export function resolveCuttlefishGpuMode(
+  brand,
+  env = process.env,
+) {
+  const configured = env.ELIZA_CUTTLEFISH_GPU_MODE?.trim();
+  if (configured) {
+    if (!CUTTLEFISH_GPU_MODES.has(configured)) {
+      throw new Error(
+        `ELIZA_CUTTLEFISH_GPU_MODE must be one of ${[...CUTTLEFISH_GPU_MODES].join(", ")}`,
+      );
+    }
+    return configured;
+  }
+  return brand.productName.includes("riscv64")
+    ? "guest_swiftshader"
+    : "gfxstream";
+}
+
+export function cuttlefishLaunchCommand(brand, env = process.env) {
+  const gpuMode = resolveCuttlefishGpuMode(brand, env);
+  const launchArgs = `--daemon --gpu_mode=${gpuMode}`;
+  return [
+    "source build/envsetup.sh",
+    `lunch ${brand.lunchTarget}`,
+    `if command -v cvd >/dev/null 2>&1; then cvd start ${launchArgs}; else launch_cvd ${launchArgs}; fi`,
+  ].join(" && ");
+}
+
 function launchCuttlefish(aospRoot, brand) {
   // Cuttlefish 1.x ships `cvd start`; 0.x exposed `launch_cvd`. Prefer the
   // newer command and fall back so older host packages keep working.
   // `cvd start` reads host artifacts from $ANDROID_HOST_OUT, which lunch
-  // populates from build/envsetup.sh.
+  // populates from build/envsetup.sh. Select the command by availability so a
+  // real launch failure is never hidden by an incompatible fallback. Android's
+  // documented gfxstream mode forwards guest OpenGL/Vulkan to the host and is
+  // explicit here because auto mode can silently choose guest SwiftShader.
   run(
     "bash",
-    [
-      "-lc",
-      `source build/envsetup.sh && lunch ${brand.lunchTarget} && (cvd start --daemon 2>/dev/null || launch_cvd --daemon)`,
-    ],
+    ["-lc", cuttlefishLaunchCommand(brand)],
     { cwd: aospRoot },
   );
 }
