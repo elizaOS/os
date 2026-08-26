@@ -197,6 +197,8 @@ require_text '--bios cannot be combined with pflash firmware mode' \
 require_text 'choices=("usb", "virtio"), default="usb"' \
     "${ROOT}/scripts/mkosi-qemu-qualify.py"
 require_text 'terminationReason' "${ROOT}/scripts/mkosi-qemu-qualify.py"
+require_text '"firmwareMode": args.firmware_mode' "${ROOT}/scripts/mkosi-qemu-qualify.py"
+require_text '"version": version_line' "${ROOT}/scripts/mkosi-qemu-qualify.py"
 require_text 'virt,accel=hvf,gic-version=max' "${ROOT}/scripts/mkosi-qemu-qualify.py"
 require_text 'Started gdm.service - GNOME Display Manager' "${ROOT}/scripts/mkosi-qemu-qualify.py"
 require_text 'Reached target Graphical Interface' "${ROOT}/scripts/mkosi-qemu-qualify.py"

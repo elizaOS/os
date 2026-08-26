@@ -210,6 +210,12 @@ scripts/mkosi-qemu-qualify.py \
   --transcript evidence/recovery-amd64.log \
   --evidence evidence/recovery-amd64.json
 
+scripts/mkosi-qemu-qualify.py \
+  --architecture amd64 --image out/mkosi/elizaos-linux-x86-64.raw \
+  --firmware-mode bios --bios /usr/share/qemu/bios-256k.bin \
+  --transcript evidence/qemu-legacy-bios-amd64.log \
+  --evidence evidence/qemu-legacy-bios-amd64.json
+
 sudo scripts/mkosi-persistence-qualify.py \
   --architecture amd64 \
   --source-image out/mkosi/elizaos-linux-x86-64.raw \
@@ -273,6 +279,13 @@ criterion. Additional `--required-marker` values can strengthen but cannot
 replace the two built-in markers. Its
 temporary QEMU snapshot must leave the hashed source disk byte-identical. Its
 claim ends at graphical-target boot: it does not prove owner login or GDM pixels.
+Promotion additionally requires the exact x86_64 expanded disk to pass a
+second removable-USB boot with an explicit, hashed legacy BIOS image. UEFI
+evidence cannot substitute for that record, and legacy BIOS evidence is not
+accepted for arm64 or riscv64.
+The signed publication-input artifact retains the build record, firmware-bound
+QEMU records and transcripts, and both persistence-boot transcripts alongside
+the image and SBOM instead of reducing those checks to an untraceable label.
 
 The persistence qualifier never mutates that immutable source. It creates a
 larger disposable disk, writes the exact expanded bytes through a loop block
@@ -304,10 +317,16 @@ node ../../../scripts/sign-image-release.mjs \
   --output /release/images/manifest.json
 
 ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64=<reviewed-public-key> \
+ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256=<independently-pinned-lowercase-sha256> \
 node ../../../scripts/verify-image-release.mjs \
   --artifact-root /release/images \
   --manifest /release/images/manifest.json
 ```
+
+For emergency revocation, set
+`ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S` to a sorted, unique,
+comma-separated list of revoked SPKI SHA-256 digests. Verification rejects a
+matching key before reading or activating manifest metadata.
 
 The private key is read only from the environment. The signer never writes it,
 and the verifier independently checks the JSON schema, manifest signature,

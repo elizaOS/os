@@ -39,6 +39,10 @@ on:
         required: true
       ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64:
         required: true
+      ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256:
+        required: true
+      ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S:
+        required: false
   workflow_dispatch:
     inputs:
       version:
@@ -103,6 +107,7 @@ jobs:
             mkosi-architecture: x86-64
             runner: x64
             firmware-mode: pflash
+            legacy-bios: /usr/share/qemu/bios-256k.bin
           - architecture: arm64
             build-architecture: arm64
             mkosi-architecture: arm64
@@ -276,6 +281,19 @@ jobs:
           fi
           packages/os/linux/elizaos/scripts/mkosi-qemu-qualify.py "${common[@]}"
 
+      - name: QEMU legacy-BIOS boot exact x86_64 disk as removable USB
+        if: ${{ matrix.architecture == 'x86_64' }}
+        run: |
+          set -euo pipefail
+          packages/os/linux/elizaos/scripts/mkosi-qemu-qualify.py \
+            --architecture amd64 \
+            --image "$WORK_ROOT/canonical/elizaos-${{ inputs.version }}-x86_64.raw" \
+            --disk-interface usb \
+            --firmware-mode bios \
+            --bios "${{ matrix.legacy-bios }}" \
+            --transcript "$WORK_ROOT/evidence/qemu-legacy-bios-x86_64.log" \
+            --evidence "$WORK_ROOT/evidence/qemu-legacy-bios-x86_64.json"
+
       - name: Prove virtual USB readback and two-boot persistence
         run: |
           set -euo pipefail
@@ -314,7 +332,8 @@ jobs:
 
       - name: Bind build, QEMU, SBOM, and exact image bytes
         run: |
-          node packages/os/scripts/verify-mkosi-promotion-evidence.mjs \
+          set -euo pipefail
+          promotion=(node packages/os/scripts/verify-mkosi-promotion-evidence.mjs \
             --architecture "${{ matrix.architecture }}" \
             --compressed "$WORK_ROOT/canonical/elizaos-${{ inputs.version }}-${{ matrix.architecture }}.raw.zst" \
             --expanded "$WORK_ROOT/canonical/elizaos-${{ inputs.version }}-${{ matrix.architecture }}.raw" \
@@ -322,7 +341,11 @@ jobs:
             --qemu-evidence "$WORK_ROOT/evidence/qemu-${{ matrix.architecture }}.json" \
             --persistence-evidence "$WORK_ROOT/evidence/persistence-${{ matrix.architecture }}.json" \
             --sbom "$WORK_ROOT/canonical/elizaos-${{ inputs.version }}-${{ matrix.architecture }}.spdx.json" \
-            --source-sha "$GITHUB_SHA"
+            --source-sha "$GITHUB_SHA")
+          if [ "${{ matrix.architecture }}" = x86_64 ]; then
+            promotion+=(--legacy-bios-evidence "$WORK_ROOT/evidence/qemu-legacy-bios-x86_64.json")
+          fi
+          "${promotion[@]}"
 
       - name: Stage one flat bounded pre-signing artifact
         run: |
@@ -341,6 +364,12 @@ jobs:
             "$stage/persistence-boot-1-${{ matrix.architecture }}.log"
           cp -- "$WORK_ROOT/evidence/persistence-${{ matrix.architecture }}/boot-2.log" \
             "$stage/persistence-boot-2-${{ matrix.architecture }}.log"
+          if [ "${{ matrix.architecture }}" = x86_64 ]; then
+            cp -- \
+              "$WORK_ROOT/evidence/qemu-legacy-bios-x86_64.json" \
+              "$WORK_ROOT/evidence/qemu-legacy-bios-x86_64.log" \
+              "$stage/"
+          fi
 
       - name: Attest built image and filesystem SBOM
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
@@ -373,6 +402,8 @@ jobs:
       SOURCE_DATE_EPOCH: ${{ inputs.source_date_epoch }}
       ELIZAOS_RELEASE_ED25519_PRIVATE_KEY_PKCS8_BASE64: ${{ secrets.ELIZAOS_RELEASE_ED25519_PRIVATE_KEY_PKCS8_BASE64 }}
       ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64: ${{ secrets.ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64 }}
+      ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256: ${{ secrets.ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256 }}
+      ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S: ${{ secrets.ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
@@ -397,7 +428,7 @@ jobs:
             test -s "$compressed"
             zstd --test -- "$compressed"
             zstd --decompress --keep -- "$compressed" --output "$expanded"
-            node packages/os/scripts/verify-mkosi-promotion-evidence.mjs \
+            promotion=(node packages/os/scripts/verify-mkosi-promotion-evidence.mjs \
               --architecture "$architecture" \
               --compressed "$compressed" \
               --expanded "$expanded" \
@@ -405,7 +436,11 @@ jobs:
               --qemu-evidence "$WORK_ROOT/unsigned/qemu-${architecture}.json" \
               --persistence-evidence "$WORK_ROOT/unsigned/persistence-${architecture}.json" \
               --sbom "$WORK_ROOT/unsigned/elizaos-${{ inputs.version }}-${architecture}.spdx.json" \
-              --source-sha "$GITHUB_SHA"
+              --source-sha "$GITHUB_SHA")
+            if [ "$architecture" = x86_64 ]; then
+              promotion+=(--legacy-bios-evidence "$WORK_ROOT/unsigned/qemu-legacy-bios-x86_64.json")
+            fi
+            "${promotion[@]}"
           done
 
       - name: Sign discovery metadata and all compressed images
@@ -456,11 +491,29 @@ jobs:
               "$WORK_ROOT/unsigned/elizaos-${{ inputs.version }}-${architecture}.raw.zst.sig" \
               "$WORK_ROOT/unsigned/elizaos-${{ inputs.version }}-${architecture}.spdx.json" \
               "$directory/"
+            cp -- \
+              "$WORK_ROOT/unsigned/mkosi-build-${architecture}.json" \
+              "$WORK_ROOT/unsigned/qemu-${architecture}.json" \
+              "$WORK_ROOT/unsigned/qemu-${architecture}.log" \
+              "$WORK_ROOT/unsigned/persistence-${architecture}.json" \
+              "$WORK_ROOT/unsigned/persistence-boot-1-${architecture}.log" \
+              "$WORK_ROOT/unsigned/persistence-boot-2-${architecture}.log" \
+              "$directory/"
+            if [ "$architecture" = x86_64 ]; then
+              cp -- \
+                "$WORK_ROOT/unsigned/qemu-legacy-bios-x86_64.json" \
+                "$WORK_ROOT/unsigned/qemu-legacy-bios-x86_64.log" \
+                "$directory/"
+            fi
+            boot_evidence="mkosi-release-build,qemu-uefi-usb,persistent-reboot,usb-expanded-readback,slsa-provenance"
+            if [ "$architecture" = x86_64 ]; then
+              boot_evidence="${boot_evidence},qemu-legacy-bios-usb"
+            fi
             node packages/os/scripts/create-release-evidence.mjs \
               --artifact-id "linux-mkosi-${architecture}" \
               --source-artifact "elizaos-linux-mkosi-${architecture}" \
               --subject "$directory/elizaos-${{ inputs.version }}-${architecture}.raw.zst" \
-              --evidence mkosi-release-build,qemu-uefi-usb,persistent-reboot,usb-expanded-readback,slsa-provenance \
+              --evidence "$boot_evidence" \
               --output "$directory/linux-mkosi-${architecture}.release-evidence.json" \
               --repository "$GITHUB_REPOSITORY" --source-sha "$GITHUB_SHA" \
               --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \

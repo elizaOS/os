@@ -150,6 +150,7 @@ def main() -> int:
         "durationSeconds": None,
         "preflightOnly": args.preflight_only,
         "diskInterface": args.disk_interface,
+        "firmwareMode": args.firmware_mode,
         "requiredMarkers": list(markers),
         "markersFound": [],
         "forbiddenMarkersFound": [],
@@ -176,9 +177,25 @@ def main() -> int:
             "QEMU qualification requires Linux, or native arm64 on Apple Silicon with HVF"
         )
     document["acceleration"] = acceleration
+    document["machine"] = machine
     qemu = shutil.which(QEMU[args.architecture])
     if not qemu:
         errors.append(f"required emulator is not on PATH: {QEMU[args.architecture]}")
+    else:
+        version = subprocess.run(
+            [qemu, "--version"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        version_line = version.stdout.splitlines()[0].strip() if version.stdout else ""
+        if version.returncode != 0 or not version_line:
+            errors.append(f"cannot determine emulator version: {qemu}")
+        else:
+            document["emulator"] = {
+                "path": str(Path(qemu).resolve()),
+                "version": version_line,
+            }
     required_paths: list[tuple[str, Path | None]] = [("image", args.image)]
     if args.firmware_mode == "pflash":
         required_paths.extend(
