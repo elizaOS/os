@@ -44,6 +44,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 
@@ -173,14 +174,80 @@ function productOutDir(aospRoot) {
   return path.join(outRoot, "target", "product", PRODUCT_DEVICE);
 }
 
+// Recent AOSP builds remove the unpacked `vendor/` and `system/` staging
+// directories after packaging. Read the final ext4 images when those trees
+// are absent; otherwise the attestation would verify a directory that is not
+// actually what fastboot receives.
+function readImageEntry(aospRoot, imagePath, entryPath) {
+  if (!fs.existsSync(imagePath)) return null;
+  const simg2img = path.join(
+    aospRoot,
+    "out/host/linux-x86/bin/simg2img",
+  );
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "grizzly-attest-"));
+  const rawPath = path.join(tempDir, "image.raw");
+  try {
+    let debugfsImage = imagePath;
+    if (fs.existsSync(simg2img)) {
+      const header = fs.readFileSync(imagePath).subarray(0, 4);
+      if (header.equals(Buffer.from([0x3a, 0xff, 0x26, 0xed]))) {
+        execFileSync(simg2img, [imagePath, rawPath], { stdio: "ignore" });
+        debugfsImage = rawPath;
+      }
+    }
+    return execFileSync("debugfs", ["-R", `cat ${entryPath}`, debugfsImage], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return null;
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+function imageEntryExists(aospRoot, imagePath, entryPath) {
+  if (!fs.existsSync(imagePath)) return false;
+  const simg2img = path.join(
+    aospRoot,
+    "out/host/linux-x86/bin/simg2img",
+  );
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "grizzly-attest-"));
+  const rawPath = path.join(tempDir, "image.raw");
+  try {
+    let debugfsImage = imagePath;
+    if (fs.existsSync(simg2img)) {
+      const header = fs.readFileSync(imagePath).subarray(0, 4);
+      if (header.equals(Buffer.from([0x3a, 0xff, 0x26, 0xed]))) {
+        execFileSync(simg2img, [imagePath, rawPath], { stdio: "ignore" });
+        debugfsImage = rawPath;
+      }
+    }
+    execFileSync("debugfs", ["-R", `stat ${entryPath}`, debugfsImage], {
+      stdio: "ignore",
+    });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 // The staged vendor/build.prop is what vendor.img is packaged from; verifying
 // it (rather than the source tree) catches the built-before-edited hazard.
 function assertStagedRenderEngine(productDir, stagedVendorDir, stamp) {
   const buildProp = path.join(stagedVendorDir, "build.prop");
-  if (!fs.existsSync(buildProp)) {
-    fail(`staged vendor build.prop missing: ${buildProp}`);
+  const contents = fs.existsSync(buildProp)
+    ? fs.readFileSync(buildProp, "utf8")
+    : readImageEntry(
+        path.resolve(productDir, "../../../../"),
+        path.join(productDir, "vendor.img"),
+        "/build.prop",
+      );
+  if (contents === null) {
+    fail(`staged vendor build.prop missing from tree and vendor.img: ${buildProp}`);
   }
-  const contents = fs.readFileSync(buildProp, "utf8");
   const backendMatch = contents.match(/^debug\.renderengine\.backend=(\S+)$/m);
   const stagedBackend = backendMatch ? backendMatch[1] : null;
   if (stagedBackend !== (stamp.renderengineBackend ?? null)) {
@@ -217,7 +284,13 @@ function assertStagedRenderEngine(productDir, stagedVendorDir, stamp) {
       path.join(productDir, "system", "lib64", "libEGL_angle.so"),
       path.join(productDir, "product", "priv-app", "ANGLE", "ANGLE.apk"),
     ];
-    if (!angleCandidates.some((candidate) => fs.existsSync(candidate))) {
+    const stagedAngle = angleCandidates.some((candidate) => fs.existsSync(candidate));
+    const imageAngle = imageEntryExists(
+      path.resolve(productDir, "../../../../"),
+      path.join(productDir, "system.img"),
+      "/lib64/libEGL_angle.so",
+    );
+    if (!stagedAngle && !imageAngle) {
       fail(
         "stock ANGLE EGL stance selected but no staged libEGL_angle.so or ANGLE.apk exists; rebuild the AOSP ANGLE component before flashing",
       );
@@ -253,10 +326,23 @@ function assertOneFstabStance(fstabPath, stamp, label) {
 
 function assertStagedFstab(productDir, stagedVendorDir, stamp) {
   const fstab = path.join(stagedVendorDir, "etc", "fstab.malibu");
-  if (!fs.existsSync(fstab)) {
-    fail(`staged vendor fstab missing: ${fstab}`);
+  if (fs.existsSync(fstab)) {
+    assertOneFstabStance(fstab, stamp, "vendor");
+  } else {
+    const imageFstab = readImageEntry(
+      path.resolve(productDir, "../../../../"),
+      path.join(productDir, "vendor.img"),
+      "/etc/fstab.malibu",
+    );
+    if (imageFstab === null) fail(`staged vendor fstab missing from tree and vendor.img: ${fstab}`);
+    const temp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "grizzly-fstab-")), "fstab");
+    try {
+      fs.writeFileSync(temp, imageFstab);
+      assertOneFstabStance(temp, stamp, "vendor image");
+    } finally {
+      fs.rmSync(path.dirname(temp), { recursive: true, force: true });
+    }
   }
-  assertOneFstabStance(fstab, stamp, "vendor");
   // The same fstab ships in vendor_boot's vendor_ramdisk; first-stage init
   // reads that copy, so a stance split between the two partitions is the
   // exact unattributable mount wedge this tool exists to prevent.
@@ -285,7 +371,7 @@ function assertStagedFstab(productDir, stagedVendorDir, stamp) {
   );
 }
 
-function assertStagedProbes(stagedVendorDir, stamp) {
+function assertStagedProbes(aospRoot, productDir, stagedVendorDir, stamp) {
   const probeRc = path.join(
     stagedVendorDir,
     "etc",
@@ -293,7 +379,13 @@ function assertStagedProbes(stagedVendorDir, stamp) {
     "hw",
     "init.elizaos-debug.rc",
   );
-  const staged = fs.existsSync(probeRc);
+  const staged =
+    fs.existsSync(probeRc) ||
+    readImageEntry(
+      aospRoot,
+      path.join(productDir, "vendor.img"),
+      "/etc/init/hw/init.elizaos-debug.rc",
+    ) !== null;
   if (staged !== stamp.earlyBootProbes) {
     fail(
       `probe init rc staged=${staged} but prepare stamp earlyBootProbes=${stamp.earlyBootProbes}; rebuild after re-running prepare-grizzly`,
@@ -311,9 +403,14 @@ function assertStagedKeymaster(productDir, stamp) {
     "hw",
     "init.rc",
   );
-  if (!fs.existsSync(initPath))
-    fail(`staged system init.rc missing: ${initPath}`);
-  const contents = fs.readFileSync(initPath, "utf8");
+  const contents = fs.existsSync(initPath)
+    ? fs.readFileSync(initPath, "utf8")
+    : readImageEntry(
+        path.resolve(productDir, "../../../../"),
+        path.join(productDir, "system.img"),
+        "/etc/init/hw/init.rc",
+      );
+  if (contents === null) fail(`staged system init.rc missing from tree and system.img: ${initPath}`);
   const nonblocking =
     /# elizaOS: diagnostic non-blocking keymaster notification\n[ \t]*exec_background - system system -- \/system\/bin\/vdc keymaster earlyBootEnded/m.test(
       contents,
@@ -413,7 +510,7 @@ function attest({ aospRoot, out }) {
   const stagedVendorDir = path.join(productDir, "vendor");
   assertStagedRenderEngine(productDir, stagedVendorDir, stamp);
   assertStagedFstab(productDir, stagedVendorDir, stamp);
-  assertStagedProbes(stagedVendorDir, stamp);
+  assertStagedProbes(aospRoot, productDir, stagedVendorDir, stamp);
   assertStagedKeymaster(productDir, stamp);
   checkElfAlignment(aospRoot, productDir);
 
@@ -439,6 +536,7 @@ function attest({ aospRoot, out }) {
     ["vendor.img", stagedVendorDir],
     ["system.img", path.join(productDir, "system")],
   ]) {
+    if (!fs.existsSync(stagedDir)) continue;
     const imagePath = path.join(productDir, imageName);
     const imageMtime = fs.statSync(imagePath).mtimeMs;
     const newestStaged = newestMtimeUnder(stagedDir);
