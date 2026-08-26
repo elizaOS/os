@@ -149,7 +149,7 @@ require_text 'archive changed during extraction' "$verifier"
 require_text 'archive digest does not match manifest' "$verifier"
 require_text 'entrypoints must be archive-relative bin/* paths' "$verifier"
 require_text '--extract-to /opt/elizaos' "${MKOSI_DIR}/mkosi.postinst.chroot"
-for qualification_script in mkosi-linux-build.py mkosi-qemu-qualify.py mkosi-persistence-qualify.py generate-mkosi-sbom.sh; do
+for qualification_script in mkosi-linux-build.py mkosi-qemu-qualify.py mkosi-persistence-qualify.py mkosi-reproducibility-qualify.py generate-mkosi-sbom.sh; do
     require_file "${ROOT}/scripts/${qualification_script}"
     [ -x "${ROOT}/scripts/${qualification_script}" ] || bad "${qualification_script} is not executable"
 done
@@ -169,6 +169,10 @@ require_text 'release builds require a dated snapshot.debian.org archive URL' \
 require_text 'configurationSha256' "${ROOT}/scripts/mkosi-linux-build.py"
 require_text '--extra-tree=' "${ROOT}/scripts/mkosi-linux-build.py"
 require_text 'desktopArtifactInputs' "${ROOT}/scripts/mkosi-linux-build.py"
+require_text '"profile": args.profile' "${ROOT}/scripts/mkosi-linux-build.py"
+require_text 'source identity changed during mkosi build' "${ROOT}/scripts/mkosi-linux-build.py"
+require_text 'mkosi configuration changed during build' "${ROOT}/scripts/mkosi-linux-build.py"
+require_text 'desktop artifact inputs changed during mkosi build' "${ROOT}/scripts/mkosi-linux-build.py"
 require_text 'qemu_graphical_target_only_no_login_agent_computer_control_or_hardware_claim' \
     "${ROOT}/scripts/mkosi-qemu-qualify.py"
 require_text 'required boot markers' "${ROOT}/scripts/mkosi-qemu-qualify.py"
@@ -190,6 +194,20 @@ require_text 'Reached target Graphical Interface' \
     "${ROOT}/scripts/mkosi-persistence-qualify.py"
 require_text 'work image must not already exist' \
     "${ROOT}/scripts/mkosi-persistence-qualify.py"
+require_text 'two_build_root_partition_reproducibility_only' \
+    "${ROOT}/scripts/mkosi-reproducibility-qualify.py"
+require_text 'expanded image does not match its compressed build artifact' \
+    "${ROOT}/scripts/mkosi-reproducibility-qualify.py"
+require_text 'isolated builds have different discoverable root partition geometry' \
+    "${ROOT}/scripts/mkosi-reproducibility-qualify.py"
+require_text 'discoverable root partition' \
+    "${ROOT}/scripts/mkosi-reproducibility-qualify.py"
+require_text 'diffoscope did not produce a regular report' \
+    "${ROOT}/scripts/mkosi-reproducibility-qualify.py"
+require_text 'all input and output paths must be distinct' \
+    "${ROOT}/scripts/mkosi-reproducibility-qualify.py"
+require_text 'document.get("returnCode") != 0' \
+    "${ROOT}/scripts/mkosi-reproducibility-qualify.py"
 require_text 'Secure Boot is unsupported on riscv64' "${ROOT}/mkosi/README.md"
 require_text 'elizaos-system' "${ROOT}/scripts/generate-mkosi-sbom.sh"
 require_text 'mount --read-only --options noload' \
