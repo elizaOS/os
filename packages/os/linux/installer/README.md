@@ -69,6 +69,13 @@ explicitly unresolved and protects every otherwise ambiguous target.
 Mount state is propagated from dm/LVM/MD descendants back to their containing
 partition and is independently bound into the inventory fingerprint. Any
 filesystem-specific resize evidence must agree with that observed mount state.
+The provider captures a second complete hardware, GPT, partition, mount, and
+boot-ancestry snapshot after all filesystem probes and requires its fingerprint
+to match the first snapshot. Re-resolving only the stable symlink is not enough:
+the kernel block-device number and generation sequence are also held constant,
+so a same-path device replacement, repartition, mount, or protection-state
+change invalidates the entire inspection instead of returning mixed-time
+evidence.
 
 The package intentionally does not yet provide the root service, OS-native
 inventory probes, filesystem tools, GPT writer, image extractor, or bootloader
