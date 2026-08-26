@@ -85,6 +85,7 @@ function assertTargetIdentity(
   if (
     inventory.stableId !== plan.target.stableId ||
     inventory.path !== plan.target.path ||
+    inventory.kernelDeviceIdentity !== plan.target.kernelDeviceIdentity ||
     inventory.sizeBytes !== plan.target.sizeBytes ||
     inventory.logicalSectorBytes !== plan.target.logicalSectorBytes ||
     inventory.gptRedundancyVerified !== plan.target.gptRedundancyVerified ||
@@ -141,6 +142,10 @@ export interface InstallExecutionDependencies {
   authorization: OwnerAuthorizationVerifier;
   journal: InstallJournal;
   operations: PrivilegedInstallOperations;
+  /** Trusted service hook, invoked immediately before each privileged write. */
+  beforePrivilegedMutation?: (
+    kind: "partition-table-backup" | "installer-action",
+  ) => Promise<void>;
   now?: () => Date;
 }
 
@@ -453,6 +458,24 @@ export async function executeAuthorizedInstallPlan(
       inventoryFingerprint: fingerprint,
       receiptId: authorizationDigest(plan.authorization),
     });
+    inventory = await dependencies.inventory.inspect(plan.target.stableId);
+    assertTargetIdentity(plan, inventory);
+    fingerprint = createDiskInventoryFingerprint(inventory);
+    if (fingerprint !== plan.authorization.inventoryFingerprint) {
+      throw new Error(
+        "Disk inventory drifted immediately before partition-table backup.",
+      );
+    }
+    await dependencies.beforePrivilegedMutation?.("partition-table-backup");
+    if (
+      assertIsoDate("authorization.expiresAt", plan.authorization.expiresAt) <=
+        now().getTime() ||
+      !(await dependencies.authorization.verify(plan.authorization))
+    ) {
+      throw new Error(
+        "Owner authorization expired or failed immediately before partition-table backup.",
+      );
+    }
     const backup =
       await dependencies.operations.backupPartitionTable(inventory);
     if (
@@ -519,15 +542,6 @@ export async function executeAuthorizedInstallPlan(
         "Disk inventory drifted immediately before a privileged action.",
       );
     }
-    if (
-      assertIsoDate("authorization.expiresAt", plan.authorization.expiresAt) <=
-        now().getTime() ||
-      !(await dependencies.authorization.verify(plan.authorization))
-    ) {
-      throw new Error(
-        "Owner authorization expired or failed immediately before mutation.",
-      );
-    }
     const digest = actionDigest(action);
     entries = await appendDurably(dependencies.journal, plan.planId, entries, {
       event: "action-started",
@@ -537,6 +551,26 @@ export async function executeAuthorizedInstallPlan(
       actionDigest: digest,
     });
     try {
+      inventory = await dependencies.inventory.inspect(plan.target.stableId);
+      assertTargetIdentity(plan, inventory);
+      fingerprint = createDiskInventoryFingerprint(inventory);
+      if (fingerprint !== expectedFingerprint) {
+        throw new InstallRecoveryRequiredError(
+          "Disk inventory drifted immediately before mutation.",
+        );
+      }
+      await dependencies.beforePrivilegedMutation?.("installer-action");
+      if (
+        assertIsoDate(
+          "authorization.expiresAt",
+          plan.authorization.expiresAt,
+        ) <= now().getTime() ||
+        !(await dependencies.authorization.verify(plan.authorization))
+      ) {
+        throw new Error(
+          "Owner authorization expired or failed immediately before mutation.",
+        );
+      }
       const receipt = await dependencies.operations.apply(action, inventory);
       if (!receipt.receiptId.trim() || receipt.actionDigest !== digest) {
         throw new Error(

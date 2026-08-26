@@ -672,6 +672,7 @@ export function parseLinuxLsblkInventory(options: {
   stableId: string;
   stablePath: string;
   devicePath: string;
+  kernelDeviceIdentity?: string;
   firmwarePath: string;
   firmware: DiskInventory["firmware"];
   serialized: string;
@@ -758,6 +759,9 @@ export function parseLinuxLsblkInventory(options: {
   const inventory: DiskInventory = {
     stableId: options.stableId,
     path: options.stablePath,
+    ...(options.kernelDeviceIdentity
+      ? { kernelDeviceIdentity: options.kernelDeviceIdentity }
+      : {}),
     hardwareIdentity: {
       serial,
       ...(wwn ? { wwn } : {}),
@@ -942,6 +946,7 @@ export class LinuxInstallInventoryProvider implements InstallInventoryProvider {
       stableId: options.stableId,
       stablePath: options.stablePath,
       devicePath: options.devicePath,
+      kernelDeviceIdentity: options.deviceIdentity,
       firmwarePath: requiredString("firmware path", firmwarePath.stdout),
       firmware: this.firmware,
       serialized: lsblk.stdout,

@@ -333,6 +333,88 @@ describe("privileged installer execution boundary", () => {
     ).rejects.toBeInstanceOf(InstallRecoveryRequiredError);
   });
 
+  it("rechecks inventory after the durable authorization checkpoint and before GPT backup", async () => {
+    const target = disk();
+    const { request, plan } = reviewedPlan(target);
+    let drifted = false;
+    let backups = 0;
+    const journal = new MemoryJournal();
+    const originalAppend = journal.append.bind(journal);
+    journal.append = async (entry) => {
+      await originalAppend(entry);
+      if (entry.event === "authorized") drifted = true;
+    };
+    const deps = dependencies(target, {
+      journal,
+      inventory: {
+        inspect: async () =>
+          drifted
+            ? disk({ kernelDeviceIdentity: "8:16:99" })
+            : structuredClone(target),
+      },
+    });
+    deps.operations.backupPartitionTable = async (inventory) => {
+      backups += 1;
+      return {
+        stableId: inventory.stableId,
+        storageStableId: "installer-media-123",
+        location: "/run/elizaos-installer/recovery/gpt.bin",
+        sha256: "a".repeat(64),
+      };
+    };
+    const authorized = await authorizeInstallPlan(
+      request,
+      plan,
+      authorization(target, plan.planId),
+      deps,
+    );
+
+    await expect(
+      executeAuthorizedInstallPlan(authorized, deps),
+    ).rejects.toThrow(/identity changed|drifted/);
+    expect(backups).toBe(0);
+  });
+
+  it("rechecks inventory after the durable action-start checkpoint and before apply", async () => {
+    const target = disk();
+    const { request, plan } = reviewedPlan(target);
+    let drifted = false;
+    let applied = 0;
+    const journal = new MemoryJournal();
+    const originalAppend = journal.append.bind(journal);
+    journal.append = async (entry) => {
+      await originalAppend(entry);
+      if (entry.event === "action-started") drifted = true;
+    };
+    const deps = dependencies(target, {
+      journal,
+      inventory: {
+        inspect: async () =>
+          drifted
+            ? disk({ kernelDeviceIdentity: "8:16:99" })
+            : structuredClone(target),
+      },
+    });
+    deps.operations.apply = async (action) => {
+      applied += 1;
+      return {
+        receiptId: `receipt-${action.type}`,
+        actionDigest: digestAction(action),
+      };
+    };
+    const authorized = await authorizeInstallPlan(
+      request,
+      plan,
+      authorization(target, plan.planId),
+      deps,
+    );
+
+    await expect(
+      executeAuthorizedInstallPlan(authorized, deps),
+    ).rejects.toThrow(/identity changed|drifted/);
+    expect(applied).toBe(0);
+  });
+
   it("rejects a GPT backup stored on the disk being destroyed", async () => {
     const target = disk();
     const { request, plan } = reviewedPlan(target);
@@ -363,7 +445,7 @@ describe("privileged installer execution boundary", () => {
     let appliedCount = 0;
     deps.authorization.verify = async () => {
       verificationCount += 1;
-      return verificationCount < 4;
+      return verificationCount < 5;
     };
     deps.operations.apply = async (action) => {
       appliedCount += 1;

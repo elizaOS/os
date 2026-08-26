@@ -28,6 +28,33 @@ symlinks, hard links, unsafe modes, stale locks, and path-like plan IDs. A lock
 left by interruption is never silently removed: recovery must inspect it and
 the journal before execution can continue.
 
+`PrivilegedInstallService` is the root-side object core for a local IPC adapter.
+`parseLocalInstallExecutionFrame()` bounds raw bytes before JSON decoding and
+accepts only the typed `execute-reviewed-plan` request. The production adapter
+must frame exactly one request per connection and reject trailing frames or
+bytes. The daemon itself must run as root and requires kernel-authenticated Unix
+peer credentials for a non-root process in the active, unlocked owner session.
+The adapter must bind those credentials to a non-reusable process-liveness
+token (a pidfd or PID plus verified process start time), reject transferred
+connected file descriptors, and never decode that token from request JSON. The
+owner/session binding and OS credential are rechecked immediately before the
+partition-table backup and every privileged disk mutation. Authorizations are
+single-use, and every plan targeting the same physical disk is serialized even
+when its plan id or `/dev/disk/by-id` alias differs.
+
+`DurableFileInstallServiceState` supplies the replay and target-lock storage
+for that boundary. Its pre-provisioned state topology must be owner-only;
+single-use owner/nonce claims are atomically created and synced without
+persisting credentials. Claims have strict field bounds and a durably
+serialized hard capacity; consumed records are never automatically removed,
+because deletion could permit replay. Capacity exhaustion fails closed pending
+an explicit recovery policy. Target locks use hashed immutable physical
+identity, record the plan-bound kernel device generation when available, and
+remain after any failed operation or process interruption for explicit
+recovery. The production Unix socket adapter must obtain peer PID/UID/GID and
+process liveness from the kernel and active-session membership from logind or
+an equivalent OS authority; none may come from request JSON.
+
 `LinuxInstallInventoryProvider` is the read-only Linux whole-disk probe. It
 accepts only a whole-disk stable ID, resolves it through `/dev/disk/by-id`,
 requires the result to be a block device, and invokes absolute-path `lsblk`,
@@ -77,11 +104,12 @@ so a same-path device replacement, repartition, mount, or protection-state
 change invalidates the entire inspection instead of returning mixed-time
 evidence.
 
-The package intentionally does not yet provide the root service, OS-native
-inventory probes, filesystem tools, GPT writer, image extractor, or bootloader
-backend. Those implementations and disposable-block-device qualification are
-required before the typed operation adapter may be connected to a real disk.
-Tests must use inventory fixtures or disposable virtual block devices only.
+The package intentionally does not yet provide the production Unix socket and
+logind adapters, OS credential verifier, filesystem tools, GPT writer, image
+extractor, or bootloader backend. Those implementations and
+disposable-block-device qualification are required before the typed operation
+adapter may be connected to a real disk. Tests must use inventory fixtures or
+disposable virtual block devices only.
 
 ## Alongside support contract
 
@@ -104,8 +132,8 @@ Tests must use inventory fixtures or disposable virtual block devices only.
 Before any release can mutate a real internal disk, implement and
 hardware-test:
 
-1. the authenticated root-owned service behind the existing typed operation
-   API;
+1. the production Unix peer-credential/logind and owner-credential adapters
+   around the root-owned service core behind the existing typed operation API;
 2. whole-disk inventory probes using serial/WWN/unique id, not a mutable device
    path;
 3. OS-native filesystem probes and shrink tools with post-resize checks;
