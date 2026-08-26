@@ -307,6 +307,8 @@ manifest consumed by the USB Installer:
 ```sh
 SOURCE_DATE_EPOCH=<reviewed-commit-epoch> \
 ELIZAOS_RELEASE_ED25519_PRIVATE_KEY_PKCS8_BASE64=<protected-secret> \
+ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64=<reviewed-public-key> \
+ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256=<independently-pinned-lowercase-sha256> \
 node ../../../scripts/sign-image-release.mjs \
   --artifact-root /release/images \
   --version 1.0.0-beta.1 \
@@ -326,7 +328,9 @@ node ../../../scripts/verify-image-release.mjs \
 For emergency revocation, set
 `ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S` to a sorted, unique,
 comma-separated list of revoked SPKI SHA-256 digests. Verification rejects a
-matching key before reading or activating manifest metadata.
+matching key before reading or activating manifest metadata, and signing
+rejects it before parsing release metadata or inspecting image inputs. Pass the
+same optional revocation variable to both commands during a signing rehearsal.
 
 The private key is read only from the environment. The signer never writes it,
 and the verifier independently checks the JSON schema, manifest signature,

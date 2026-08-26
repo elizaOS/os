@@ -1,48 +1,15 @@
 #!/usr/bin/env node
 // Independently verifies the canonical image manifest, exact local bytes, and
 // detached Ed25519 signatures produced by sign-image-release.mjs.
-import { createHash, createPublicKey, verify } from "node:crypto";
+import { verify } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateAgainstSchema } from "./json-schema-lite.mjs";
 import { parseArgs, sha256File } from "./os-release-lib.mjs";
+import { loadReleaseKeyPolicy } from "./release-key-policy.mjs";
 
 const architectures = ["x86_64", "arm64", "riscv64"];
-const publicKeyEnvironment = "ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64";
-const publicKeyFingerprintEnvironment =
-  "ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256";
-const revokedKeyFingerprintsEnvironment =
-  "ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S";
-
-function canonicalFingerprint(value, label) {
-  if (
-    typeof value !== "string" ||
-    !/^[a-f0-9]{64}$/.test(value) ||
-    value === "0".repeat(64)
-  ) {
-    throw new Error(`${label} must be a nonzero lowercase SHA-256 digest`);
-  }
-  return value;
-}
-
-function revokedFingerprints(value) {
-  if (value === undefined || value === "") return new Set();
-  const fingerprints = value.split(",");
-  const canonical = fingerprints.map((fingerprint) =>
-    canonicalFingerprint(fingerprint, revokedKeyFingerprintsEnvironment),
-  );
-  if (
-    new Set(canonical).size !== canonical.length ||
-    [...canonical].sort().join(",") !== value
-  ) {
-    throw new Error(
-      `${revokedKeyFingerprintsEnvironment} must be a sorted, unique comma-separated digest list`,
-    );
-  }
-  return new Set(canonical);
-}
-
 function artifactSignaturePayload(artifact) {
   return Buffer.from(
     [
@@ -58,22 +25,6 @@ function artifactSignaturePayload(artifact) {
     ].join("\n"),
     "utf8",
   );
-}
-
-function decodeCanonicalBase64(value) {
-  if (
-    typeof value !== "string" ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
-      value,
-    )
-  ) {
-    throw new Error(`${publicKeyEnvironment} must be canonical base64`);
-  }
-  const decoded = Buffer.from(value, "base64");
-  if (decoded.toString("base64") !== value) {
-    throw new Error(`${publicKeyEnvironment} must be canonical base64`);
-  }
-  return decoded;
 }
 
 async function regularFile(filePath, expectedSize) {
@@ -99,34 +50,7 @@ const root = path.resolve(args["artifact-root"]);
 if (path.dirname(manifestPath) !== root) {
   throw new Error("--manifest must be a direct child of --artifact-root");
 }
-const key = createPublicKey({
-  key: decodeCanonicalBase64(process.env[publicKeyEnvironment]),
-  format: "der",
-  type: "spki",
-});
-if (key.asymmetricKeyType !== "ed25519") {
-  throw new Error("release verification key must be Ed25519");
-}
-const publicKeyDer = key.export({ format: "der", type: "spki" });
-const publicKeyFingerprint = createHash("sha256")
-  .update(publicKeyDer)
-  .digest("hex");
-const expectedPublicKeyFingerprint = canonicalFingerprint(
-  process.env[publicKeyFingerprintEnvironment],
-  publicKeyFingerprintEnvironment,
-);
-if (publicKeyFingerprint !== expectedPublicKeyFingerprint) {
-  throw new Error(
-    "release verification key does not match the independently pinned SPKI SHA-256",
-  );
-}
-if (
-  revokedFingerprints(process.env[revokedKeyFingerprintsEnvironment]).has(
-    publicKeyFingerprint,
-  )
-) {
-  throw new Error("release verification key is revoked");
-}
+const { key } = loadReleaseKeyPolicy();
 await regularFile(manifestPath);
 await regularFile(`${manifestPath}.sig`, 64);
 const manifestBytes = await readFile(manifestPath);
