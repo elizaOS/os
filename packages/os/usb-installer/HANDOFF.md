@@ -29,6 +29,11 @@ for OS images and installers.
   readback; the legacy direct-ISO path cannot receive a `.raw.zst` artifact;
 - tests use in-memory targets, ordinary temporary files, or an opt-in disposable
   Linux `scsi_debug` device. Default tests never select a real disk.
+- the renderer can cancel an active server-owned plan; the server consumes each
+  destructive plan exactly once, locks both stable and device-path identities,
+  aborts the canonical Linux streaming pipeline, terminates and awaits its
+  privileged process group, and reports cancelled media as incomplete rather
+  than successful. The renderer requires exactly one complete terminal event.
 
 Canonical `.raw.zst` execution is enabled only when a backend advertises the
 streaming/readback capability. Linux is the sole enabled backend. macOS and
@@ -74,9 +79,9 @@ an unclean crash fails closed and currently requires an explicit recovery flow.
 3. Add macOS and Windows signed/elevated target adapters with the same stable-ID,
    flush, cancellation, and readback guarantees. Do not reuse the legacy ISO
    command paths for canonical releases.
-4. Define partial-write recovery: cancellation, helper crash, unplug, I/O error,
-   full device, corrupt flash, sleep, and power loss must never report success;
-   the UI must identify the incomplete device and offer a safe retry/restore.
+4. Complete partial-write recovery beyond the implemented cancellation path:
+   helper crash, unplug, I/O error, full device, corrupt flash, sleep, and power
+   loss must never report success; add a safe filesystem restore operation.
 5. Run the Linux virtual-block test against the canonical zstd pipeline, then
    run sacrificial physical-media tests on Intel/AMD Linux, Apple Silicon macOS,
    Intel macOS where supported, and Windows.

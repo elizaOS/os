@@ -181,8 +181,9 @@ substitute for physical USB flash and boot validation.
 
 Remaining production hardening:
 
-- Connect UI cancellation to the shared pipeline's `AbortSignal`; legacy ISO
-  writer processes still need platform-specific termination handling.
+- Qualify the process-group-terminating canonical cancellation path against
+  physical Linux media; legacy ISO writer processes still need
+  platform-specific termination handling.
 - Add signed privileged helpers for macOS/Windows and stronger Linux helper
   policy.
 - Qualify the Linux `raw-image-pipeline.ts` adapter on virtual and physical

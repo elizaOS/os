@@ -4,6 +4,7 @@ import { createPlatformBackend } from "./src/backend/index";
 import type {
   InstallerStepId,
   UsbInstallerBackend,
+  WriteExecutionOptions,
   WritePlan,
   WriteRequest,
 } from "./src/backend/types";
@@ -33,6 +34,12 @@ interface UsbInstallerHandlerOptions {
 interface StoredWritePlan {
   plan: WritePlan;
   createdAt: number;
+}
+
+interface ActiveExecution {
+  controller: AbortController;
+  cancellationSupported: boolean;
+  targetIdentities: readonly string[];
 }
 
 interface SerializedError {
@@ -138,11 +145,21 @@ function addExpectedDriveSnapshot(request: WriteRequest, plan: WritePlan) {
   };
 }
 
+function canonicalTargetIdentities(plan: WritePlan): string[] {
+  const stableId = plan.drive.stableId?.trim();
+  return [
+    `device-path:${plan.drive.devicePath}`,
+    ...(stableId ? [`stable:${stableId}`] : []),
+  ];
+}
+
 export function createUsbInstallerHandler(
   backend: UsbInstallerBackend = createPlatformBackend(),
   options: UsbInstallerHandlerOptions = {},
 ) {
   const plans = new Map<string, StoredWritePlan>();
+  const activeExecutions = new Map<string, ActiveExecution>();
+  const activeTargets = new Map<string, ActiveExecution>();
   const allowedOrigins = configuredAllowedOrigins(options);
   const planTtlMs = configuredPlanTtlMs(options);
   const now = options.now ?? Date.now;
@@ -174,28 +191,26 @@ export function createUsbInstallerHandler(
       plan,
       createdAt: now(),
     });
-    return { ...plan, planId };
+    return {
+      ...plan,
+      planId,
+      cancellationSupported:
+        plan.image.format === "raw.zst" &&
+        backend.canonicalWriteCancellationSupported === true,
+    };
   }
 
   async function executeStoredPlan(
-    planId: string,
+    stored: StoredWritePlan,
     onProgress: (stepId: InstallerStepId, progress: number) => void,
+    options: WriteExecutionOptions,
   ): Promise<void> {
-    assertRawWriteGate();
-
-    if (!backend.executeWritePlan) {
+    const execute = backend.executeWritePlan;
+    if (!execute) {
       throw new Error(
         "This USB installer backend does not support raw write execution.",
       );
     }
-
-    deleteExpiredPlans();
-
-    const stored = plans.get(planId);
-    if (!stored) {
-      throw new Error("Unknown or expired write plan. Preview the plan again.");
-    }
-
     const request = addExpectedDriveSnapshot(stored.plan.request, stored.plan);
     const freshPlan = await backend.createWritePlan({
       ...request,
@@ -206,8 +221,7 @@ export function createUsbInstallerHandler(
       canonicalRawZstdSupported: backend.canonicalRawZstdSupported === true,
     });
 
-    await backend.executeWritePlan(freshPlan, onProgress);
-    plans.delete(planId);
+    await execute.call(backend, freshPlan, onProgress, options);
   }
 
   return async function handleUsbInstallerRequest(req: Request) {
@@ -257,26 +271,106 @@ export function createUsbInstallerHandler(
             400,
           );
         }
+        assertRawWriteGate();
+        if (!backend.executeWritePlan) {
+          return errorResponse(
+            req,
+            new Error(
+              "This USB installer backend does not support raw write execution.",
+            ),
+            501,
+          );
+        }
+        if (activeExecutions.has(planId)) {
+          return errorResponse(
+            req,
+            new Error("Write plan is already executing."),
+            409,
+          );
+        }
+        deleteExpiredPlans();
+        const stored = plans.get(planId);
+        if (!stored) {
+          return errorResponse(
+            req,
+            new Error("Unknown or expired write plan. Preview the plan again."),
+            409,
+          );
+        }
+        const targetIdentities = canonicalTargetIdentities(stored.plan);
+        if (targetIdentities.some((identity) => activeTargets.has(identity))) {
+          return errorResponse(
+            req,
+            new Error("Another write is already active for this target."),
+            409,
+          );
+        }
 
         const encoder = new TextEncoder();
+        const executionController = new AbortController();
+        const activeExecution = {
+          controller: executionController,
+          cancellationSupported:
+            stored.plan.image.format === "raw.zst" &&
+            backend.canonicalWriteCancellationSupported === true,
+          targetIdentities,
+        };
+        // Consume the authorization and acquire both locks synchronously before
+        // any target re-enumeration or stream work can yield.
+        plans.delete(planId);
+        activeExecutions.set(planId, activeExecution);
+        for (const identity of targetIdentities) {
+          activeTargets.set(identity, activeExecution);
+        }
 
         const stream = new ReadableStream({
           async start(controller) {
             try {
               await executeStoredPlan(
-                planId,
+                stored,
                 (stepId: InstallerStepId, progress: number) => {
                   const data = JSON.stringify({ stepId, progress });
                   controller.enqueue(encoder.encode(`data: ${data}\n\n`));
                 },
+                { signal: executionController.signal },
               );
+              // Linearize completion against /cancel: if cancellation was
+              // accepted while the backend was finishing, it must not be
+              // possible to acknowledge cancellation and then report success.
+              executionController.signal.throwIfAborted();
               controller.enqueue(
                 encoder.encode(`data: ${JSON.stringify({ done: true })}\n\n`),
               );
             } catch (err) {
-              const errData = JSON.stringify(serializeError(err));
+              const serialized = serializeError(err);
+              const terminal =
+                executionController.signal.aborted ||
+                serialized.name === "WriteCancelledError"
+                  ? { ...serialized, cancelled: true }
+                  : serialized;
+              const errData = JSON.stringify(terminal);
               controller.enqueue(encoder.encode(`data: ${errData}\n\n`));
             } finally {
+              for (const [storedPlanId, candidate] of plans) {
+                const candidateIdentities = canonicalTargetIdentities(
+                  candidate.plan,
+                );
+                if (
+                  candidateIdentities.some((identity) =>
+                    targetIdentities.includes(identity),
+                  )
+                ) {
+                  plans.delete(storedPlanId);
+                }
+              }
+              if (activeExecutions.get(planId) === activeExecution) {
+                activeExecutions.delete(planId);
+              }
+              for (const identity of targetIdentities) {
+                if (activeTargets.get(identity) === activeExecution) {
+                  activeTargets.delete(identity);
+                }
+              }
               controller.close();
             }
           },
@@ -289,6 +383,36 @@ export function createUsbInstallerHandler(
             "Cache-Control": "no-cache",
           },
         });
+      }
+
+      if (url.pathname === "/cancel" && req.method === "POST") {
+        const { planId } = (await req.json()) as { planId?: string };
+        if (!planId) {
+          return errorResponse(req, new Error("Missing planId."), 400);
+        }
+        const execution = activeExecutions.get(planId);
+        if (!execution) {
+          return errorResponse(
+            req,
+            new Error("Write plan is not actively executing."),
+            409,
+          );
+        }
+        if (!execution.cancellationSupported) {
+          return errorResponse(
+            req,
+            new Error("This write path does not support safe cancellation."),
+            501,
+          );
+        }
+        if (!execution.controller.signal.aborted) {
+          const cancellation = new Error(
+            "Write cancelled. Media is incomplete and must be rewritten or restored.",
+          );
+          cancellation.name = "AbortError";
+          execution.controller.abort(cancellation);
+        }
+        return jsonResponse(req, { cancelled: true });
       }
 
       return new Response("Not found", {

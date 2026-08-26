@@ -109,6 +109,15 @@ export class PowerShellExecutionError extends Error {
 }
 
 // Linux backend errors.
+export class WriteCancelledError extends Error {
+  override readonly name = "WriteCancelledError";
+  constructor(
+    message = "Write cancelled. Media is incomplete and must be rewritten or restored before use.",
+  ) {
+    super(message);
+  }
+}
+
 export class LsblkParseError extends Error {
   override readonly name = "LsblkParseError";
   public readonly stdoutSnippet: string;
