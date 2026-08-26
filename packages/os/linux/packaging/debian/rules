@@ -5,6 +5,7 @@
 
 override_dh_auto_build:
 	set -eu; \
+	debian/validate-user-units; \
 	for executable in eliza-agent eliza-desktop eliza-doctor; do \
 		test -f "payload/bin/$$executable"; \
 		test ! -L "payload/bin/$$executable"; \
@@ -47,6 +48,7 @@ override_dh_auto_install:
 		debian/elizaos-app/usr/share/elizaos/desktop-signing-public.key
 
 override_dh_auto_test:
+	debian/validate-user-units
 	desktop-file-validate debian/ai.elizaos.app.desktop
 	appstreamcli validate --no-net debian/ai.elizaos.app.metainfo.xml
 	readelf -h payload/bin/eliza-desktop >/dev/null
