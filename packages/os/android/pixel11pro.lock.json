@@ -4,6 +4,10 @@
   "manifestRevision": "android-17.0.0_r1",
   "manifestTagObject": "7a9e46ba6ed424f922a3457f4964e67e0b966201",
   "manifestCommit": "5bc9a7ce1cd78dd53613bbfd0ebf506e1e4adb0f",
+  "resolvedManifest": {
+    "path": "packages/os/android/pixel11pro-resolved-manifest.json",
+    "sha256": "faed591decf3461b4862624ef4062fafe2ec450b976e987e02ce410081318346"
+  },
   "device": {
     "targetId": "pixel11pro-grizzly",
     "codename": "grizzly",
