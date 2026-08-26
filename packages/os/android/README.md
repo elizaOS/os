@@ -190,7 +190,7 @@ runs `adevtool generate-all -d grizzly`, verifies the required output, and
 retains and verifies both factory images. Downloads are governed by Google's
 Pixel factory-image terms, which `adevtool` displays before download. The
 bundle target completes explicit `droidcore`, `dist`,
-`host_init_verifier_check`, and `check-vintf-all` gates, retains their command
+host init verifier, and `check-vintf-all` gates, retains their command
 and product-output receipts, and verifies every referenced vbmeta image with
 the built `avbtool` against a lock-authorized key.
 It validates the generated dynamic-super flash plan, binds the privileged APK

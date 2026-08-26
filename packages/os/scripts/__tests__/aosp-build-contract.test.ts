@@ -1797,8 +1797,12 @@ describe("AOSP build contracts", () => {
       join(repositoryRoot, "scripts/aosp/build-grizzly-bundle.mjs"),
       "utf8",
     );
-    expect(collector).toContain("host_init_verifier_check");
-    expect(collector).toContain("host_init_verifier_output.txt");
+    expect(collector).toContain(
+      'm -j${jobs} "$product_out/host_init_verifier_output.txt"',
+    );
+    expect(collector).not.toContain(
+      'host_init_verifier_check "$product_out/host_init_verifier_output.txt"',
+    );
     expect(collector).not.toContain(".repo/repo/repo");
   });
 
