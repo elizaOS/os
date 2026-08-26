@@ -1,8 +1,14 @@
 // Configures the USB installer build, server, and tests.
 import { randomUUID } from "node:crypto";
 import { createPlatformBackend } from "./src/backend/index";
+import { assertRestoreTargetAllowed } from "./src/backend/restore-safety";
 import type {
   InstallerStepId,
+  RestoreExecutionTerminal,
+  RestorePlan,
+  RestoreReceipt,
+  RestoreRequest,
+  RestoreStepId,
   UsbInstallerBackend,
   WriteExecutionOptions,
   WritePlan,
@@ -40,6 +46,11 @@ interface ActiveExecution {
   controller: AbortController;
   cancellationSupported: boolean;
   targetIdentities: readonly string[];
+}
+
+interface StoredRestorePlan {
+  plan: RestorePlan;
+  createdAt: number;
 }
 
 interface SerializedError {
@@ -145,7 +156,7 @@ function addExpectedDriveSnapshot(request: WriteRequest, plan: WritePlan) {
   };
 }
 
-function canonicalTargetIdentities(plan: WritePlan): string[] {
+function canonicalTargetIdentities(plan: Pick<WritePlan, "drive">): string[] {
   const stableId = plan.drive.stableId?.trim();
   return [
     `device-path:${plan.drive.devicePath}`,
@@ -160,6 +171,7 @@ export function createUsbInstallerHandler(
   const plans = new Map<string, StoredWritePlan>();
   const activeExecutions = new Map<string, ActiveExecution>();
   const activeTargets = new Map<string, ActiveExecution>();
+  const restorePlans = new Map<string, StoredRestorePlan>();
   const allowedOrigins = configuredAllowedOrigins(options);
   const planTtlMs = configuredPlanTtlMs(options);
   const now = options.now ?? Date.now;
@@ -171,6 +183,48 @@ export function createUsbInstallerHandler(
         plans.delete(planId);
       }
     }
+    for (const [planId, stored] of restorePlans) {
+      if (timestamp - stored.createdAt >= planTtlMs) {
+        restorePlans.delete(planId);
+      }
+    }
+  }
+
+  async function createStoredRestorePlan(
+    request: RestoreRequest,
+  ): Promise<RestorePlan> {
+    assertRawWriteGate();
+    if (!backend.createRestorePlan || !backend.executeRestorePlan) {
+      throw new Error("Restore USB is not supported by this platform backend.");
+    }
+    const plan = await backend.createRestorePlan(request);
+    assertRestoreTargetAllowed(request, plan.drive);
+    const planId = randomUUID();
+    restorePlans.set(planId, { plan, createdAt: now() });
+    return { ...plan, planId };
+  }
+
+  async function executeStoredRestorePlan(
+    stored: StoredRestorePlan,
+    onProgress: (stepId: RestoreStepId, progress: number) => void,
+  ): Promise<RestoreReceipt> {
+    assertRawWriteGate();
+    if (!backend.createRestorePlan || !backend.executeRestorePlan) {
+      throw new Error("Restore USB is not supported by this platform backend.");
+    }
+    const drive = stored.plan.drive;
+    const freshPlan = await backend.createRestorePlan({
+      driveId: stored.plan.request.driveId,
+      acknowledgeDataLoss: true,
+      expectedDrive: {
+        devicePath: drive.devicePath,
+        sizeBytes: drive.sizeBytes,
+        name: drive.name,
+        stableId: drive.stableId ?? "",
+      },
+    });
+    assertRestoreTargetAllowed(freshPlan.request, freshPlan.drive);
+    return backend.executeRestorePlan(freshPlan, onProgress);
   }
 
   async function createStoredPlan(request: WriteRequest): Promise<WritePlan> {
@@ -254,6 +308,139 @@ export function createUsbInstallerHandler(
       if (url.pathname === "/images" && req.method === "GET") {
         const images = await backend.listImages();
         return jsonResponse(req, images);
+      }
+
+      if (url.pathname === "/restore/capability" && req.method === "GET") {
+        let capability = backend.getRestoreCapability
+          ? await backend.getRestoreCapability()
+          : {
+              supported: false,
+              platform: "unknown" as const,
+              filesystem: null,
+              reason:
+                "Restore USB is not implemented by this platform backend.",
+            };
+        if (capability.supported && !rawWriteEnabled()) {
+          capability = {
+            ...capability,
+            supported: false,
+            filesystem: null,
+            reason:
+              "Restore USB is disabled until ELIZAOS_USB_ENABLE_RAW_WRITE=1 is set deliberately.",
+          };
+        }
+        return jsonResponse(req, capability);
+      }
+
+      if (url.pathname === "/restore/plan" && req.method === "POST") {
+        const request = (await req.json()) as RestoreRequest;
+        const plan = await createStoredRestorePlan(request);
+        return jsonResponse(req, plan);
+      }
+
+      if (url.pathname === "/restore/execute" && req.method === "POST") {
+        const { planId } = (await req.json()) as { planId?: string };
+        if (!planId) {
+          return errorResponse(
+            req,
+            new Error(
+              "Missing planId. Create a restore plan before executing.",
+            ),
+            400,
+          );
+        }
+
+        assertRawWriteGate();
+        deleteExpiredPlans();
+        const stored = restorePlans.get(planId);
+        if (!stored) {
+          return errorResponse(
+            req,
+            new Error(
+              "Unknown, expired, or already-used restore plan. Rescan the drive and create a new plan.",
+            ),
+            409,
+          );
+        }
+        const targetIdentities = canonicalTargetIdentities(stored.plan);
+        if (targetIdentities.some((identity) => activeTargets.has(identity))) {
+          return errorResponse(
+            req,
+            new Error(
+              "Another destructive operation is active for this target.",
+            ),
+            409,
+          );
+        }
+        const activeRestore: ActiveExecution = {
+          controller: new AbortController(),
+          cancellationSupported: false,
+          targetIdentities,
+        };
+        // Consume this authorization and acquire target locks synchronously.
+        restorePlans.delete(planId);
+        for (const identity of targetIdentities) {
+          activeTargets.set(identity, activeRestore);
+        }
+
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream({
+          async start(controller) {
+            try {
+              let terminal: RestoreExecutionTerminal;
+              try {
+                const receipt = await executeStoredRestorePlan(
+                  stored,
+                  (stepId, progress) => {
+                    controller.enqueue(
+                      encoder.encode(
+                        `data: ${JSON.stringify({ stepId, progress })}\n\n`,
+                      ),
+                    );
+                  },
+                );
+                terminal = { kind: "restore-complete", receipt };
+              } catch (error) {
+                terminal = { kind: "restore-failed", ...serializeError(error) };
+              }
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify({ terminal })}\n\n`),
+              );
+            } finally {
+              for (const [storedPlanId, candidate] of plans) {
+                if (
+                  canonicalTargetIdentities(candidate.plan).some((identity) =>
+                    targetIdentities.includes(identity),
+                  )
+                ) {
+                  plans.delete(storedPlanId);
+                }
+              }
+              for (const [storedPlanId, candidate] of restorePlans) {
+                if (
+                  canonicalTargetIdentities(candidate.plan).some((identity) =>
+                    targetIdentities.includes(identity),
+                  )
+                ) {
+                  restorePlans.delete(storedPlanId);
+                }
+              }
+              for (const identity of targetIdentities) {
+                if (activeTargets.get(identity) === activeRestore) {
+                  activeTargets.delete(identity);
+                }
+              }
+              controller.close();
+            }
+          },
+        });
+        return new Response(stream, {
+          headers: {
+            ...corsHeaders(req),
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+          },
+        });
       }
 
       if (url.pathname === "/plan" && req.method === "POST") {

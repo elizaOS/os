@@ -18,7 +18,18 @@ import {
   buildDiskpartScript,
   classifyDiskSafety,
   psEscape,
+  WindowsUsbInstallerBackend,
 } from "../windows-backend";
+
+it("explicitly reports Restore USB as unsupported on Windows", async () => {
+  await expect(
+    WindowsUsbInstallerBackend.prototype.getRestoreCapability(),
+  ).resolves.toMatchObject({
+    supported: false,
+    platform: "win32",
+    filesystem: null,
+  });
+});
 
 describe("psEscape", () => {
   it("single-quotes a benign string", () => {
