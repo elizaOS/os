@@ -78,9 +78,24 @@ environment. The reusable workflow exposes `bun-riscv64-url` and
 `bun-riscv64-sha256` for that lane.
 
 The canonical Cuttlefish products depend only on this release repository and
-the checkout pinned by `aosp.lock.json`. They do not inherit external chip
-simulator trees. Any future simulator integration needs a dedicated product
-whose external sources are revision-locked and verified before the build.
+the checkout pinned by `aosp.lock.json`. E1 simulator development uses a
+separate `eliza_cf_riscv64_e1_phone` product. Its device/HAL sources are
+imported from `elizaOS/research` at the commit recorded in
+`cuttlefish-e1.lock.json`; the importer verifies the commit, required source
+paths, and the upstream Android license declarations before copying them into
+the AOSP checkout. The canonical launcher products never inherit this overlay.
+
+To provision and build the simulator target on a Linux x86_64 host:
+
+```bash
+make -C packages/os/android provision-e1 AOSP_ROOT=/build/aosp
+make -C packages/os/android build-e1 AOSP_ROOT=/build/aosp \
+  ELIZAOS_ELIZA_ROOT=/build/eliza
+```
+
+The E1 target currently supports `riscv64` Cuttlefish only. A successful local
+import is not boot evidence; retain the Cuttlefish build, `checkvintf`, and
+boot-validation outputs for release qualification.
 
 Before assembling the APK, the Make and workflow front doors build the
 mandatory arm64 fused inference library plus the selected Cuttlefish ABI.

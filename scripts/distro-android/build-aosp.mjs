@@ -28,6 +28,7 @@ import {
 } from "./bootstrap-aosp.mjs";
 import { loadBrandFromArgv } from "./brand-config.mjs";
 import { withSisoCompatibility } from "./siso-env.mjs";
+import { provisionCuttlefishE1 } from "./provision-cuttlefish-e1.mjs";
 import { main as syncToAospMain } from "./sync-to-aosp.mjs";
 import { main as validateMain } from "./validate.mjs";
 
@@ -247,6 +248,12 @@ export async function main(argv = process.argv.slice(2)) {
     : aospLockPath;
   const lock = loadAospLock(selectedLockPath);
   assertPinnedAospCheckout(args.aospRoot, lock);
+  if (brand.aospDeviceOverlay) {
+    provisionCuttlefishE1({
+      aospRoot: args.aospRoot,
+      lockPath: path.resolve(repoRoot, brand.aospDeviceOverlay),
+    });
+  }
   if (lock.proprietaryArchive) {
     const archivePath = process.env.ELIZA_PIXEL_VENDOR_ARCHIVE;
     if (!archivePath) {

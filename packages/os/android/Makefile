@@ -60,7 +60,7 @@ INFERENCE_TARGETS_arm64 := android-arm64-cpu-fused
 INFERENCE_TARGETS_riscv64 := android-arm64-cpu-fused android-riscv64-cpu-fused
 INFERENCE_TARGETS := $(INFERENCE_TARGETS_$(ARCH))
 
-.PHONY: help bootstrap bootstrap-grizzly prepare-grizzly build build-grizzly native-inference native-inference-grizzly sim splash bootanimation check-arch
+.PHONY: help bootstrap bootstrap-grizzly prepare-grizzly provision-e1 build build-e1 build-grizzly native-inference native-inference-grizzly sim splash bootanimation check-arch
 
 help:
 	@echo "elizaOS Mobile (AOSP) targets:"
@@ -69,6 +69,7 @@ help:
 	@echo "  make prepare-grizzly                    # generate grizzly vendor/device support from stock"
 	@echo "  make build-grizzly                      # build the Pixel 11 Pro image (does not flash)"
 	@echo "  make build ARCH=x86_64|arm64|riscv64   # build + launch + boot-validate"
+	@echo "  make build-e1                           # build + validate the pinned E1 Cuttlefish simulator"
 	@echo "  make sim   ARCH=<arch>                  # validate an already-built image"
 	@echo "  make splash                             # render elizaOS blue boot splash (uses sharp)"
 	@echo "  make bootanimation                      # pack splash frames into bootanimation.zip"
@@ -91,8 +92,15 @@ bootstrap-grizzly: provision-repo
 prepare-grizzly:
 	node $(DISTRO)/prepare-grizzly.mjs --lock "$(HERE)pixel11pro.lock.json" --aosp-root "$(AOSP_GRIZZLY_ROOT)"
 
+provision-e1:
+	node $(DISTRO)/provision-cuttlefish-e1.mjs --lock "$(HERE)cuttlefish-e1.lock.json" --aosp-root "$(AOSP_ROOT)"
+
 build: check-arch native-inference
 	ELIZAOS_ELIZA_ROOT="$(ELIZAOS_ELIZA_ROOT)" $(if $(filter riscv64,$(ARCH)),,ELIZA_BUN_RISCV64_OPTIONAL=1) node $(DISTRO)/build-aosp.mjs --brand-config $(BRAND_CONFIG) --aosp-root $(AOSP_ROOT) --rebuild-privileged-apk --launch --boot-validate $(ARGS)
+
+build-e1: check-arch native-inference provision-e1
+	@test "$(ARCH)" = "riscv64" || (echo "ERROR: E1 simulator is currently supported only on ARCH=riscv64" >&2; exit 64)
+	ELIZAOS_ELIZA_ROOT="$(ELIZAOS_ELIZA_ROOT)" ELIZA_BUN_RISCV64_OPTIONAL=1 node $(DISTRO)/build-aosp.mjs --brand-config $(DISTRO)/brand.eliza-riscv64-e1.json --aosp-root $(AOSP_ROOT) --rebuild-privileged-apk --launch --boot-validate $(ARGS)
 
 native-inference: check-arch
 	cd "$(ELIZAOS_ELIZA_ROOT)" && node packages/app-core/scripts/aosp/compile-libllama.mjs --assets-dir "$(ANDROID_AGENT_ASSETS)" $(foreach target,$(INFERENCE_TARGETS),--target $(target))

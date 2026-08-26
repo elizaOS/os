@@ -123,6 +123,17 @@ export function loadBrandConfig(configPath) {
       `Brand config ${resolved} has invalid repository-relative aospLockPath`,
     );
   }
+  if (
+    parsed.aospDeviceOverlay !== undefined &&
+    (typeof parsed.aospDeviceOverlay !== "string" ||
+      parsed.aospDeviceOverlay.length === 0 ||
+      path.isAbsolute(parsed.aospDeviceOverlay) ||
+      parsed.aospDeviceOverlay.split(/[\\/]/).includes(".."))
+  ) {
+    throw new Error(
+      `Brand config ${resolved} has invalid repository-relative aospDeviceOverlay`,
+    );
+  }
   parsed.buildAndroidSystemCmd = parsed.buildAndroidSystemCmd ?? [
     "bun",
     "run",
