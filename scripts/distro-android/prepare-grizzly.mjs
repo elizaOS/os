@@ -14,6 +14,7 @@ import {
   materializeLockedSourceOverlays,
   verifyLockedArtifact,
 } from "./bootstrap-aosp.mjs";
+import { lintInitRc } from "./lint-init-rc.mjs";
 import { withSisoCompatibility } from "./siso-env.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -313,14 +314,9 @@ const PROBE_INIT_FILES = [
   "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.elizaos-debug.rc",
 ];
 
-// The USB-configfs edit carries no "elizaOS" comment and marker writes are
-// lowercase, so match case-insensitively plus the one probe sentinel that has
-// no elizaos token at all. A partially applied probe pass must still count as
-// contaminated.
-const PROBE_SENTINELS = [
-  /elizaos/i,
-  /Keep the unlocked userdebug bring-up reachable/,
-];
+// Both the import and the generated diagnostic file carry the elizaOS marker.
+// A partially applied probe pass must still count as contaminated.
+const PROBE_SENTINELS = [/elizaos/i];
 
 export function generatedTreeHasBringupProbes(aospRoot) {
   const files = [
@@ -550,6 +546,11 @@ export function stageGeneratedBringupDiagnostics(aospRoot) {
     `# elizaOS userdebug bring-up diagnostics; remove after hardware qualification.\n\non early-init && property:ro.debuggable=1\n    write /dev/kmsg "elizaos-init: early-init reached"\n    write /metadata/elizaos_vendor_early_init.marker 1\n\non post-fs && property:ro.debuggable=1\n    write /dev/kmsg "elizaos-init: post-fs reached"\n    write /metadata/elizaos_vendor_post_fs.marker 1\n\non late-fs && property:ro.debuggable=1\n    write /dev/kmsg "elizaos-init: late-fs reached"\n    write /metadata/elizaos_vendor_late_fs.marker 1\n\non post-fs-data && property:ro.debuggable=1\n    write /dev/kmsg "elizaos-init: post-fs-data reached"\n    write /metadata/elizaos_vendor_post_fs_data.marker 1\n\non boot && property:ro.debuggable=1\n    write /dev/kmsg "elizaos-init: boot reached"\n    write /metadata/elizaos_vendor_boot.marker 1\n`,
   );
   fs.chmodSync(debugInitPath, 0o644);
+  for (const issue of lintInitRc(debugInitPath)) {
+    if (!issue.soft) {
+      fail(`init lint error: ${debugInitPath}:${issue.line}: ${issue.message}`);
+    }
+  }
   const copyDestination =
     "$(TARGET_COPY_OUT_VENDOR)/etc/init/hw/init.elizaos-debug.rc";
   const copyEntry = `    vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.elizaos-debug.rc:${copyDestination}`;

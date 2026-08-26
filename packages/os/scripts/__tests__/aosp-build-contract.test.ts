@@ -778,12 +778,28 @@ describe("AOSP build contracts", () => {
       generatedRoot,
       "proprietary/vendor/etc/init/hw/init.grizzly.rc",
     );
+    const malibuInitPath = join(
+      generatedRoot,
+      "proprietary/vendor/etc/init/hw/init.malibu.rc",
+    );
+    const usbInitPath = join(
+      generatedRoot,
+      "proprietary/vendor/etc/init/hw/init.malibu.usb.rc",
+    );
     const makefilePath = join(generatedRoot, "grizzly.mk");
     try {
       await mkdir(dirname(initPath), { recursive: true });
       await writeFile(
         initPath,
         "# grizzly specific init.rc\n\non early-boot\n    wait_for_prop vendor.common.modules.ready 1\n",
+      );
+      await writeFile(
+        malibuInitPath,
+        "on post-fs\n    wait /dev/sg1\n    start storageproxyd\n",
+      );
+      await writeFile(
+        usbInitPath,
+        "on boot\n    # Use USB Gadget HAL\n    setprop sys.usb.configfs 2\n",
       );
       await writeFile(makefilePath, "PRODUCT_NAME := grizzly\n");
 
@@ -807,6 +823,12 @@ describe("AOSP build contracts", () => {
         init.match(/import \/vendor\/etc\/init\/hw\/init\.elizaos-debug\.rc/g),
       ).toHaveLength(1);
       expect(init).toContain("wait_for_prop vendor.common.modules.ready 1");
+      expect(readFileSync(malibuInitPath, "utf8")).toBe(
+        "on post-fs\n    wait /dev/sg1\n    start storageproxyd\n",
+      );
+      expect(readFileSync(usbInitPath, "utf8")).toBe(
+        "on boot\n    # Use USB Gadget HAL\n    setprop sys.usb.configfs 2\n",
+      );
       expect(debugInit).toContain("on early-init && property:ro.debuggable=1");
       expect(debugInit).not.toMatch(/^on early-init$/m);
       expect(debugInit).not.toContain("trigger post-fs-data");
