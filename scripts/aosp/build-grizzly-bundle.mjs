@@ -468,7 +468,7 @@ function main(argv = process.argv.slice(2)) {
       "bash",
       [
         "-lc",
-        `source build/envsetup.sh && lunch eliza_grizzly_phone-trunk_staging-userdebug && m -j${args.jobs} dist host_init_verifier checkvintf`,
+        `source build/envsetup.sh && lunch eliza_grizzly_phone-trunk_staging-userdebug && m -j${args.jobs} droid host_init_verifier checkvintf`,
       ],
       { cwd: args.aospRoot },
     );
@@ -552,7 +552,7 @@ function main(argv = process.argv.slice(2)) {
     builderEnvironment,
     artifacts,
     verification: {
-      completedBuildTargets: ["dist", "host_init_verifier", "checkvintf"],
+      completedBuildTargets: ["droid", "host_init_verifier", "checkvintf"],
       avbInfoVerified: verifiedVbmetaImages,
       flashMetadata,
       physicalDevice: "pending",
