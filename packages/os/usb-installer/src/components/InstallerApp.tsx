@@ -185,6 +185,7 @@ export function InstallerApp({ backend }: InstallerAppProps) {
     Partial<Record<InstallerStepId, number>>
   >({});
   const [writeError, setWriteError] = useState<string | null>(null);
+  const [cancellingWrite, setCancellingWrite] = useState(false);
 
   const cancelledRef = useRef(false);
 
@@ -338,6 +339,7 @@ export function InstallerApp({ backend }: InstallerAppProps) {
     if (!selectedDrive || !selectedImage || !acknowledgeDataLoss) return;
     setWriteError(null);
     setStepProgress({});
+    setCancellingWrite(false);
     setAppStep("writing");
 
     try {
@@ -363,6 +365,17 @@ export function InstallerApp({ backend }: InstallerAppProps) {
     } catch (err) {
       setWriteError(err instanceof Error ? err.message : String(err));
       setAppStep("error");
+    }
+  }
+
+  async function handleCancelWrite() {
+    if (!writePlan || !backend.cancelWritePlan || cancellingWrite) return;
+    setCancellingWrite(true);
+    try {
+      await backend.cancelWritePlan(writePlan);
+    } catch (err) {
+      setWriteError(err instanceof Error ? err.message : String(err));
+      setCancellingWrite(false);
     }
   }
 
@@ -889,6 +902,7 @@ export function InstallerApp({ backend }: InstallerAppProps) {
               </strong>
               . Do not unplug the drive.
             </p>
+            {writeError && <p className="error">{writeError}</p>}
 
             <div
               className="progress-bar"
@@ -951,6 +965,18 @@ export function InstallerApp({ backend }: InstallerAppProps) {
                 );
               })}
             </ol>
+            {writePlan.cancellationSupported && backend.cancelWritePlan && (
+              <div className="panel-actions">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  disabled={cancellingWrite}
+                  onClick={() => void handleCancelWrite()}
+                >
+                  {cancellingWrite ? "Cancelling…" : "Cancel write"}
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="panel notes-panel">
@@ -988,6 +1014,7 @@ export function InstallerApp({ backend }: InstallerAppProps) {
                 setAppStep("selecting-drive");
                 setWritePlan(null);
                 setStepProgress({});
+                setCancellingWrite(false);
                 setAcknowledgeDataLoss(false);
                 setConfirmTarget("");
                 void loadData(true);
@@ -1023,6 +1050,7 @@ export function InstallerApp({ backend }: InstallerAppProps) {
                   setAppStep("selecting-drive");
                   setWritePlan(null);
                   setStepProgress({});
+                  setCancellingWrite(false);
                   setAcknowledgeDataLoss(false);
                   setConfirmTarget("");
                 }}

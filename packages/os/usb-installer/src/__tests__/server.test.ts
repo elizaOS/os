@@ -6,6 +6,7 @@ import type {
   InstallerStepId,
   RemovableDrive,
   UsbInstallerBackend,
+  WriteExecutionOptions,
   WritePlan,
   WriteRequest,
 } from "../backend/types";
@@ -90,6 +91,122 @@ class FakeBackend implements UsbInstallerBackend {
   ): Promise<void> {
     this.executedPlan = plan;
     onProgress("write", 1);
+  }
+}
+
+class CancellableBackend extends FakeBackend {
+  readonly canonicalWriteCancellationSupported = true;
+  readonly started: Promise<void>;
+  readonly abortReceived: Promise<void>;
+  private markStarted!: () => void;
+  private markAbortReceived!: () => void;
+  private readonly terminationConfirmed: Promise<void>;
+  private confirm!: () => void;
+
+  constructor() {
+    super(drive, canonicalRawImage, true);
+    this.started = new Promise((resolve) => {
+      this.markStarted = resolve;
+    });
+    this.abortReceived = new Promise((resolve) => {
+      this.markAbortReceived = resolve;
+    });
+    this.terminationConfirmed = new Promise((resolve) => {
+      this.confirm = resolve;
+    });
+  }
+
+  confirmTermination(): void {
+    this.confirm();
+  }
+
+  override async executeWritePlan(
+    plan: WritePlan,
+    _onProgress: (step: InstallerStepId, progress: number) => void,
+    options: WriteExecutionOptions = {},
+  ): Promise<void> {
+    this.executedPlan = plan;
+    this.markStarted();
+    await new Promise<void>((_resolve, reject) => {
+      if (options.signal?.aborted) {
+        reject(options.signal.reason);
+        return;
+      }
+      options.signal?.addEventListener(
+        "abort",
+        () => {
+          this.markAbortReceived();
+          void this.terminationConfirmed.then(() =>
+            reject(options.signal?.reason),
+          );
+        },
+        { once: true },
+      );
+    });
+  }
+}
+
+class ResolvingOnAbortBackend extends FakeBackend {
+  readonly canonicalWriteCancellationSupported = true;
+  readonly started: Promise<void>;
+  private markStarted!: () => void;
+
+  constructor() {
+    super(drive, canonicalRawImage, true);
+    this.started = new Promise((resolve) => {
+      this.markStarted = resolve;
+    });
+  }
+
+  override async executeWritePlan(
+    plan: WritePlan,
+    _onProgress: (step: InstallerStepId, progress: number) => void,
+    options: WriteExecutionOptions = {},
+  ): Promise<void> {
+    this.executedPlan = plan;
+    this.markStarted();
+    await new Promise<void>((resolve) => {
+      if (options.signal?.aborted) {
+        resolve();
+        return;
+      }
+      options.signal?.addEventListener("abort", () => resolve(), {
+        once: true,
+      });
+    });
+  }
+}
+
+class AliasedTargetBackend extends CancellableBackend {
+  readonly primaryDrive: RemovableDrive = {
+    ...drive,
+    stableId: "linux:shared-hardware-id",
+  };
+  readonly aliasDrive: RemovableDrive = {
+    ...drive,
+    id: "usb-by-id",
+    devicePath: "/dev/disk/by-id/usb-shared-hardware-id",
+    stableId: "linux:shared-hardware-id",
+  };
+
+  override async listRemovableDrives(): Promise<RemovableDrive[]> {
+    return [this.primaryDrive, this.aliasDrive];
+  }
+
+  override async createWritePlan(request: WriteRequest): Promise<WritePlan> {
+    this.createRequests.push(request);
+    const selectedDrive = [this.primaryDrive, this.aliasDrive].find(
+      (candidate) => candidate.id === request.driveId,
+    );
+    if (!selectedDrive) throw new Error(`Unknown drive id: ${request.driveId}`);
+    assertDriveMatchesExpected(request, selectedDrive);
+    return {
+      request,
+      drive: selectedDrive,
+      image: canonicalRawImage,
+      steps: [],
+      privilegedWriteImplemented: true,
+    };
   }
 }
 
@@ -190,6 +307,7 @@ describe("USB installer server", () => {
     expect(accepted.status).toBe(200);
     await expect(json(accepted)).resolves.toMatchObject({
       planId: expect.any(String),
+      cancellationSupported: false,
     });
   });
 
@@ -324,5 +442,238 @@ describe("USB installer server", () => {
 
     expect(text).toContain("Selected drive changed before write");
     expect(backend.executedPlan).toBeNull();
+  });
+
+  it("cancels an active write, reports incomplete media, and consumes the plan", async () => {
+    process.env.ELIZAOS_USB_ENABLE_RAW_WRITE = "1";
+    const backend = new CancellableBackend();
+    const handler = createUsbInstallerHandler(backend);
+    const planRes = await handler(
+      request("/plan", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          driveId: drive.id,
+          imageId: image.id,
+          dryRun: false,
+          acknowledgeDataLoss: true,
+        }),
+      }),
+    );
+    const plan = (await planRes.json()) as WritePlan;
+    expect(plan.cancellationSupported).toBe(true);
+    const secondPlanRes = await handler(
+      request("/plan", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          driveId: drive.id,
+          imageId: image.id,
+          dryRun: false,
+          acknowledgeDataLoss: true,
+        }),
+      }),
+    );
+    const secondPlan = (await secondPlanRes.json()) as WritePlan;
+    expect(secondPlan.planId).not.toBe(plan.planId);
+
+    const executeRes = await handler(
+      request("/execute", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ planId: plan.planId }),
+      }),
+    );
+    await backend.started;
+    const sameTargetRes = await handler(
+      request("/execute", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ planId: secondPlan.planId }),
+      }),
+    );
+    expect(sameTargetRes.status).toBe(409);
+    await expect(json(sameTargetRes)).resolves.toMatchObject({
+      error: "Another write is already active for this target.",
+    });
+
+    const duplicateRes = await handler(
+      request("/execute", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ planId: plan.planId }),
+      }),
+    );
+    expect(duplicateRes.status).toBe(409);
+    await expect(json(duplicateRes)).resolves.toMatchObject({
+      error: "Write plan is already executing.",
+    });
+
+    const cancelRes = await handler(
+      request("/cancel", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ planId: plan.planId }),
+      }),
+    );
+
+    expect(cancelRes.status).toBe(200);
+    await expect(json(cancelRes)).resolves.toEqual({ cancelled: true });
+    await backend.abortReceived;
+    const lockedAfterCancelRes = await handler(
+      request("/execute", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ planId: secondPlan.planId }),
+      }),
+    );
+    expect(lockedAfterCancelRes.status).toBe(409);
+    await expect(json(lockedAfterCancelRes)).resolves.toMatchObject({
+      error: "Another write is already active for this target.",
+    });
+    backend.confirmTermination();
+    const executionEvents = await executeRes.text();
+    expect(executionEvents).toContain('"cancelled":true');
+    expect(executionEvents).toContain('"name":"AbortError"');
+    expect(executionEvents).toContain("Media is incomplete");
+    expect(executionEvents).not.toContain('"done":true');
+
+    const replayRes = await handler(
+      request("/execute", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ planId: plan.planId }),
+      }),
+    );
+    expect(replayRes.status).toBe(409);
+    await expect(json(replayRes)).resolves.toMatchObject({
+      error: expect.stringContaining("Unknown or expired write plan"),
+    });
+
+    const staleSecondRes = await handler(
+      request("/execute", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ planId: secondPlan.planId }),
+      }),
+    );
+    expect(staleSecondRes.status).toBe(409);
+    await expect(json(staleSecondRes)).resolves.toMatchObject({
+      error: expect.stringContaining("Unknown or expired write plan"),
+    });
+  });
+
+  it("rejects cancellation for a plan that is not actively executing", async () => {
+    const handler = createUsbInstallerHandler(new FakeBackend());
+    const res = await handler(
+      request("/cancel", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ planId: "not-active" }),
+      }),
+    );
+
+    expect(res.status).toBe(409);
+    await expect(json(res)).resolves.toMatchObject({
+      error: "Write plan is not actively executing.",
+    });
+  });
+
+  it("reports cancellation when the backend resolves after observing abort", async () => {
+    process.env.ELIZAOS_USB_ENABLE_RAW_WRITE = "1";
+    const backend = new ResolvingOnAbortBackend();
+    const handler = createUsbInstallerHandler(backend);
+    const planRes = await handler(
+      request("/plan", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          driveId: drive.id,
+          imageId: image.id,
+          dryRun: false,
+          acknowledgeDataLoss: true,
+        }),
+      }),
+    );
+    const plan = (await planRes.json()) as WritePlan;
+    const executeRes = await handler(
+      request("/execute", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ planId: plan.planId }),
+      }),
+    );
+    await backend.started;
+
+    const cancelRes = await handler(
+      request("/cancel", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ planId: plan.planId }),
+      }),
+    );
+
+    expect(cancelRes.status).toBe(200);
+    await expect(json(cancelRes)).resolves.toEqual({ cancelled: true });
+    const executionEvents = await executeRes.text();
+    expect(executionEvents).toContain('"cancelled":true');
+    expect(executionEvents).toContain("Media is incomplete");
+    expect(executionEvents).not.toContain('"done":true');
+  });
+
+  it("locks distinct device-path aliases that share a stable target identity", async () => {
+    process.env.ELIZAOS_USB_ENABLE_RAW_WRITE = "1";
+    const backend = new AliasedTargetBackend();
+    const handler = createUsbInstallerHandler(backend);
+    const createPlan = async (driveId: string) => {
+      const response = await handler(
+        request("/plan", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            driveId,
+            imageId: image.id,
+            dryRun: false,
+            acknowledgeDataLoss: true,
+          }),
+        }),
+      );
+      return (await response.json()) as WritePlan;
+    };
+    const primaryPlan = await createPlan(backend.primaryDrive.id);
+    const aliasPlan = await createPlan(backend.aliasDrive.id);
+    expect(primaryPlan.drive.devicePath).not.toBe(aliasPlan.drive.devicePath);
+    expect(primaryPlan.drive.stableId).toBe(aliasPlan.drive.stableId);
+
+    const executionResponse = await handler(
+      request("/execute", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ planId: primaryPlan.planId }),
+      }),
+    );
+    await backend.started;
+    const aliasExecutionResponse = await handler(
+      request("/execute", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ planId: aliasPlan.planId }),
+      }),
+    );
+
+    expect(aliasExecutionResponse.status).toBe(409);
+    await expect(json(aliasExecutionResponse)).resolves.toMatchObject({
+      error: "Another write is already active for this target.",
+    });
+
+    await handler(
+      request("/cancel", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ planId: primaryPlan.planId }),
+      }),
+    );
+    backend.confirmTermination();
+    await executionResponse.text();
   });
 });

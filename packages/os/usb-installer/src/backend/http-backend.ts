@@ -54,13 +54,22 @@ export class HttpUsbInstallerBackend implements UsbInstallerBackend {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let pending = "";
+    let terminal: SseTerminal | null = null;
+
+    const acceptMessage = (message: string) => {
+      if (terminal) {
+        throw new Error("Backend sent an event after a terminal event.");
+      }
+      const event = parseSseMessage(message, onProgress);
+      if (!event) {
+        return;
+      }
+      terminal = event;
+    };
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) {
-        if (pending.trim()) {
-          handleSseMessage(pending, onProgress);
-        }
         break;
       }
 
@@ -69,9 +78,31 @@ export class HttpUsbInstallerBackend implements UsbInstallerBackend {
       pending = messages.pop() ?? "";
 
       for (const message of messages) {
-        if (handleSseMessage(message, onProgress)) return;
+        if (message.trim()) acceptMessage(message);
       }
     }
+    pending += decoder.decode();
+    if (pending.length > 0) {
+      throw new Error("Backend event stream ended with a truncated SSE event.");
+    }
+    const finalTerminal = terminal as SseTerminal | null;
+    if (!finalTerminal) {
+      throw new Error("Backend event stream ended without a terminal event.");
+    }
+    if (finalTerminal.kind !== "done") throw finalTerminal.error;
+  }
+
+  async cancelWritePlan(plan: WritePlan): Promise<void> {
+    if (!plan.planId) {
+      throw new Error("Write plan is missing a server plan id.");
+    }
+
+    const res = await fetch(`${SERVER}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ planId: plan.planId }),
+    });
+    if (!res.ok) throw await backendError(res);
   }
 }
 
@@ -86,28 +117,84 @@ async function backendError(res: Response): Promise<Error> {
   }
 }
 
-function handleSseMessage(
+type SseTerminal =
+  | { kind: "done" }
+  | { kind: "error" | "cancelled"; error: Error };
+
+const installerSteps = new Set<InstallerStepId>([
+  "resolve-image",
+  "checksum",
+  "write",
+  "verify",
+  "complete",
+]);
+
+function parseSseMessage(
   message: string,
   onProgress: (stepId: InstallerStepId, progress: number) => void,
-): boolean {
-  for (const line of message.split("\n")) {
-    if (!line.startsWith("data: ")) continue;
-    const data = JSON.parse(line.slice(6)) as {
-      stepId?: InstallerStepId;
-      progress?: number;
-      done?: boolean;
-      error?: string;
-      name?: string;
-    };
-    if (data.error) {
-      const err = new Error(data.error);
-      err.name = data.name ?? "BackendError";
-      throw err;
-    }
-    if (data.done) return true;
-    if (data.stepId !== undefined && data.progress !== undefined) {
-      onProgress(data.stepId, data.progress);
-    }
+): SseTerminal | null {
+  const lines = message.split("\n").filter((line) => line.length > 0);
+  if (lines.length !== 1 || !lines[0]?.startsWith("data: ")) {
+    throw new Error("Backend sent a malformed SSE event envelope.");
   }
-  return false;
+  let value: unknown;
+  try {
+    value = JSON.parse(lines[0].slice(6));
+  } catch {
+    throw new Error("Backend sent malformed JSON in an SSE event.");
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Backend SSE data must be a JSON object.");
+  }
+  const data = value as Record<string, unknown>;
+  const keys = Object.keys(data).sort();
+  const hasDone = data.done === true;
+  const hasCancellation = data.cancelled === true;
+  const hasError = typeof data.error === "string" && data.error.length > 0;
+
+  if (hasDone) {
+    if (hasCancellation || hasError || keys.join(",") !== "done") {
+      throw new Error("Backend sent contradictory done terminal semantics.");
+    }
+    return { kind: "done" };
+  }
+  if (hasCancellation) {
+    if (
+      !hasError ||
+      (data.name !== undefined && typeof data.name !== "string") ||
+      keys.some((key) => !["cancelled", "error", "name"].includes(key))
+    ) {
+      throw new Error(
+        "Backend sent malformed cancellation terminal semantics.",
+      );
+    }
+    const error = new Error(data.error as string);
+    error.name =
+      typeof data.name === "string" ? data.name : "WriteCancelledError";
+    return { kind: "cancelled", error };
+  }
+  if (hasError) {
+    if (
+      (data.name !== undefined && typeof data.name !== "string") ||
+      keys.some((key) => !["error", "name"].includes(key))
+    ) {
+      throw new Error("Backend sent malformed error terminal semantics.");
+    }
+    const error = new Error(data.error as string);
+    error.name = typeof data.name === "string" ? data.name : "BackendError";
+    return { kind: "error", error };
+  }
+  if (
+    keys.join(",") !== "progress,stepId" ||
+    typeof data.stepId !== "string" ||
+    !installerSteps.has(data.stepId as InstallerStepId) ||
+    typeof data.progress !== "number" ||
+    !Number.isFinite(data.progress) ||
+    data.progress < 0 ||
+    data.progress > 1
+  ) {
+    throw new Error("Backend sent malformed progress event semantics.");
+  }
+  onProgress(data.stepId as InstallerStepId, data.progress);
+  return null;
 }

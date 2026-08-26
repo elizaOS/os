@@ -1,5 +1,5 @@
 // Implements platform-specific USB installer backend safety behavior.
-import type { ChildProcess } from "node:child_process";
+import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
@@ -12,6 +12,7 @@ import {
   LsblkParseError,
   NoPrivilegeEscalatorError,
   UnmountFailedError,
+  WriteCancelledError,
   WriteIncompleteError,
 } from "./errors";
 import {
@@ -25,6 +26,7 @@ import type {
   InstallerStepId,
   RemovableDrive,
   UsbInstallerBackend,
+  WriteExecutionOptions,
   WritePlan,
   WriteRequest,
 } from "./types";
@@ -472,7 +474,11 @@ export interface LinuxBackendDeps {
     args: readonly string[],
   ) => Promise<ExecFileResult>;
   /** Override `spawn` for the dd subprocess. Must return a ChildProcess-like with stderr emitter and on('close'|'error') support. */
-  spawn?: (command: string, args: readonly string[]) => ChildProcess;
+  spawn?: (
+    command: string,
+    args: readonly string[],
+    options?: SpawnOptions,
+  ) => ChildProcess;
   /** Override the resolve-image step (download/access check). Default: real fs+http. */
   resolveImage?: (
     image: ElizaOsImage,
@@ -492,19 +498,29 @@ export interface LinuxBackendDeps {
     image: ElizaOsImage,
     drive: RemovableDrive,
     onProgress: (step: InstallerStepId, progress: number) => void,
+    options?: WriteExecutionOptions,
   ) => Promise<void>;
 }
 
 function childCompletion(process: ChildProcess, label: string): Promise<void> {
   let stderr = "";
+  let childError: Error | undefined;
   process.stderr?.on("data", (chunk: Buffer) => {
     const remaining = 16_384 - stderr.length;
     if (remaining > 0) stderr += chunk.toString().slice(0, remaining);
   });
   return new Promise((resolve, reject) => {
-    process.once("error", reject);
+    // `close` is the authoritative lifecycle boundary: Node emits it after
+    // either exit or spawn/error and after stdio has closed. Recording `error`
+    // without settling here prevents a kill/send failure from unlocking the
+    // target while a privileged descendant can still be alive.
+    process.once("error", (error) => {
+      childError = error;
+    });
     process.once("close", (code) => {
-      if (code === 0) {
+      if (childError) {
+        reject(childError);
+      } else if (code === 0) {
         resolve();
       } else {
         reject(
@@ -517,17 +533,83 @@ function childCompletion(process: ChildProcess, label: string): Promise<void> {
   });
 }
 
+interface TrackedChild {
+  child: ChildProcess;
+  completion: Promise<void>;
+  settled: boolean;
+}
+
+function signalChildProcessGroup(
+  child: ChildProcess,
+  signal: NodeJS.Signals,
+): void {
+  if (
+    process.platform !== "win32" &&
+    Number.isSafeInteger(child.pid) &&
+    (child.pid ?? 0) > 0
+  ) {
+    try {
+      process.kill(-(child.pid as number), signal);
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+      // Fall through to the direct child when a constrained host prevents a
+      // process-group signal. sudo/pkexec/doas are responsible for forwarding
+      // this signal to the privileged command they supervise.
+    }
+  }
+  try {
+    child.kill(signal);
+  } catch {
+    // Cleanup waits for the authoritative close/error event. If the wrapper
+    // cannot be signalled directly, do not falsely report it as terminated.
+  }
+}
+
+async function terminateTrackedChildren(
+  children: Set<TrackedChild>,
+): Promise<void> {
+  const snapshot = [...children].filter((tracked) => !tracked.settled);
+  if (snapshot.length === 0) return;
+
+  for (const { child } of snapshot) signalChildProcessGroup(child, "SIGTERM");
+  const completed = Promise.allSettled(
+    snapshot.map(({ completion }) => completion),
+  );
+  let graceTimer: ReturnType<typeof setTimeout> | undefined;
+  const graceExpired = await Promise.race([
+    completed.then(() => false),
+    new Promise<true>((resolve) => {
+      graceTimer = setTimeout(() => resolve(true), 2_000);
+    }),
+  ]);
+  if (graceTimer) clearTimeout(graceTimer);
+  if (graceExpired) {
+    for (const tracked of snapshot) {
+      if (!tracked.settled) signalChildProcessGroup(tracked.child, "SIGKILL");
+    }
+  }
+  // Do not report a terminal cancellation or release the target lock until
+  // every privileged wrapper/readback child has confirmed close/error.
+  await completed;
+}
+
 export async function writeCanonicalRawImageToLinuxDevice(
   image: ElizaOsImage,
   drive: RemovableDrive,
   escalator: PrivilegeEscalator,
-  spawnFn: (command: string, args: readonly string[]) => ChildProcess,
+  spawnFn: (
+    command: string,
+    args: readonly string[],
+    options?: SpawnOptions,
+  ) => ChildProcess,
   execFileFn: (
     command: string,
     args: readonly string[],
   ) => Promise<ExecFileResult>,
   onProgress: (step: InstallerStepId, progress: number) => void,
   rawWriter: typeof writeVerifiedRawImage = writeVerifiedRawImage,
+  options: WriteExecutionOptions = {},
 ): Promise<void> {
   if (escalator.command === "kdesu") {
     throw new Error(
@@ -535,53 +617,94 @@ export async function writeCanonicalRawImageToLinuxDevice(
     );
   }
 
-  let writeCompletion: Promise<void> | undefined;
+  let writeProcess: TrackedChild | undefined;
+  const activeChildren = new Set<TrackedChild>();
+  const trackChild = (child: ChildProcess, label: string): TrackedChild => {
+    const tracked: TrackedChild = {
+      child,
+      completion: Promise.resolve(),
+      settled: false,
+    };
+    tracked.completion = childCompletion(child, label).finally(() => {
+      tracked.settled = true;
+      activeChildren.delete(tracked);
+    });
+    // Observe rejection immediately; the owning operation awaits the same
+    // promise at sync/readback or during cleanup and still receives the error.
+    void tracked.completion.catch(() => {});
+    activeChildren.add(tracked);
+    return tracked;
+  };
+  let termination = Promise.resolve();
+  const requestTermination = () => {
+    // Run a fresh sweep every time. An abort can race the transition from
+    // download to privileged spawn; the catch-path sweep must include children
+    // that appeared after the signal handler's initial empty snapshot.
+    termination = termination.then(() =>
+      terminateTrackedChildren(activeChildren),
+    );
+    return termination;
+  };
+  const onAbort = () => {
+    void requestTermination().catch(() => {});
+  };
+  options.signal?.addEventListener("abort", onAbort, { once: true });
   const target: RawImageTarget = {
     stableId: drive.stableId ?? drive.devicePath,
     capacityBytes: drive.sizeBytes,
     openWriteStream() {
-      if (writeCompletion)
+      if (writeProcess)
         throw new Error("Raw image write stream was opened twice.");
-      const process = spawnFn(escalator.command, [
-        ...escalator.argsPrefix,
-        "dd",
-        `of=${drive.devicePath}`,
-        "bs=4M",
-        "status=none",
-        "conv=fsync",
-      ]);
-      if (!process.stdin) {
-        process.kill();
+      const child = spawnFn(
+        escalator.command,
+        [
+          ...escalator.argsPrefix,
+          "dd",
+          `of=${drive.devicePath}`,
+          "bs=4M",
+          "status=none",
+          "conv=fsync",
+        ],
+        { detached: process.platform !== "win32" },
+      );
+      if (!child.stdin) {
+        child.kill();
         throw new Error("Privileged raw image writer did not expose stdin.");
       }
-      process.stdin.once("close", () => {
-        if (!process.stdin?.writableFinished) process.kill();
+      child.stdin.once("close", () => {
+        if (!child.stdin?.writableFinished) {
+          signalChildProcessGroup(child, "SIGTERM");
+        }
       });
-      writeCompletion = childCompletion(process, "privileged raw image write");
-      return process.stdin;
+      writeProcess = trackChild(child, "privileged raw image write");
+      return child.stdin;
     },
     openReadbackStream(byteLength: number) {
-      const process = spawnFn(escalator.command, [
-        ...escalator.argsPrefix,
-        "dd",
-        `if=${drive.devicePath}`,
-        "bs=4M",
-        "iflag=count_bytes",
-        `count=${byteLength}`,
-        "status=none",
-      ]);
-      const stdout = process.stdout;
+      const child = spawnFn(
+        escalator.command,
+        [
+          ...escalator.argsPrefix,
+          "dd",
+          `if=${drive.devicePath}`,
+          "bs=4M",
+          "iflag=count_bytes",
+          `count=${byteLength}`,
+          "status=none",
+        ],
+        { detached: process.platform !== "win32" },
+      );
+      const stdout = child.stdout;
       if (!stdout) {
-        process.kill();
+        child.kill();
         throw new Error("Privileged raw image readback did not expose stdout.");
       }
       stdout.once("close", () => {
-        if (!stdout.readableEnded) process.kill();
+        if (!stdout.readableEnded) signalChildProcessGroup(child, "SIGTERM");
       });
-      const completion = childCompletion(
-        process,
+      const completion = trackChild(
+        child,
         "privileged raw image readback",
-      );
+      ).completion;
       return Readable.from(
         (async function* verifiedReadback() {
           for await (const chunk of stdout) yield chunk;
@@ -590,8 +713,8 @@ export async function writeCanonicalRawImageToLinuxDevice(
       );
     },
     async sync() {
-      if (!writeCompletion) throw new Error("Raw image write never started.");
-      await writeCompletion;
+      if (!writeProcess) throw new Error("Raw image write never started.");
+      await writeProcess.completion;
       await execFileFn(escalator.command, [
         ...escalator.argsPrefix,
         "sync",
@@ -604,19 +727,28 @@ export async function writeCanonicalRawImageToLinuxDevice(
   onProgress("checksum", 0);
   onProgress("write", 0);
   onProgress("verify", 0);
-  await rawWriter(image, target, {
-    onProgress(phase, completed, total) {
-      const progress = total > 0 ? Math.min(completed / total, 1) : 0;
-      if (phase === "download") {
-        onProgress("resolve-image", progress);
-        if (progress === 1) onProgress("checksum", 1);
-      } else if (phase === "decompress-write") {
-        onProgress("write", progress);
-      } else {
-        onProgress("verify", progress);
-      }
-    },
-  });
+  try {
+    await rawWriter(image, target, {
+      ...(options.signal ? { signal: options.signal } : {}),
+      onProgress(phase, completed, total) {
+        const progress = total > 0 ? Math.min(completed / total, 1) : 0;
+        if (phase === "download") {
+          onProgress("resolve-image", progress);
+          if (progress === 1) onProgress("checksum", 1);
+        } else if (phase === "decompress-write") {
+          onProgress("write", progress);
+        } else {
+          onProgress("verify", progress);
+        }
+      },
+    });
+  } catch (error) {
+    await requestTermination();
+    if (options.signal?.aborted) throw new WriteCancelledError();
+    throw error;
+  } finally {
+    options.signal?.removeEventListener("abort", onAbort);
+  }
   onProgress("resolve-image", 1);
   onProgress("checksum", 1);
   onProgress("write", 1);
@@ -625,6 +757,7 @@ export async function writeCanonicalRawImageToLinuxDevice(
 
 export class LinuxUsbInstallerBackend implements UsbInstallerBackend {
   readonly canonicalRawZstdSupported = true;
+  readonly canonicalWriteCancellationSupported = true;
   private readonly deps: LinuxBackendDeps;
 
   constructor(deps: LinuxBackendDeps = {}) {
@@ -714,7 +847,9 @@ export class LinuxUsbInstallerBackend implements UsbInstallerBackend {
   async executeWritePlan(
     plan: WritePlan,
     onProgress: (step: InstallerStepId, progress: number) => void,
+    options: WriteExecutionOptions = {},
   ): Promise<void> {
+    options.signal?.throwIfAborted();
     assertWritePlanAllowed(plan, { canonicalRawZstdSupported: true });
 
     const { image, drive } = plan;
@@ -727,7 +862,16 @@ export class LinuxUsbInstallerBackend implements UsbInstallerBackend {
         const r = await execFileAsync(cmd, [...args]);
         return { stdout: r.stdout.toString(), stderr: r.stderr.toString() };
       });
-    const spawnFn = this.deps.spawn ?? spawn;
+    const spawnFn =
+      this.deps.spawn ??
+      ((
+        command: string,
+        args: readonly string[],
+        spawnOptions?: SpawnOptions,
+      ) =>
+        spawnOptions
+          ? spawn(command, [...args], spawnOptions)
+          : spawn(command, [...args]));
     const findEscalatorFn = this.deps.findEscalator ?? findPrivilegeEscalator;
     const heartbeatInterval = this.deps.heartbeatIntervalMs ?? 1_000;
     const heartbeatStall = this.deps.heartbeatStallMs ?? 5_000;
@@ -825,7 +969,7 @@ export class LinuxUsbInstallerBackend implements UsbInstallerBackend {
     if (isCanonicalRawImage) {
       const writer = this.deps.writeCanonicalRawImage;
       if (writer) {
-        await writer(image, drive, onProgress);
+        await writer(image, drive, onProgress, options);
       } else {
         await writeCanonicalRawImageToLinuxDevice(
           image,
@@ -834,6 +978,8 @@ export class LinuxUsbInstallerBackend implements UsbInstallerBackend {
           spawnFn,
           execFileFn,
           onProgress,
+          writeVerifiedRawImage,
+          options,
         );
       }
       onProgress("complete", 1);

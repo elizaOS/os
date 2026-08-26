@@ -79,6 +79,7 @@ export interface WriteRequest {
 
 export interface WritePlan {
   planId?: string;
+  cancellationSupported?: boolean;
   request: WriteRequest;
   drive: RemovableDrive;
   image: ElizaOsImage;
@@ -86,14 +87,23 @@ export interface WritePlan {
   privilegedWriteImplemented: boolean;
 }
 
+export interface WriteExecutionOptions {
+  signal?: AbortSignal;
+}
+
 export interface UsbInstallerBackend {
   /** True only when this backend streams, verifies, expands, and reads back raw.zst media. */
   readonly canonicalRawZstdSupported?: boolean;
+  /** True only when canonical raw.zst execution honors WriteExecutionOptions.signal. */
+  readonly canonicalWriteCancellationSupported?: boolean;
   listRemovableDrives(): Promise<RemovableDrive[]>;
   listImages(): Promise<ElizaOsImage[]>;
   createWritePlan(request: WriteRequest): Promise<WritePlan>;
   executeWritePlan?(
     plan: WritePlan,
     onProgress: (step: InstallerStepId, progress: number) => void,
+    options?: WriteExecutionOptions,
   ): Promise<void>;
+  /** Request cancellation of an execution already accepted by the backend. */
+  cancelWritePlan?(plan: WritePlan): Promise<void>;
 }

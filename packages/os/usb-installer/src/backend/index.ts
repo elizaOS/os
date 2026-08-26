@@ -43,6 +43,7 @@ export type {
   PlatformId,
   RemovableDrive,
   UsbInstallerBackend,
+  WriteExecutionOptions,
   WritePlan,
   WriteRequest,
 } from "./types";

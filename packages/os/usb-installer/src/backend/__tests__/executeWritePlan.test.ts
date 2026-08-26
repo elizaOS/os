@@ -1,7 +1,11 @@
 // Exercises USB installer backend safety and platform behavior.
 import type { ChildProcess } from "node:child_process";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { PassThrough, Readable } from "node:stream";
+import { promises as fs } from "node:fs";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
+import { PassThrough, Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { describe, expect, it } from "vitest";
 import {
@@ -16,6 +20,10 @@ import {
   type PrivilegeEscalator,
   writeCanonicalRawImageToLinuxDevice,
 } from "../linux-backend";
+import {
+  createArtifactSignaturePayload,
+  writeVerifiedRawImage,
+} from "../raw-image-pipeline";
 import type {
   ElizaOsImage,
   InstallerStepId,
@@ -164,6 +172,128 @@ function makeExecMock(opts: ExecMockOptions) {
 // --- tests -----------------------------------------------------------------
 
 describe("LinuxUsbInstallerBackend.executeWritePlan", () => {
+  it("cancels the real pipeline only after the privileged writer confirms termination", async () => {
+    const keyPair = generateKeyPairSync("ed25519");
+    const bytes = Buffer.from("canonical raw bytes".repeat(4096));
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    const compressed = Buffer.from("synthetic compressed input");
+    const compressedDigest = createHash("sha256")
+      .update(compressed)
+      .digest("hex");
+    const rawImage: ElizaOsImage = {
+      ...image,
+      url: "https://example.test/elizaos.raw.zst",
+      signatureUrl: "https://example.test/elizaos.raw.zst.sig",
+      format: "raw.zst",
+      checksumSha256: compressedDigest,
+      sha256Compressed: compressedDigest,
+      sha256Expanded: digest,
+      compressedSize: compressed.length,
+      expandedSize: bytes.length,
+      sizeBytes: compressed.length,
+      minDeviceBytes: bytes.length,
+      minUsbSizeBytes: bytes.length,
+      product: "elizaOS",
+      schemaVersion: 1,
+      sequence: 1,
+      expires: "2027-01-01T00:00:00.000Z",
+    };
+    const signature = sign(
+      null,
+      createArtifactSignaturePayload(rawImage),
+      keyPair.privateKey,
+    );
+    const temporaryRoot = await fs.mkdtemp(
+      path.join(tmpdir(), "eliza-cancel-production-test-"),
+    );
+    const controller = new AbortController();
+    let childClosed = false;
+    let terminationRequested = false;
+    let resolveSpawned!: () => void;
+    const spawned = new Promise<void>((resolve) => {
+      resolveSpawned = resolve;
+    });
+    const spawn = (
+      _command: string,
+      _args: readonly string[],
+      options?: import("node:child_process").SpawnOptions,
+    ): ChildProcess => {
+      expect(options?.detached).toBe(process.platform !== "win32");
+      const child = new EventEmitter() as ChildProcess;
+      const stdin = new PassThrough();
+      const stdout = new PassThrough();
+      const stderr = new PassThrough();
+      Object.assign(child, {
+        stdin,
+        stdout,
+        stderr,
+        kill: () => {
+          if (!terminationRequested) {
+            terminationRequested = true;
+            setTimeout(() => {
+              childClosed = true;
+              child.emit("close", null, "SIGTERM");
+            }, 30);
+          }
+          return true;
+        },
+      });
+      resolveSpawned();
+      return child;
+    };
+    const rawWriter: typeof writeVerifiedRawImage = (
+      selectedImage,
+      target,
+      options = {},
+    ) =>
+      writeVerifiedRawImage(selectedImage, target, {
+        ...options,
+        publicKey: keyPair.publicKey,
+        temporaryRoot,
+        createDecompressor: () =>
+          new Transform({
+            transform(_chunk, _encoding, callback) {
+              callback();
+            },
+            flush(callback) {
+              this.push(bytes);
+              callback();
+            },
+          }),
+        fetcher: async (input) =>
+          String(input).endsWith(".sig")
+            ? new Response(Uint8Array.from(signature).buffer)
+            : new Response(Uint8Array.from(compressed).buffer, {
+                headers: { "content-length": String(compressed.length) },
+              }),
+      });
+
+    try {
+      const execution = writeCanonicalRawImageToLinuxDevice(
+        rawImage,
+        drive,
+        escalator,
+        spawn,
+        makeExecMock({ calls: [] }),
+        () => {},
+        rawWriter,
+        { signal: controller.signal },
+      );
+      await spawned;
+      controller.abort(new Error("operator cancellation"));
+
+      await expect(execution).rejects.toMatchObject({
+        name: "WriteCancelledError",
+        message: expect.stringContaining("Media is incomplete"),
+      });
+      expect(terminationRequested).toBe(true);
+      expect(childClosed).toBe(true);
+      await expect(fs.readdir(temporaryRoot)).resolves.toEqual([]);
+    } finally {
+      await fs.rm(temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
   it("streams privileged raw bytes and reads back the exact expanded length", async () => {
     const expanded = Buffer.from("expanded raw disk bytes");
     const written: Buffer[] = [];
@@ -197,7 +327,9 @@ describe("LinuxUsbInstallerBackend.executeWritePlan", () => {
     const rawWriter = async (
       _image: ElizaOsImage,
       target: import("../raw-image-pipeline").RawImageTarget,
+      options: import("../raw-image-pipeline").RawImagePipelineOptions = {},
     ) => {
+      expect(options.signal).toBe(abortController.signal);
       await pipeline(Readable.from(expanded), target.openWriteStream());
       await target.sync();
       const readback: Buffer[] = [];
@@ -215,6 +347,7 @@ describe("LinuxUsbInstallerBackend.executeWritePlan", () => {
         releaseKeyFingerprint: image.checksumSha256,
       };
     };
+    const abortController = new AbortController();
 
     await writeCanonicalRawImageToLinuxDevice(
       image,
@@ -224,6 +357,7 @@ describe("LinuxUsbInstallerBackend.executeWritePlan", () => {
       makeExecMock({ calls: execCalls }),
       () => {},
       rawWriter,
+      { signal: abortController.signal },
     );
 
     expect(spawnCalls).toHaveLength(2);
