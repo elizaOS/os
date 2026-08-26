@@ -236,12 +236,12 @@ function imageEntryExists(aospRoot, imagePath, entryPath) {
 
 // The staged vendor/build.prop is what vendor.img is packaged from; verifying
 // it (rather than the source tree) catches the built-before-edited hazard.
-function assertStagedRenderEngine(productDir, stagedVendorDir, stamp) {
+function assertStagedRenderEngine(aospRoot, productDir, stagedVendorDir, stamp) {
   const buildProp = path.join(stagedVendorDir, "build.prop");
   const contents = fs.existsSync(buildProp)
     ? fs.readFileSync(buildProp, "utf8")
     : readImageEntry(
-        path.resolve(productDir, "../../../../"),
+        aospRoot,
         path.join(productDir, "vendor.img"),
         "/build.prop",
       );
@@ -286,7 +286,7 @@ function assertStagedRenderEngine(productDir, stagedVendorDir, stamp) {
     ];
     const stagedAngle = angleCandidates.some((candidate) => fs.existsSync(candidate));
     const imageAngle = imageEntryExists(
-      path.resolve(productDir, "../../../../"),
+      aospRoot,
       path.join(productDir, "system.img"),
       "/lib64/libEGL_angle.so",
     );
@@ -324,13 +324,13 @@ function assertOneFstabStance(fstabPath, stamp, label) {
   }
 }
 
-function assertStagedFstab(productDir, stagedVendorDir, stamp) {
+function assertStagedFstab(aospRoot, productDir, stagedVendorDir, stamp) {
   const fstab = path.join(stagedVendorDir, "etc", "fstab.malibu");
   if (fs.existsSync(fstab)) {
     assertOneFstabStance(fstab, stamp, "vendor");
   } else {
     const imageFstab = readImageEntry(
-      path.resolve(productDir, "../../../../"),
+      aospRoot,
       path.join(productDir, "vendor.img"),
       "/etc/fstab.malibu",
     );
@@ -394,7 +394,7 @@ function assertStagedProbes(aospRoot, productDir, stagedVendorDir, stamp) {
   info(`staged bring-up probes verified (enabled=${stamp.earlyBootProbes})`);
 }
 
-function assertStagedKeymaster(productDir, stamp) {
+function assertStagedKeymaster(aospRoot, productDir, stamp) {
   const initPath = path.join(
     productDir,
     "system",
@@ -406,7 +406,7 @@ function assertStagedKeymaster(productDir, stamp) {
   const contents = fs.existsSync(initPath)
     ? fs.readFileSync(initPath, "utf8")
     : readImageEntry(
-        path.resolve(productDir, "../../../../"),
+        aospRoot,
         path.join(productDir, "system.img"),
         "/etc/init/hw/init.rc",
       );
@@ -508,10 +508,10 @@ function attest({ aospRoot, out }) {
     fail(`product out dir missing: ${productDir}; build first`);
   }
   const stagedVendorDir = path.join(productDir, "vendor");
-  assertStagedRenderEngine(productDir, stagedVendorDir, stamp);
-  assertStagedFstab(productDir, stagedVendorDir, stamp);
+  assertStagedRenderEngine(aospRoot, productDir, stagedVendorDir, stamp);
+  assertStagedFstab(aospRoot, productDir, stagedVendorDir, stamp);
   assertStagedProbes(aospRoot, productDir, stagedVendorDir, stamp);
-  assertStagedKeymaster(productDir, stamp);
+  assertStagedKeymaster(aospRoot, productDir, stamp);
   checkElfAlignment(aospRoot, productDir);
 
   // The conservative-f2fs stance ships inside vendor_boot's vendor_ramdisk;
