@@ -21,12 +21,14 @@ enumeration, privileged writes, and platform subprocesses stay server-side.
   expiry, compressed and expanded sizes and hashes, minimum device size, and a
   detached artifact signature URL.
 - Verifies Ed25519 over the exact manifest response bytes before decoding or
-  parsing. `ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64` is a mandatory
-  build/release and runtime input; there is no committed development key or
+  parsing. `ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64` and its independently
+  reviewed `ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256` are mandatory
+  build/release and runtime inputs; there is no committed development key or
   unsigned fallback. Production packaging runs `verify:release-key` first and
-  embeds that public key into the Bun bundle; the compiled pin takes precedence
-  over any runtime environment value. Source/dev execution reads the same key
-  from the environment.
+  embeds the public key, fingerprint, and canonical optional
+  `ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S` list into the Bun
+  bundle. The compiled policy takes precedence over runtime environment values.
+  Source/dev execution reads the same policy from the environment.
 - Persists the highest accepted signed sequence per channel and architecture at
   the absolute path in `ELIZAOS_RELEASE_SEQUENCE_STATE_PATH`. The packaged app
   provisions a per-user Application Support/state path unless an explicit path

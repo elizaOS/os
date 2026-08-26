@@ -27,6 +27,8 @@ const IMAGE_SIZE = 4 * 1024 ** 2;
 const previousRawWriteGate = process.env.ELIZAOS_USB_ENABLE_RAW_WRITE;
 const previousReleaseKey =
   process.env.ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64;
+const previousReleaseKeyFingerprint =
+  process.env.ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256;
 const originalFetch = globalThis.fetch;
 
 let loadedScsiDebug = false;
@@ -215,6 +217,12 @@ afterEach(async () => {
     process.env.ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64 =
       previousReleaseKey;
   }
+  if (previousReleaseKeyFingerprint === undefined) {
+    delete process.env.ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256;
+  } else {
+    process.env.ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256 =
+      previousReleaseKeyFingerprint;
+  }
   globalThis.fetch = originalFetch;
 
   await Promise.allSettled(
@@ -250,10 +258,14 @@ describe("Linux USB installer virtual block-device E2E", () => {
       }
       const compressedBytes = await zstd(sourceBytes);
       const keyPair = generateKeyPairSync("ed25519");
+      const publicKeyDer = keyPair.publicKey.export({
+        type: "spki",
+        format: "der",
+      });
       process.env.ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64 =
-        keyPair.publicKey
-          .export({ type: "spki", format: "der" })
-          .toString("base64");
+        publicKeyDer.toString("base64");
+      process.env.ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256 =
+        sha256(publicKeyDer);
 
       const imageId = `virtual-block-e2e-${process.pid}-${Date.now()}`;
 

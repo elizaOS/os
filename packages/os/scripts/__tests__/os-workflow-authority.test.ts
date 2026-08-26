@@ -580,8 +580,24 @@ describe("OS release workflow authority", () => {
     expect(source).toContain("verify-mkosi-promotion-evidence.mjs");
     expect(source).toContain("sign-image-release.mjs");
     expect(source).toContain("verify-image-release.mjs");
+    expect(source).toContain("--require-private-root");
+    expect(source).toContain('--publish-root "$WORK_ROOT/publish"');
+    expect(source).toContain("name: Seal private offline signing root");
+    expect(source).toContain('chmod 0700 -- "$WORK_ROOT/unsigned"');
+    expect(source).toContain(
+      'test "$(stat -c \'%a\' -- "$WORK_ROOT/unsigned")" = 700',
+    );
+    expect(source).not.toContain('mkdir -p "$WORK_ROOT/publish/metadata"');
+    expect(source).not.toMatch(
+      /cp --[\s\\]*\n[\s\S]{0,300}\$WORK_ROOT\/unsigned\/elizaos-\$\{\{ inputs\.version \}\}-images\.json/,
+    );
+    expect(source).not.toMatch(
+      /cp --[\s\S]{0,300}\$WORK_ROOT\/unsigned\/elizaos-\$\{\{ inputs\.version \}\}-\$\{architecture\}\.raw\.zst(?:"|\\)/,
+    );
     expect(source).toContain("ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256");
-    expect(source).toContain("ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S");
+    expect(source).toContain(
+      "ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S",
+    );
     expect(source).toContain(
       'boot_evidence="mkosi-release-build,qemu-uefi-usb,persistent-reboot,usb-expanded-readback,slsa-provenance"',
     );
@@ -846,11 +862,7 @@ describe("OS release workflow authority", () => {
     for (const obsolete of ["install", "postinst", "prerm"]) {
       expect(
         existsSync(
-          join(
-            repositoryRoot,
-            "packages/os/linux/packaging/debian",
-            obsolete,
-          ),
+          join(repositoryRoot, "packages/os/linux/packaging/debian", obsolete),
         ),
       ).toBe(false);
     }
@@ -898,6 +910,16 @@ describe("OS release workflow authority", () => {
     expect(usbSource).toContain(
       "secrets.ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64",
     );
+    expect(usbSource).toContain(
+      "secrets.ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256",
+    );
+    expect(usbSource).toContain(
+      "secrets.ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S",
+    );
+    expect(usbSource).toContain(
+      "release public key does not match independently reviewed fingerprint",
+    );
+    expect(usbSource).toContain("release public key is revoked");
     expect(usbSource).toContain("ephemeral validation-only release trust root");
   });
 

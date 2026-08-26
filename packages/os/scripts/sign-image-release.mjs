@@ -12,7 +12,6 @@ import {
 } from "node:crypto";
 import { constants, writeSync } from "node:fs";
 import {
-  link,
   lstat,
   mkdir,
   open,
@@ -121,10 +120,10 @@ async function trustedArtifactDirectory(root) {
       pathStats.isSymbolicLink() ||
       canonical !== root ||
       stats.uid !== BigInt(process.geteuid()) ||
-      (stats.mode & 0o22n) !== 0n
+      (stats.mode & 0o777n) !== 0o700n
     ) {
       throw new Error(
-        "--artifact-root must be a signer-owned, non-symlink, non-group/world-writable directory",
+        "--artifact-root must be an unpublished signer-owned mode-0700 directory",
       );
     }
     const parentPath = path.dirname(root);
@@ -177,9 +176,28 @@ async function validateArtifactDirectory(root, trusted) {
     canonical !== root ||
     !stats.isDirectory() ||
     stats.uid !== trusted.stats.uid ||
-    (stats.mode & 0o22n) !== 0n
+    (stats.mode & 0o777n) !== 0o700n
   ) {
     throw new Error("artifact root or its parent changed during signing");
+  }
+}
+
+async function refuseUnfinishedStages(root) {
+  const unfinished = (await readdir(root)).filter((name) =>
+    name.startsWith(".elizaos-release-stage-"),
+  );
+  if (unfinished.length > 0) {
+    throw new Error(
+      `unfinished unpublished signing state requires operator recovery: discard the private artifact root and restart from reviewed inputs (${unfinished.join(", ")})`,
+    );
+  }
+}
+
+async function syncDirectory(handle, label) {
+  try {
+    await handle.sync();
+  } catch (error) {
+    throw new Error(`could not durably sync ${label}`, { cause: error });
   }
 }
 
@@ -498,52 +516,109 @@ async function validateExistingOutputs(stagedOutputs, existingOutputs) {
   }
 }
 
+async function publishHeldOutput(staged) {
+  const bytes = await readStagedBytes(staged);
+  const handle = await open(
+    staged.filePath,
+    constants.O_RDWR |
+      constants.O_CREAT |
+      constants.O_EXCL |
+      constants.O_NOFOLLOW,
+    0o400,
+  );
+  try {
+    const before = await handle.stat({ bigint: true });
+    if (!before.isFile() || before.nlink !== 1n) {
+      throw new Error(
+        `published release output is not a private regular file: ${staged.filePath}`,
+      );
+    }
+    await handle.writeFile(bytes);
+    await handle.sync();
+    const [after, pathStats] = await Promise.all([
+      handle.stat({ bigint: true }),
+      lstat(staged.filePath, { bigint: true }),
+    ]);
+    if (
+      !after.isFile() ||
+      after.nlink !== 1n ||
+      after.uid !== BigInt(process.geteuid()) ||
+      (after.mode & 0o777n) !== 0o400n ||
+      after.size !== BigInt(bytes.length) ||
+      !sameStableFileIdentity(after, pathStats) ||
+      !pathStats.isFile() ||
+      pathStats.isSymbolicLink()
+    ) {
+      throw new Error(`published release output changed: ${staged.filePath}`);
+    }
+    return { ...staged, publishedHandle: handle, publishedStats: after };
+  } catch (error) {
+    await handle.close().catch(() => {});
+    throw error;
+  }
+}
+
+async function validatePublishedOutput(published) {
+  const bytes = Buffer.alloc(published.bytes.length);
+  let offset = 0;
+  while (offset < bytes.length) {
+    const { bytesRead } = await published.publishedHandle.read(
+      bytes,
+      offset,
+      bytes.length - offset,
+      offset,
+    );
+    if (bytesRead === 0) break;
+    offset += bytesRead;
+  }
+  const [handleStats, pathStats] = await Promise.all([
+    published.publishedHandle.stat({ bigint: true }),
+    lstat(published.filePath, { bigint: true }),
+  ]);
+  if (
+    offset !== bytes.length ||
+    !bytes.equals(published.bytes) ||
+    !sameFileState(published.publishedStats, handleStats) ||
+    !sameFileState(published.publishedStats, pathStats) ||
+    !pathStats.isFile() ||
+    pathStats.isSymbolicLink()
+  ) {
+    throw new Error(`published release output changed: ${published.filePath}`);
+  }
+}
+
 async function promoteReleaseSet(
   stage,
   stagedOutputs,
   existingOutputs,
-  validateBeforeCommit,
+  rootHandle,
+  validateReleaseSet,
 ) {
-  const backups = [];
   const promoted = [];
+  let publicationAttempted = false;
   try {
     await validateStage(stage);
     await validateExistingOutputs(stagedOutputs, existingOutputs);
-    for (let index = 0; index < stagedOutputs.length; index += 1) {
-      const staged = stagedOutputs[index];
-      const existing = existingOutputs.get(staged.filePath);
-      if (!existing) continue;
-      const backupPath = path.join(stage.path, `backup-${index}`);
-      await link(staged.filePath, backupPath);
-      const backupStats = await lstat(backupPath, { bigint: true });
-      backups.push({
-        filePath: staged.filePath,
-        backupPath,
-        stats: backupStats,
-      });
-      const currentStats = await lstat(staged.filePath, { bigint: true });
-      if (
-        !sameStableFileIdentity(existing, backupStats) ||
-        !sameStableFileIdentity(existing, currentStats)
-      ) {
+    for (const [filePath, existing] of existingOutputs) {
+      if (existing) {
         throw new Error(
-          `release output changed during backup: ${staged.filePath}`,
+          `immutable release output already exists; use a fresh private artifact root: ${filePath}`,
         );
       }
-      await unlink(staged.filePath);
     }
-    for (const staged of stagedOutputs) {
+
+    // The manifest is the commit marker for this private offline release set.
+    // Publish every detached signature first and the manifest last. A killed or
+    // failed signer therefore cannot leave a verifier-visible mixed release.
+    const manifest = stagedOutputs.at(-2);
+    const beforeManifest = stagedOutputs.filter((entry) => entry !== manifest);
+    for (const staged of beforeManifest) {
       await validateStage(stage);
       await validateStagedOutput(staged);
-      await link(staged.stagedPath, staged.filePath);
-      promoted.push(staged);
-      const promotedStats = await lstat(staged.filePath, { bigint: true });
-      if (!sameStableFileIdentity(staged.stats, promotedStats)) {
-        throw new Error(
-          `release output changed during promotion: ${staged.filePath}`,
-        );
-      }
-      await unlink(staged.stagedPath);
+      await testCheckpoint(`before-output-publish-${promoted.length}`);
+      publicationAttempted = true;
+      promoted.push(await publishHeldOutput(staged));
+      await syncDirectory(rootHandle, "private artifact root");
       const failAfter = Number(
         Reflect.get(process.env, "ELIZAOS_RELEASE_TEST_FAIL_PROMOTION_AFTER") ??
           0,
@@ -556,58 +631,45 @@ async function promoteReleaseSet(
         throw new Error("injected release-set promotion failure");
       }
     }
-    await validateBeforeCommit();
+    await validateReleaseSet();
+    await testCheckpoint("before-manifest-commit");
+    await validateStage(stage);
+    await validateStagedOutput(manifest);
+    for (const published of promoted) {
+      await validatePublishedOutput(published);
+    }
+    promoted.push(await publishHeldOutput(manifest));
+    await syncDirectory(rootHandle, "committed private artifact root");
+    await testCheckpoint("after-manifest-root-sync");
+    await testCheckpoint("after-manifest-commit");
+    await validateReleaseSet();
+    for (const published of promoted) {
+      await validatePublishedOutput(published);
+    }
   } catch (error) {
-    const rollbackErrors = [];
-    for (const staged of [...promoted].reverse()) {
-      try {
-        const current = await optionalLstat(staged.filePath, { bigint: true });
-        if (
-          !current ||
-          inodeIdentity(current) !== inodeIdentity(staged.stats)
-        ) {
-          throw new Error(`promoted output changed: ${staged.filePath}`);
-        }
-        await unlink(staged.filePath);
-      } catch (rollbackError) {
-        rollbackErrors.push(rollbackError);
-      }
-    }
-    for (const backup of backups.reverse()) {
-      try {
-        const occupied = await optionalLstat(backup.filePath, { bigint: true });
-        if (occupied) {
-          if (!sameStableFileIdentity(backup.stats, occupied)) {
-            throw new Error(
-              `cannot restore occupied output: ${backup.filePath}`,
-            );
-          }
-          await unlink(backup.backupPath);
-          continue;
-        }
-        const current = await lstat(backup.backupPath, { bigint: true });
-        if (!sameStableFileIdentity(backup.stats, current)) {
-          throw new Error(`release backup changed: ${backup.filePath}`);
-        }
-        await link(backup.backupPath, backup.filePath);
-        await unlink(backup.backupPath);
-      } catch (rollbackError) {
-        rollbackErrors.push(rollbackError);
-      }
-    }
-    if (rollbackErrors.length > 0) {
-      throw new AggregateError(
-        [error, ...rollbackErrors],
-        "release-set promotion and rollback failed",
+    if (publicationAttempted) {
+      stage.preserve = true;
+      throw new Error(
+        `unpublished release-set commit failed; discard the private artifact root and restart from reviewed inputs; recovery state preserved at ${stage.path}: ${error.message}`,
+        { cause: error },
       );
     }
     throw error;
+  } finally {
+    await Promise.all(
+      promoted.map((published) =>
+        published.publishedHandle.close().catch(() => {}),
+      ),
+    );
   }
-  for (const backup of backups) await unlink(backup.backupPath);
 }
 
 async function cleanupStage(stage) {
   if (!stage) return;
+  if (stage.preserve) {
+    await stage.handle.close().catch(() => {});
+    return;
+  }
   try {
     const current = await optionalLstat(stage.path, { bigint: true });
     if (!current) return;
@@ -728,6 +790,7 @@ let stage;
 const stagedOutputs = [];
 let summary;
 try {
+  await refuseUnfinishedStages(root);
   for (const architecture of architectures) {
     const basename = `elizaos-${args.version}-${architecture}.raw.zst`;
     const compressedPath = path.join(root, basename);
@@ -841,30 +904,23 @@ try {
       await stageOutput(stage, index, outputFiles[index], outputBytes[index]),
     );
   }
+  await syncDirectory(stage.handle, "release staging directory");
   await verifyStagedRelease(stagedOutputs, artifacts, publicKey);
   await testCheckpoint("outputs-staged");
   await validateArtifactDirectory(root, trustedRoot);
   for (const input of inputFiles) await validateInput(input);
-  await promoteReleaseSet(stage, stagedOutputs, existingOutputs, async () => {
-    await testCheckpoint("outputs-promoted");
-    await validateArtifactDirectory(root, trustedRoot);
-    for (const input of inputFiles) await validateInput(input);
-    await validateStage(stage);
-    for (const staged of stagedOutputs) {
-      const [handleStats, outputStats] = await Promise.all([
-        staged.handle.stat({ bigint: true }),
-        lstat(staged.filePath, { bigint: true }),
-      ]);
-      if (
-        !sameStableFileIdentity(staged.stats, handleStats) ||
-        !sameStableFileIdentity(staged.stats, outputStats)
-      ) {
-        throw new Error(
-          `promoted release output changed before commit: ${staged.filePath}`,
-        );
-      }
-    }
-  });
+  await promoteReleaseSet(
+    stage,
+    stagedOutputs,
+    existingOutputs,
+    trustedRoot.handle,
+    async () => {
+      await testCheckpoint("outputs-promoted");
+      await validateArtifactDirectory(root, trustedRoot);
+      for (const input of inputFiles) await validateInput(input);
+      await validateStage(stage);
+    },
+  );
   summary = {
     manifest: output,
     publicKeySpkiBase64: publicKeyDer.toString("base64"),

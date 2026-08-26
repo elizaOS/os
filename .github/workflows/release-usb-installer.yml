@@ -152,30 +152,44 @@ jobs:
         env:
           REQUIRE_SIGNING: ${{ inputs.require_signing }}
           PRODUCTION_RELEASE_KEY: ${{ secrets.ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64 }}
+          PRODUCTION_RELEASE_KEY_FINGERPRINT: ${{ secrets.ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256 }}
+          PRODUCTION_REVOKED_RELEASE_KEYS: ${{ secrets.ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S }}
         run: |
           set -euo pipefail
           if [ "$REQUIRE_SIGNING" = true ]; then
-            if [ -z "$PRODUCTION_RELEASE_KEY" ]; then
-              echo "::error::ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64 is required for release packaging"
+            if [ -z "$PRODUCTION_RELEASE_KEY" ] || [ -z "$PRODUCTION_RELEASE_KEY_FINGERPRINT" ]; then
+              echo "::error::release public key and independently reviewed SPKI SHA-256 are required for release packaging"
               exit 1
             fi
             release_key="$PRODUCTION_RELEASE_KEY"
+            release_key_fingerprint="$PRODUCTION_RELEASE_KEY_FINGERPRINT"
+            revoked_release_keys="$PRODUCTION_REVOKED_RELEASE_KEYS"
           else
             # Unsigned PR/dispatch packages are validation artifacts only. Give
             # them a fresh, non-production trust root so the mandatory package
             # gate is exercised without exposing or silently substituting the
             # protected release identity.
             release_key="$(node -e 'const {generateKeyPairSync}=require("node:crypto"); const {publicKey}=generateKeyPairSync("ed25519"); process.stdout.write(publicKey.export({format:"der",type:"spki"}).toString("base64"))')"
+            release_key_fingerprint="$(RELEASE_KEY="$release_key" node -e 'const {createHash}=require("node:crypto"); process.stdout.write(createHash("sha256").update(Buffer.from(process.env.RELEASE_KEY,"base64")).digest("hex"))')"
+            revoked_release_keys=""
             echo "::notice::Using an ephemeral validation-only release trust root"
           fi
-          RELEASE_KEY="$release_key" node -e '
-            const {createPublicKey}=require("node:crypto");
+          RELEASE_KEY="$release_key" RELEASE_KEY_FINGERPRINT="$release_key_fingerprint" RELEASE_REVOKED_KEYS="$revoked_release_keys" node -e '
+            const {createHash,createPublicKey}=require("node:crypto");
             const encoded=process.env.RELEASE_KEY ?? "";
             if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) throw new Error("release public key is not canonical base64");
-            const key=createPublicKey({key:Buffer.from(encoded,"base64"),format:"der",type:"spki"});
+            const der=Buffer.from(encoded,"base64");
+            const key=createPublicKey({key:der,format:"der",type:"spki"});
             if (key.asymmetricKeyType !== "ed25519") throw new Error("release public key must be Ed25519");
+            const fingerprint=createHash("sha256").update(key.export({format:"der",type:"spki"})).digest("hex");
+            if (fingerprint !== process.env.RELEASE_KEY_FINGERPRINT) throw new Error("release public key does not match independently reviewed fingerprint");
+            const revoked=process.env.RELEASE_REVOKED_KEYS ? process.env.RELEASE_REVOKED_KEYS.split(",") : [];
+            if (new Set(revoked).size !== revoked.length || [...revoked].sort().join(",") !== process.env.RELEASE_REVOKED_KEYS || revoked.some(value => !/^[a-f0-9]{64}$/.test(value) || value === "0".repeat(64))) throw new Error("release revoked-key list is not canonical");
+            if (revoked.includes(fingerprint)) throw new Error("release public key is revoked");
           '
           echo "ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64=$release_key" >> "$GITHUB_ENV"
+          echo "ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256=$release_key_fingerprint" >> "$GITHUB_ENV"
+          echo "ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S=$revoked_release_keys" >> "$GITHUB_ENV"
 
       - name: Package desktop app
         env:

@@ -1,4 +1,4 @@
-import { generateKeyPairSync, sign } from "node:crypto";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { loadPinnedEd25519PublicKey } from "../ed25519-trust";
 import { fetchReleaseImages, parseReleaseManifest } from "../release-manifest";
@@ -31,6 +31,14 @@ const manifest = (artifacts: unknown[]) => ({
   artifacts,
 });
 const signingKeyPair = generateKeyPairSync("ed25519");
+const signingPublicKeyDer = signingKeyPair.publicKey.export({
+  format: "der",
+  type: "spki",
+});
+const signingPublicKey = signingPublicKeyDer.toString("base64");
+const signingPublicKeyFingerprint = createHash("sha256")
+  .update(signingPublicKeyDer)
+  .digest("hex");
 const acceptingSequenceStore: ReleaseSequenceStore = {
   accept: async () => undefined,
 };
@@ -153,13 +161,45 @@ describe("canonical release manifest", () => {
     expect(() =>
       loadPinnedEd25519PublicKey({
         ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64: encoded,
+        ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256: createHash("sha256")
+          .update(Buffer.from(encoded, "base64"))
+          .digest("hex"),
       }),
     ).toThrow("must be an Ed25519");
     expect(() =>
       loadPinnedEd25519PublicKey({
         ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64: "AB==",
+        ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256: "1".repeat(64),
       }),
     ).toThrow("canonical base64");
+  });
+
+  it("binds the release key to its independent pin and revocation policy", () => {
+    const trusted = {
+      ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64: signingPublicKey,
+      ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256:
+        signingPublicKeyFingerprint,
+    };
+    expect(loadPinnedEd25519PublicKey(trusted)).toBeDefined();
+    expect(() =>
+      loadPinnedEd25519PublicKey({
+        ...trusted,
+        ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256: "1".repeat(64),
+      }),
+    ).toThrow("does not match the independently reviewed");
+    expect(() =>
+      loadPinnedEd25519PublicKey({
+        ...trusted,
+        ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S:
+          signingPublicKeyFingerprint,
+      }),
+    ).toThrow("release key is revoked");
+    expect(() =>
+      loadPinnedEd25519PublicKey({
+        ...trusted,
+        ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S: `${signingPublicKeyFingerprint},${signingPublicKeyFingerprint}`,
+      }),
+    ).toThrow("sorted, unique");
   });
 
   it("requires explicit persistent rollback state", () => {
