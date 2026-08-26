@@ -3,8 +3,17 @@
 import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import fs, { existsSync, readFileSync } from "node:fs";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,6 +51,9 @@ import { loadBrandConfig } from "../../../../scripts/distro-android/brand-config
 import {
   aospBuildEnvironment,
   assertBuildHost,
+  closeAospBuildEnvironment,
+  prepareAospBuildEnvironment,
+  revalidateAospBuildEnvironment,
 } from "../../../../scripts/distro-android/build-aosp.mjs";
 import {
   GRAPHICS_PROBES,
@@ -98,7 +110,7 @@ async function createGitFixture(root: string, files: string[]) {
 }
 
 describe("AOSP build contracts", () => {
-  test("AOSP builds keep temporary artifacts on the checkout volume", () => {
+  test("AOSP builds keep temporary artifacts on the default output volume", () => {
     expect(
       aospBuildEnvironment("/srv/aosp", {
         SISO_EXPERIMENTS: "oom-score-adj",
@@ -110,6 +122,213 @@ describe("AOSP build contracts", () => {
       TMP: "/srv/aosp/out/.elizaos-tmp",
       TEMP: "/srv/aosp/out/.elizaos-tmp",
     });
+  });
+
+  test("AOSP build temporary artifacts follow absolute and relative OUT_DIR", async () => {
+    const root = await mkdtemp(join(tmpdir(), "elizaos-aosp-root-"));
+    const external = await mkdtemp(join(tmpdir(), "elizaos-aosp-out-"));
+    const prepared: ReturnType<typeof prepareAospBuildEnvironment>[] = [];
+    try {
+      const absolute = prepareAospBuildEnvironment(root, {
+        OUT_DIR: external,
+      });
+      prepared.push(absolute);
+      expect(absolute.env.TMPDIR).toBe(join(external, ".elizaos-tmp"));
+      expect(absolute.env.OUT_DIR).toBe(external);
+
+      const relative = prepareAospBuildEnvironment(root, {
+        OUT_DIR: "build-output",
+      });
+      prepared.push(relative);
+      expect(relative.env.TMPDIR).toBe(
+        join(root, "build-output", ".elizaos-tmp"),
+      );
+      expect(relative.env.OUT_DIR).toBe(join(root, "build-output"));
+      revalidateAospBuildEnvironment(absolute);
+      revalidateAospBuildEnvironment(relative);
+    } finally {
+      for (const build of prepared) closeAospBuildEnvironment(build);
+      await rm(root, { recursive: true, force: true });
+      await rm(external, { recursive: true, force: true });
+    }
+  });
+
+  test("AOSP build temporary artifacts accept a stable symlinked out directory", async () => {
+    const root = await mkdtemp(join(tmpdir(), "elizaos-aosp-root-"));
+    const external = await mkdtemp(join(tmpdir(), "elizaos-aosp-out-"));
+    let prepared: ReturnType<typeof prepareAospBuildEnvironment> | undefined;
+    try {
+      await symlink(external, join(root, "out"), "dir");
+      prepared = prepareAospBuildEnvironment(root, {});
+      expect(prepared.env.OUT_DIR).toBe(external);
+      expect(prepared.env.TMPDIR).toBe(join(external, ".elizaos-tmp"));
+      revalidateAospBuildEnvironment(prepared);
+    } finally {
+      if (prepared) closeAospBuildEnvironment(prepared);
+      await rm(root, { recursive: true, force: true });
+      await rm(external, { recursive: true, force: true });
+    }
+  });
+
+  test("AOSP build wrapper mirrors OUT_DIR_COMMON_BASE semantics", () => {
+    expect(
+      aospBuildEnvironment("/srv/aosp", {
+        OUT_DIR_COMMON_BASE: "/build/common",
+      }),
+    ).toMatchObject({
+      OUT_DIR: "/build/common/aosp",
+      OUT_DIR_COMMON_BASE: "/build/common",
+      TMPDIR: "/build/common/aosp/.elizaos-tmp",
+    });
+    expect(
+      aospBuildEnvironment("/srv/aosp", {
+        OUT_DIR_COMMON_BASE: "build/common",
+      }),
+    ).toMatchObject({
+      OUT_DIR: "/srv/aosp/build/common/aosp",
+      OUT_DIR_COMMON_BASE: "build/common",
+      TMPDIR: "/srv/aosp/build/common/aosp/.elizaos-tmp",
+    });
+  });
+
+  test("AOSP build wrapper rejects empty output variables", () => {
+    expect(() =>
+      aospBuildEnvironment("/srv/aosp", {
+        OUT_DIR: "   ",
+      }),
+    ).toThrow("OUT_DIR must be a non-empty path when set");
+    expect(() =>
+      aospBuildEnvironment("/srv/aosp", {
+        OUT_DIR_COMMON_BASE: "",
+      }),
+    ).toThrow("OUT_DIR_COMMON_BASE must be a non-empty path when set");
+  });
+
+  test("AOSP build wrapper gives a present OUT_DIR precedence", () => {
+    expect(
+      aospBuildEnvironment("/srv/aosp", {
+        OUT_DIR: "build-output",
+        OUT_DIR_COMMON_BASE: "/build/common",
+      }),
+    ).toMatchObject({
+      OUT_DIR: "/srv/aosp/build-output",
+      OUT_DIR_COMMON_BASE: "/build/common",
+      TMPDIR: "/srv/aosp/build-output/.elizaos-tmp",
+    });
+  });
+
+  test("AOSP builds reject a temporary-directory symlink outside the checkout", async () => {
+    const root = await mkdtemp(join(tmpdir(), "elizaos-aosp-root-"));
+    const external = await mkdtemp(join(tmpdir(), "elizaos-aosp-external-"));
+    try {
+      await mkdir(join(root, "out"), { recursive: true });
+      await symlink(external, join(root, "out", ".elizaos-tmp"), "dir");
+      expect(() => prepareAospBuildEnvironment(root, {})).toThrow(
+        "must be a real directory",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(external, { recursive: true, force: true });
+    }
+  });
+
+  test("AOSP builds prepare a private temporary directory inside the checkout", async () => {
+    const root = await mkdtemp(join(tmpdir(), "elizaos-aosp-root-"));
+    let prepared: ReturnType<typeof prepareAospBuildEnvironment> | undefined;
+    try {
+      await mkdir(join(root, "out", ".elizaos-tmp"), { recursive: true });
+      await chmod(join(root, "out", ".elizaos-tmp"), 0o777);
+      prepared = prepareAospBuildEnvironment(root, {});
+      const state = await lstat(prepared.env.TMPDIR);
+      expect(state.isDirectory()).toBe(true);
+      expect(state.isSymbolicLink()).toBe(false);
+      expect(state.mode & 0o777).toBe(0o700);
+      revalidateAospBuildEnvironment(prepared);
+    } finally {
+      if (prepared) closeAospBuildEnvironment(prepared);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("AOSP builds reject permissive output roots and replaced temp paths", async () => {
+    const permissiveRoot = await mkdtemp(join(tmpdir(), "elizaos-aosp-root-"));
+    const raceRoot = await mkdtemp(join(tmpdir(), "elizaos-aosp-root-"));
+    let prepared: ReturnType<typeof prepareAospBuildEnvironment> | undefined;
+    try {
+      await mkdir(join(permissiveRoot, "out"));
+      await chmod(join(permissiveRoot, "out"), 0o777);
+      expect(() => prepareAospBuildEnvironment(permissiveRoot, {})).toThrow(
+        "must not be group- or other-writable",
+      );
+
+      prepared = prepareAospBuildEnvironment(raceRoot, {});
+      const displaced = join(raceRoot, "out", ".elizaos-tmp-displaced");
+      await rename(prepared.canonicalTemp, displaced);
+      await mkdir(prepared.canonicalTemp, { mode: 0o700 });
+      expect(() => revalidateAospBuildEnvironment(prepared)).toThrow(
+        "temporary path identity changed",
+      );
+    } finally {
+      if (prepared) closeAospBuildEnvironment(prepared);
+      await rm(permissiveRoot, { recursive: true, force: true });
+      await rm(raceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("AOSP builds hold and revalidate every trusted output ancestor", async () => {
+    const unsafeParent = await mkdtemp(
+      join(tmpdir(), "elizaos-aosp-unsafe-parent-"),
+    );
+    const nestedRoot = join(unsafeParent, "checkout");
+    const raceRoot = await mkdtemp(join(tmpdir(), "elizaos-aosp-root-"));
+    let prepared: ReturnType<typeof prepareAospBuildEnvironment> | undefined;
+    try {
+      await mkdir(nestedRoot);
+      await chmod(unsafeParent, 0o777);
+      expect(() => prepareAospBuildEnvironment(nestedRoot, {})).toThrow(
+        "must not be group- or other-writable",
+      );
+
+      prepared = prepareAospBuildEnvironment(raceRoot, {});
+      expect(prepared.outputPathHandles.length).toBeGreaterThan(2);
+      await chmod(raceRoot, 0o777);
+      expect(() => revalidateAospBuildEnvironment(prepared)).toThrow(
+        "must not be group- or other-writable",
+      );
+    } finally {
+      if (prepared) closeAospBuildEnvironment(prepared);
+      await chmod(unsafeParent, 0o700);
+      await chmod(raceRoot, 0o700);
+      await rm(unsafeParent, { recursive: true, force: true });
+      await rm(raceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("AOSP build preparation closes held descriptors after an fstat failure", () => {
+    const root = fs.mkdtempSync(join(tmpdir(), "elizaos-aosp-fd-"));
+    const originalFstat = fs.fstatSync;
+    let calls = 0;
+    fs.fstatSync = (fd) => {
+      calls += 1;
+      if (calls === 4) throw new Error("injected fstat failure");
+      return originalFstat(fd);
+    };
+    try {
+      expect(() => prepareAospBuildEnvironment(root, {})).toThrow(
+        "injected fstat failure",
+      );
+    } finally {
+      fs.fstatSync = originalFstat;
+    }
+    const leaked = fs.readdirSync("/proc/self/fd").filter((fd) => {
+      try {
+        return fs.readlinkSync(`/proc/self/fd/${fd}`).startsWith(root);
+      } catch {
+        return false;
+      }
+    });
+    fs.rmSync(root, { recursive: true, force: true });
+    expect({ calls, leaked }).toEqual({ calls: 4, leaked: [] });
   });
 
   test("agent smoke distinguishes a running service from a pending record", () => {

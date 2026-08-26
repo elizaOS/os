@@ -50,13 +50,270 @@ export function recommendedJobs(totalMemBytes, cpuCount) {
 }
 
 export function aospBuildEnvironment(aospRoot, env = process.env) {
-  const tempDir = path.join(path.resolve(aospRoot), "out", ".elizaos-tmp");
-  return withSisoCompatibility({
+  const resolvedAospRoot = path.resolve(aospRoot);
+  const hasConfiguredOut = Object.hasOwn(env, "OUT_DIR");
+  const hasCommonBase = Object.hasOwn(env, "OUT_DIR_COMMON_BASE");
+  const configuredOut = hasConfiguredOut ? env.OUT_DIR : undefined;
+  const commonBase = hasCommonBase ? env.OUT_DIR_COMMON_BASE : undefined;
+  if (
+    hasConfiguredOut &&
+    (typeof configuredOut !== "string" || configuredOut.trim() === "")
+  ) {
+    throw new Error("OUT_DIR must be a non-empty path when set.");
+  }
+  if (
+    hasCommonBase &&
+    (typeof commonBase !== "string" || commonBase.trim() === "")
+  ) {
+    throw new Error("OUT_DIR_COMMON_BASE must be a non-empty path when set.");
+  }
+  const outputRoot = hasConfiguredOut
+    ? path.resolve(resolvedAospRoot, configuredOut)
+    : hasCommonBase
+      ? path.resolve(
+          resolvedAospRoot,
+          commonBase,
+          path.basename(resolvedAospRoot),
+        )
+      : path.join(resolvedAospRoot, "out");
+  const tempDir = path.join(outputRoot, ".elizaos-tmp");
+  const buildEnv = {
     ...env,
+    OUT_DIR: outputRoot,
     TMPDIR: tempDir,
     TMP: tempDir,
     TEMP: tempDir,
-  });
+  };
+  if (hasCommonBase) {
+    buildEnv.OUT_DIR_COMMON_BASE = commonBase;
+  } else {
+    delete buildEnv.OUT_DIR_COMMON_BASE;
+  }
+  return withSisoCompatibility(buildEnv);
+}
+
+function assertTrustedDirectory(state, label, rootOwnerUid) {
+  const builderUid = process.geteuid?.();
+  if (!state.isDirectory()) {
+    throw new Error(`${label} must be a directory.`);
+  }
+  if (
+    builderUid !== undefined &&
+    state.uid !== builderUid &&
+    state.uid !== rootOwnerUid
+  ) {
+    throw new Error(`${label} must be owned by the build user or root.`);
+  }
+  const rootOwnedSticky =
+    state.uid === rootOwnerUid && (state.mode & 0o1000) !== 0;
+  if ((state.mode & 0o022) !== 0 && !rootOwnedSticky) {
+    throw new Error(`${label} must not be group- or other-writable.`);
+  }
+}
+
+function canonicalDirectoryPaths(canonicalDirectory) {
+  const root = path.parse(canonicalDirectory).root;
+  const relative = path.relative(root, canonicalDirectory);
+  const paths = [root];
+  let current = root;
+  for (const component of relative.split(path.sep).filter(Boolean)) {
+    current = path.join(current, component);
+    paths.push(current);
+  }
+  return paths;
+}
+
+// These checks deliberately trust the isolated builder account and the
+// filesystem/mount administrator. POSIX ACL or mount-namespace policy can grant
+// powers that inode ownership and mode bits cannot represent portably in Node.
+function openTrustedDirectoryChain(canonicalDirectory) {
+  const directoryPaths = canonicalDirectoryPaths(canonicalDirectory);
+  const handles = [];
+  let rootOwnerUid;
+  try {
+    for (const directoryPath of directoryPaths) {
+      const fd = fs.openSync(
+        directoryPath,
+        fs.constants.O_RDONLY |
+          fs.constants.O_DIRECTORY |
+          fs.constants.O_NOFOLLOW,
+      );
+      const handle = { path: directoryPath, fd, state: null };
+      handles.push(handle);
+      const state = fs.fstatSync(fd);
+      handle.state = state;
+      rootOwnerUid ??= state.uid;
+      assertTrustedDirectory(
+        state,
+        `AOSP output path ancestor ${directoryPath}`,
+        rootOwnerUid,
+      );
+    }
+    return { handles, rootOwnerUid };
+  } catch (error) {
+    closeDirectoryHandles(handles);
+    throw error;
+  }
+}
+
+function closeDirectoryHandles(handles) {
+  let firstError;
+  for (const handle of [...handles].reverse()) {
+    try {
+      fs.closeSync(handle.fd);
+    } catch (error) {
+      firstError ??= error;
+    }
+  }
+  if (firstError) throw firstError;
+}
+
+function sameFile(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+export function prepareAospBuildEnvironment(aospRoot, env = process.env) {
+  const buildEnv = aospBuildEnvironment(aospRoot, env);
+  const configuredOutputRoot = path.dirname(buildEnv.TMPDIR);
+  fs.mkdirSync(configuredOutputRoot, { recursive: true, mode: 0o755 });
+  const configuredOutputIdentity = fs.lstatSync(configuredOutputRoot);
+  const canonicalOutputRoot = fs.realpathSync(configuredOutputRoot);
+  const { handles: outputPathHandles, rootOwnerUid } =
+    openTrustedDirectoryChain(canonicalOutputRoot);
+  const outputHandle = outputPathHandles.at(-1);
+  const outputState = outputHandle.state;
+
+  const canonicalTemp = path.join(canonicalOutputRoot, ".elizaos-tmp");
+  let tempFd;
+  try {
+    fs.mkdirSync(canonicalTemp, { recursive: true, mode: 0o700 });
+    const pathState = fs.lstatSync(canonicalTemp);
+    if (!pathState.isDirectory() || pathState.isSymbolicLink()) {
+      throw new Error("AOSP build temporary path must be a real directory.");
+    }
+    tempFd = fs.openSync(
+      canonicalTemp,
+      fs.constants.O_RDONLY |
+        fs.constants.O_DIRECTORY |
+        fs.constants.O_NOFOLLOW,
+    );
+    const initialTempState = fs.fstatSync(tempFd);
+    if (
+      process.geteuid?.() !== undefined &&
+      initialTempState.uid !== process.geteuid()
+    ) {
+      throw new Error(
+        "AOSP build temporary directory must be owned by the build user.",
+      );
+    }
+    fs.fchmodSync(tempFd, 0o700);
+    const tempState = fs.fstatSync(tempFd);
+    assertTrustedDirectory(
+      tempState,
+      "AOSP build temporary directory",
+      rootOwnerUid,
+    );
+    if ((tempState.mode & 0o777) !== 0o700) {
+      throw new Error("AOSP build temporary directory must have mode 0700.");
+    }
+    if (outputState.dev !== tempState.dev) {
+      throw new Error(
+        "AOSP build temporary directory must be on the output filesystem.",
+      );
+    }
+  } catch (error) {
+    try {
+      if (tempFd !== undefined) fs.closeSync(tempFd);
+    } catch {
+      // Preserve the preparation failure while still closing ancestor handles.
+    }
+    try {
+      closeDirectoryHandles(outputPathHandles);
+    } catch {
+      // Preserve the preparation failure after making every cleanup attempt.
+    }
+    throw error;
+  }
+
+  buildEnv.OUT_DIR = canonicalOutputRoot;
+  buildEnv.TMPDIR = canonicalTemp;
+  buildEnv.TMP = canonicalTemp;
+  buildEnv.TEMP = canonicalTemp;
+  return {
+    env: buildEnv,
+    configuredOutputRoot,
+    configuredOutputIdentity,
+    canonicalOutputRoot,
+    canonicalTemp,
+    outputFd: outputHandle.fd,
+    outputPathHandles,
+    rootOwnerUid,
+    tempFd,
+  };
+}
+
+export function revalidateAospBuildEnvironment(prepared) {
+  const currentConfiguredOutput = fs.lstatSync(prepared.configuredOutputRoot);
+  if (!sameFile(currentConfiguredOutput, prepared.configuredOutputIdentity)) {
+    throw new Error("AOSP output path identity changed before build spawn.");
+  }
+  if (
+    fs.realpathSync(prepared.configuredOutputRoot) !==
+    prepared.canonicalOutputRoot
+  ) {
+    throw new Error("AOSP output path target changed before build spawn.");
+  }
+
+  for (const handle of prepared.outputPathHandles) {
+    const state = fs.fstatSync(handle.fd);
+    assertTrustedDirectory(
+      state,
+      `AOSP output path ancestor ${handle.path}`,
+      prepared.rootOwnerUid,
+    );
+    if (!sameFile(state, fs.lstatSync(handle.path))) {
+      throw new Error(
+        `AOSP output path ancestor identity changed before build spawn: ${handle.path}`,
+      );
+    }
+  }
+  const outputState = fs.fstatSync(prepared.outputFd);
+
+  const tempState = fs.fstatSync(prepared.tempFd);
+  assertTrustedDirectory(
+    tempState,
+    "AOSP build temporary directory",
+    prepared.rootOwnerUid,
+  );
+  if ((tempState.mode & 0o777) !== 0o700) {
+    throw new Error("AOSP build temporary directory must have mode 0700.");
+  }
+  const tempPathState = fs.lstatSync(prepared.canonicalTemp);
+  if (tempPathState.isSymbolicLink() || !sameFile(tempState, tempPathState)) {
+    throw new Error(
+      "AOSP build temporary path identity changed before build spawn.",
+    );
+  }
+  if (outputState.dev !== tempState.dev) {
+    throw new Error(
+      "AOSP build temporary directory must remain on the output filesystem.",
+    );
+  }
+}
+
+export function closeAospBuildEnvironment(prepared) {
+  let firstError;
+  try {
+    fs.closeSync(prepared.tempFd);
+  } catch (error) {
+    firstError = error;
+  }
+  try {
+    closeDirectoryHandles(prepared.outputPathHandles);
+  } catch (error) {
+    firstError ??= error;
+  }
+  if (firstError) throw firstError;
 }
 
 export function parseSubArgs(argv) {
@@ -187,16 +444,20 @@ function stopRunningCvd() {
 }
 
 function runAospBuild(aospRoot, jobs, brand) {
-  const env = aospBuildEnvironment(aospRoot);
-  fs.mkdirSync(env.TMPDIR, { recursive: true });
-  run(
-    "bash",
-    [
-      "-lc",
-      `source build/envsetup.sh && lunch ${brand.lunchTarget} && m -j${jobs}`,
-    ],
-    { cwd: aospRoot, env },
-  );
+  const prepared = prepareAospBuildEnvironment(aospRoot);
+  try {
+    revalidateAospBuildEnvironment(prepared);
+    run(
+      "bash",
+      [
+        "-lc",
+        `source build/envsetup.sh && lunch ${brand.lunchTarget} && m -j${jobs}`,
+      ],
+      { cwd: aospRoot, env: prepared.env },
+    );
+  } finally {
+    closeAospBuildEnvironment(prepared);
+  }
 }
 
 function launchCuttlefish(aospRoot, brand) {
