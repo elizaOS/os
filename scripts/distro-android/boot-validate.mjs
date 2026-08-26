@@ -251,11 +251,10 @@ function assertMatches(value, pattern, label) {
 
 /**
  * When `--expected-abi` is set, assert the device's CPU architecture
- * matches. Mirrors the riscv64 cuttlefish-boot-gate's abi/abilist/uname
- * triad so a wrong-arch image fails closed instead of passing the
- * brand-level checks on the wrong CPU. Omitted by default, so the
- * x86_64/arm64 callers are unaffected. This is the canonical home of the
- * arch-triad assertion (chip/sw/aosp-device/cuttlefish-boot-gate.sh).
+ * matches the abi/abilist/uname triad so a wrong-arch image fails closed
+ * instead of passing the brand-level checks on the wrong CPU. When omitted,
+ * the x86_64/arm64 callers are unaffected. This is the canonical home of
+ * the Cuttlefish arch-triad assertion.
  */
 function validateExpectedAbi(adb, serial, expectedAbi) {
   const abi = shell(adb, serial, "getprop ro.product.cpu.abi").trim();

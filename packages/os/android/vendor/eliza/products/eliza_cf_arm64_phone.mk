@@ -9,4 +9,3 @@ PRODUCT_MODEL := elizaOS Cuttlefish Phone (ARM64)
 ELIZA_PRODUCT_TAG := eliza_cf_arm64_phone
 
 $(call inherit-product, vendor/eliza/eliza_common.mk)
-$(call inherit-product, device/eliza/cuttlefish_e1/eliza_e1_cuttlefish.mk)
