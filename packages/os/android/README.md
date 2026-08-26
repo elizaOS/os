@@ -165,11 +165,13 @@ source as reconstructed source.
 
 Use the dedicated Linux x86_64 builder specified in
 [`docs/grizzly-build-handoff.md`](docs/grizzly-build-handoff.md); the production
-lane requires at least 32 physical cores, 128 GB RAM, and 1.5 TB fast local
-storage:
+lane requires at least 32 physical cores, 128 GiB RAM, 1.5 TB fast local
+storage, and 600 GiB free at bundle start:
 
 ```bash
 make -C packages/os/android bootstrap-grizzly \
+  AOSP_GRIZZLY_ROOT=/build/aosp-grizzly
+make -C packages/os/android preflight-grizzly \
   AOSP_GRIZZLY_ROOT=/build/aosp-grizzly
 make -C packages/os/android prepare-grizzly \
   AOSP_GRIZZLY_ROOT=/build/aosp-grizzly
@@ -187,10 +189,17 @@ Preparation uses sparse exact-commit Git checkouts for the generation inputs,
 runs `adevtool generate-all -d grizzly`, verifies the required output, and
 retains and verifies both factory images. Downloads are governed by Google's
 Pixel factory-image terms, which `adevtool` displays before download. The
-bundle target completes the full `dist` build while also building the pinned
-`host_init_verifier` and `checkvintf` host tools, verifies `vbmeta.img` with the
-built `avbtool`, refuses dirty source trees or a missing flash input or
-privileged APK, and emits exact source identities, SHA-256 values, and sizes.
+bundle target completes explicit `droidcore`, `dist`, `host_init_verifier`, and
+`check-vintf-all` gates, retains their command and product-output receipts, and
+verifies every referenced vbmeta image with the built `avbtool`.
+It validates the generated dynamic-super flash plan, binds the privileged APK
+and its embedded runtime provenance to the Eliza commit and checked-out AOSP
+platform certificate, and compares pre/post AOSP-project and vendor source
+snapshots without executing the mutable `repo` implementation. It rejects any
+unstable or missing input, publishes only a complete recursively synced bundle
+from private staging without replacing an existing path, and emits exact
+source identities, retained gate receipts, builder facts, SHA-256 values, and
+sizes.
 `SOURCE_DATE_EPOCH` is mandatory so the handoff metadata is reproducible. Sign
 `SHA256SUMS` only with the separately provisioned offline release key; this
 command never generates or accepts private signing material. The generated

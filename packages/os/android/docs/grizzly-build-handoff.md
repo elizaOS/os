@@ -7,9 +7,10 @@ bundle digest.
 
 ## Persistent builder
 
-Use a dedicated Linux x86_64 host with at least 32 physical cores, 128 GB RAM,
-and 1.5 TB of fast local storage (64 cores, 256 GB RAM, and 2 TB NVMe are
-preferred). Connect the phone through reliable USB 3 and install udev rules
+Use a dedicated Linux x86_64 host with at least 32 physical cores, 128 GiB RAM,
+1.5 TB of fast local storage, and 600 GiB free at bundle start (64 cores,
+256 GiB RAM, and 2 TB NVMe are preferred). Connect the phone through reliable
+USB 3 and install udev rules
 that grant the build operator access to `adb` and `fastboot` without running the
 build as root.
 
@@ -63,6 +64,8 @@ bun run verify
 
 make -C packages/os/android bootstrap-grizzly \
   AOSP_GRIZZLY_ROOT=/work/aosp-grizzly
+make -C packages/os/android preflight-grizzly \
+  AOSP_GRIZZLY_ROOT=/work/aosp-grizzly
 make -C packages/os/android prepare-grizzly \
   AOSP_GRIZZLY_ROOT=/work/aosp-grizzly
 
@@ -74,12 +77,35 @@ make -C packages/os/android bundle-grizzly \
 ```
 
 The bundle front door rebuilds and stages the privileged Eliza APK, completes
-the full AOSP `dist` build while building `host_init_verifier` and `checkvintf`,
-verifies AVB metadata, and refuses dirty source trees or any missing flash
-input. It writes a resolved repo manifest, the exact OS and Eliza commits, the
-locked build identity, APK provenance by digest, per-file hashes and sizes, and
-the builder OS/kernel/capacity/tool/cache facts in the manifest. It then emits
-`SHA256SUMS`. Run a second isolated build with the same inputs and compare every
+the complete `droidcore`/`dist` image set while running explicit
+`host_init_verifier` and `check-vintf-all` gates and building `apksigner`,
+`aapt2`, and `avbtool`. It retains a successful command receipt for every gate
+and the corresponding product-output receipts, verifies
+every referenced AVB image, validates the complete dynamic-super flash plan,
+and rejects an unconditional userdata or metadata erase. The APK must contain
+both application provenance records exactly once, match the pinned Eliza
+commit, have the expected package name, and be signed by the platform
+certificate in the checked-out AOSP tree.
+
+The collector deliberately does not execute the mutable `repo` implementation.
+Instead, it records and compares a deterministic pre/post snapshot containing
+the manifest and repo-implementation commits plus every path and HEAD from
+`.repo/project.list`, while rejecting unlocked project changes. It also
+compares the locked overlays, generated Google vendor tree, synced elizaOS
+vendor tree, OS commit, and Eliza commit. Large build inputs are copied from
+stable non-symlink file descriptors into private staging before verification;
+source or cross-file-set drift aborts the handoff. Output must be a new path
+outside all three source trees under an operator-owned, non-shared canonical
+parent. The complete bundle is written to a private same-filesystem staging
+directory, verified and recursively synced, then published without replacing
+an existing path. Failures remove only that verified staging identity rather
+than leaving a partial bundle.
+
+The manifest records the locked build identity, resolved AOSP project snapshot,
+privileged-APK source and signing provenance, per-file hashes and sizes,
+required host receipts, parsed flash plan, and builder
+OS/kernel/capacity/tool/cache facts. `SHA256SUMS` covers every retained file.
+Run a second isolated build with the same inputs and compare every
 flash-artifact checksum before promotion. Environment evidence is expected to
 differ when the isolated builder differs; unexplained artifact drift is a
 release failure.
