@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createDiskConfirmationToken,
+  createDiskInventoryFingerprint,
   createInstallPlan,
   validateDiskInventory,
 } from "./planner";
@@ -48,6 +49,7 @@ function disk(overrides: Partial<DiskInventory> = {}): DiskInventory {
         role: "os",
         filesystem: "ntfs",
         osFamily: "windows",
+        hibernated: false,
         encryption: "none",
       },
     ],
@@ -109,7 +111,11 @@ describe("elizaOS internal-disk installer planner", () => {
         firmware: host.osFamily === "macos" ? "apple-intel-efi" : "uefi",
         partitions: [
           partition(0),
-          { ...partition(1), ...host } as PartitionInventory,
+          {
+            ...partition(1),
+            ...host,
+            hibernated: host.osFamily === "windows" ? false : undefined,
+          } as PartitionInventory,
         ],
       });
       const plan = createInstallPlan(request(target), target);
@@ -178,6 +184,110 @@ describe("elizaOS internal-disk installer planner", () => {
     );
   });
 
+  it("refuses free-space alongside installation for hibernated or dirty hosts", () => {
+    const hibernated = disk({
+      partitions: [partition(0), { ...partition(1), hibernated: true }],
+    });
+    expect(() => createInstallPlan(request(hibernated), hibernated)).toThrow(
+      /hibernation and Fast Startup/,
+    );
+
+    const dirty = disk({
+      partitions: [partition(0), { ...partition(1), dirty: true }],
+    });
+    expect(() => createInstallPlan(request(dirty), dirty)).toThrow(
+      /filesystem is dirty/,
+    );
+  });
+
+  it("refuses free-space alongside planning when Windows hibernation state is unknown", () => {
+    const windowsPartition = { ...partition(1) };
+    delete windowsPartition.hibernated;
+    const target = disk({
+      partitions: [partition(0), windowsPartition],
+    });
+
+    expect(() => createInstallPlan(request(target), target)).toThrow(
+      /without explicit evidence.*hibernation and Fast Startup/i,
+    );
+  });
+
+  it("refuses free-space alongside planning for an opaque BitLocker volume", () => {
+    const target = disk({
+      partitions: [
+        partition(0),
+        {
+          ...partition(1),
+          filesystem: "unknown",
+          osFamily: "windows",
+          encryption: "bitlocker",
+          hibernated: undefined,
+        },
+      ],
+    });
+
+    expect(() => createInstallPlan(request(target), target)).toThrow(
+      /without explicit evidence.*hibernation and Fast Startup/i,
+    );
+  });
+
+  it("binds hibernation and dirty-state evidence into inventory identity", () => {
+    const clean = disk({
+      partitions: [
+        partition(0),
+        { ...partition(1), hibernated: false, dirty: false },
+      ],
+    });
+    const hibernated = disk({
+      partitions: [
+        partition(0),
+        { ...partition(1), hibernated: true, dirty: false },
+      ],
+    });
+    const dirty = disk({
+      partitions: [
+        partition(0),
+        { ...partition(1), hibernated: false, dirty: true },
+      ],
+    });
+
+    expect(createDiskInventoryFingerprint(hibernated)).not.toBe(
+      createDiskInventoryFingerprint(clean),
+    );
+    expect(createDiskInventoryFingerprint(dirty)).not.toBe(
+      createDiskInventoryFingerprint(clean),
+    );
+  });
+
+  it("requires explicit BitLocker evidence before planning an NTFS shrink", () => {
+    const target = disk({
+      partitions: [
+        partition(0),
+        {
+          ...partition(1),
+          endBytes: 500 * GIB,
+          resize: {
+            filesystemHealthy: true,
+            mounted: false,
+            minimumBytes: 200 * GIB,
+            hibernated: false,
+            dirty: false,
+          },
+        },
+      ],
+      freeExtents: [],
+    });
+    expect(() =>
+      createInstallPlan(
+        request(target, {
+          freeExtentId: undefined,
+          shrinkPartitionId: "host-os",
+        }),
+        target,
+      ),
+    ).toThrow(/BitLocker off or suspended/);
+  });
+
   it.each([
     ["BitLocker", { encryption: "bitlocker" as const }],
     [
@@ -186,6 +296,7 @@ describe("elizaOS internal-disk installer planner", () => {
         encryption: "filevault" as const,
         filesystem: "apfs" as const,
         osFamily: "macos" as const,
+        hibernated: undefined,
       },
     ],
     [
@@ -194,6 +305,7 @@ describe("elizaOS internal-disk installer planner", () => {
         encryption: "luks" as const,
         filesystem: "ext4" as const,
         osFamily: "linux" as const,
+        hibernated: undefined,
       },
     ],
   ])(
@@ -396,6 +508,38 @@ describe("elizaOS internal-disk installer planner", () => {
               filesystemHealthy: true,
               mounted: false,
               minimumBytes: 200 * GIB,
+            },
+          },
+        ],
+      }),
+    ).toThrow("resize evidence");
+    expect(() =>
+      validateDiskInventory({
+        ...disk(),
+        partitions: [
+          partition(0),
+          {
+            ...partition(1),
+            filesystem: "ext4",
+            osFamily: "linux",
+            hibernated: false,
+          },
+        ],
+      }),
+    ).toThrow("outside Windows NTFS");
+    expect(() =>
+      validateDiskInventory({
+        ...disk(),
+        partitions: [
+          partition(0),
+          {
+            ...partition(1),
+            hibernated: true,
+            resize: {
+              filesystemHealthy: true,
+              mounted: false,
+              minimumBytes: 200 * GIB,
+              hibernated: false,
             },
           },
         ],

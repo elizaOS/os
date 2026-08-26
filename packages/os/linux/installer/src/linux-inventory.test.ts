@@ -10,6 +10,7 @@ import {
   parseLinuxRootBlockSource,
   probeLinuxBtrfsFilesystem,
   probeLinuxExt4Filesystem,
+  probeLinuxNtfsFilesystem,
   probeLinuxPartitionFilesystems,
 } from "./linux-inventory";
 
@@ -216,6 +217,172 @@ describe("Linux read-only disk inventory parser", () => {
         },
       }),
     ).rejects.toThrow(/device path/);
+  });
+
+  it("derives bounded NTFS evidence from one forensic no-action probe", async () => {
+    const calls: Array<[string, readonly string[]]> = [];
+    const evidence = await probeLinuxNtfsFilesystem({
+      devicePath: "/dev/vda2",
+      partitionSizeBytes: 8 * GIB,
+      runner: {
+        async run(command, args) {
+          calls.push([command, args]);
+          return {
+            exitCode: 0,
+            stdout: [
+              "NTFS volume version: 3.1",
+              "Current device size: 8589934592 bytes (8590 MB)",
+              "Checking filesystem consistency ...",
+              "You might resize at 4294967296 bytes or 4295 MB (freeing 4295 MB).",
+            ].join("\n"),
+            stderr: "",
+          };
+        },
+      },
+    });
+
+    expect(evidence).toEqual({
+      filesystemHealth: "healthy",
+      dirty: false,
+      minimumBytes: 4 * GIB,
+    });
+    expect(calls).toEqual([
+      [
+        "/usr/sbin/ntfsresize",
+        ["--info", "--no-action", "--no-progress-bar", "/dev/vda2"],
+      ],
+    ]);
+  });
+
+  it("retains typed NTFS hibernation, dirty, and failure evidence", async () => {
+    const probe = async (result: LinuxInventoryCommandResult) =>
+      probeLinuxNtfsFilesystem({
+        devicePath: "/dev/vda2",
+        partitionSizeBytes: 8 * GIB,
+        runner: {
+          async run() {
+            return result;
+          },
+        },
+      });
+
+    await expect(
+      probe({
+        exitCode: 1,
+        stdout: "The NTFS partition is hibernated.",
+        stderr: "",
+      }),
+    ).resolves.toEqual({ filesystemHealth: "unknown", hibernated: true });
+    await expect(
+      probe({
+        exitCode: 1,
+        stdout: "The NTFS journal file is unclean.",
+        stderr: "",
+      }),
+    ).resolves.toEqual({ filesystemHealth: "dirty", dirty: true });
+    await expect(
+      probe({ exitCode: 1, stdout: "", stderr: "I/O failure" }),
+    ).resolves.toEqual({ filesystemHealth: "unhealthy" });
+    await expect(
+      probe({ exitCode: 127, stdout: "", stderr: "not found" }),
+    ).resolves.toEqual({ filesystemHealth: "unknown" });
+    await expect(
+      probe({
+        exitCode: 0,
+        stdout:
+          "Current device size: 4294967296 bytes\nYou might resize at 1073741824 bytes\n",
+        stderr: "",
+      }),
+    ).resolves.toEqual({ filesystemHealth: "unhealthy" });
+    await expect(
+      probeLinuxNtfsFilesystem({
+        devicePath: "/dev/../etc/passwd",
+        partitionSizeBytes: 8 * GIB,
+        runner: {
+          async run() {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          },
+        },
+      }),
+    ).rejects.toThrow(/device path/);
+  });
+
+  it("wires NTFS state through the shared dispatcher and fails missing tooling closed", async () => {
+    const calls: Array<[string, readonly string[]]> = [];
+    const runner: LinuxInventoryCommandRunner = {
+      async run(command, args) {
+        calls.push([command, args]);
+        return {
+          exitCode: 0,
+          stdout: [
+            `Current device size: ${40 * GIB} bytes`,
+            `You might resize at ${8 * GIB} bytes`,
+          ].join("\n"),
+          stderr: "",
+        };
+      },
+    };
+    const serialized = serializedInventory({}, { fstype: "ntfs" });
+    const partitions = await probeLinuxPartitionFilesystems({
+      inventory: parse(serialized),
+      serialized,
+      runner,
+    });
+
+    expect(partitions[1]).toMatchObject({
+      filesystem: "ntfs",
+      osFamily: "windows",
+      encryption: "unknown",
+      filesystemHealth: "healthy",
+      dirty: false,
+      resize: {
+        minimumBytes: 8 * GIB,
+        dirty: false,
+      },
+    });
+    expect(partitions[1]?.hibernated).toBeUndefined();
+    expect(partitions[1]?.resize?.hibernated).toBeUndefined();
+    expect(partitions[1]?.resize?.bitlocker).toBeUndefined();
+    expect(calls).toHaveLength(1);
+
+    const unavailable = await probeLinuxPartitionFilesystems({
+      inventory: parse(serialized),
+      serialized,
+      runner: {
+        async run() {
+          return { exitCode: 127, stdout: "", stderr: "not found" };
+        },
+      },
+    });
+    expect(unavailable[1]).toMatchObject({
+      filesystem: "ntfs",
+      filesystemHealth: "unknown",
+    });
+    expect(unavailable[1]?.hibernated).toBeUndefined();
+    expect(unavailable[1]?.resize).toBeUndefined();
+
+    calls.length = 0;
+    const mountedSerialized = serializedInventory(
+      {},
+      { fstype: "ntfs", mountpoints: ["/mnt/windows"] },
+    );
+    const mounted = await probeLinuxPartitionFilesystems({
+      inventory: parse(mountedSerialized),
+      serialized: mountedSerialized,
+      runner,
+    });
+    expect(mounted[1]?.filesystemHealth).toBe("unknown");
+    expect(calls).toEqual([]);
+  });
+
+  it("classifies an opaque BitLocker volume as Windows without inventing NTFS state", () => {
+    const inventory = parse(serializedInventory({}, { fstype: "bitlocker" }));
+    expect(inventory.partitions[1]).toMatchObject({
+      filesystem: "unknown",
+      osFamily: "windows",
+      encryption: "bitlocker",
+    });
+    expect(inventory.partitions[1]?.hibernated).toBeUndefined();
   });
 
   it("derives bounded ext4 resize evidence from read-only native probes", async () => {

@@ -45,6 +45,7 @@ require_text '    python3-cryptography' "${MKOSI_DIR}/mkosi.conf"
 require_text '    gdisk' "${MKOSI_DIR}/mkosi.conf"
 require_text '    e2fsprogs' "${MKOSI_DIR}/mkosi.conf"
 require_text '    btrfs-progs' "${MKOSI_DIR}/mkosi.conf"
+require_text '    ntfs-3g' "${MKOSI_DIR}/mkosi.conf"
 require_text '    zstd' "${MKOSI_DIR}/mkosi.conf"
 for package in gdm3 gnome-core gnome-initial-setup speech-dispatcher-espeak-ng xdg-desktop-portal-gnome; do
     require_text "    ${package}" "${MKOSI_DIR}/mkosi.conf"

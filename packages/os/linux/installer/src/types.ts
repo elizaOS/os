@@ -26,6 +26,8 @@ export interface PartitionInventory {
   role: "esp" | "os" | "recovery" | "data" | "unknown";
   filesystem: Filesystem;
   filesystemHealth?: "healthy" | "dirty" | "unhealthy" | "unknown";
+  hibernated?: boolean;
+  dirty?: boolean;
   osFamily?: OsFamily;
   resize?: ResizeEvidence;
   encryption?: "none" | "bitlocker" | "filevault" | "luks" | "unknown";

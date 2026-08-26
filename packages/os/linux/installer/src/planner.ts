@@ -146,6 +146,23 @@ export function validateDiskInventory(disk: DiskInventory): void {
       throw new Error(
         `Partition ${partition.id} mount state must be explicit.`,
       );
+    if (
+      (partition.hibernated !== undefined &&
+        typeof partition.hibernated !== "boolean") ||
+      (partition.dirty !== undefined && typeof partition.dirty !== "boolean")
+    ) {
+      throw new Error(
+        `Partition ${partition.id} has invalid hibernation or dirty-state evidence.`,
+      );
+    }
+    if (
+      partition.hibernated !== undefined &&
+      (partition.filesystem !== "ntfs" || partition.osFamily !== "windows")
+    ) {
+      throw new Error(
+        `Partition ${partition.id} has hibernation evidence outside Windows NTFS.`,
+      );
+    }
     if (partition.osFamily && !OS_FAMILIES.has(partition.osFamily))
       throw new Error(`Partition ${partition.id} has an invalid OS family.`);
     if (partition.encryption && !ENCRYPTION_STATES.has(partition.encryption))
@@ -173,6 +190,10 @@ export function validateDiskInventory(disk: DiskInventory): void {
         partition.resize.mounted !== partition.mounted ||
         (partition.filesystemHealth !== undefined &&
           partition.filesystemHealth !== "healthy") ||
+        (partition.hibernated !== undefined &&
+          partition.resize.hibernated !== partition.hibernated) ||
+        (partition.dirty !== undefined &&
+          partition.resize.dirty !== partition.dirty) ||
         (partition.resize.hibernated !== undefined &&
           typeof partition.resize.hibernated !== "boolean") ||
         (partition.resize.dirty !== undefined &&
@@ -229,6 +250,8 @@ export function createDiskInventoryFingerprint(disk: DiskInventory): string {
       role: partition.role,
       filesystem: partition.filesystem,
       filesystemHealth: partition.filesystemHealth ?? null,
+      hibernated: partition.hibernated ?? null,
+      dirty: partition.dirty ?? null,
       osFamily: partition.osFamily ?? null,
       encryption: partition.encryption ?? null,
       resize: partition.resize
@@ -305,6 +328,26 @@ function assertTarget(request: InstallRequest, disk: DiskInventory): void {
   if (disk.protectedReason)
     throw new Error(`Target disk is protected: ${disk.protectedReason}`);
   if (
+    request.mode === "alongside" &&
+    disk.partitions.some(
+      (partition) =>
+        partition.osFamily === "windows" &&
+        (partition.filesystem !== "ntfs" || partition.hibernated !== false),
+    )
+  ) {
+    throw new Error(
+      "Refusing alongside installation without explicit evidence that Windows hibernation and Fast Startup are disabled.",
+    );
+  }
+  if (
+    request.mode === "alongside" &&
+    disk.partitions.some((partition) => partition.dirty === true)
+  ) {
+    throw new Error(
+      "Refusing alongside installation while an existing filesystem is dirty.",
+    );
+  }
+  if (
     request.targetStableId !== disk.stableId ||
     request.expectedSizeBytes !== disk.sizeBytes
   ) {
@@ -354,7 +397,7 @@ function assertShrinkEligible(partition: PartitionInventory): void {
     if (
       partition.filesystem !== "ntfs" ||
       evidence.hibernated !== false ||
-      evidence.bitlocker === "enabled"
+      (evidence.bitlocker !== "off" && evidence.bitlocker !== "suspended")
     ) {
       throw new Error(
         "Windows shrinking requires healthy NTFS, hibernation off, and BitLocker off or suspended.",
