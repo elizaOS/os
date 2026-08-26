@@ -1,11 +1,12 @@
 import { constants, type Stats } from "node:fs";
-import { type FileHandle, lstat, open, unlink } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { type FileHandle, open, unlink } from "node:fs/promises";
+import { isAbsolute, resolve } from "node:path";
 import { type InstallJournal, InstallRecoveryRequiredError } from "./executor";
 import type { InstallJournalEntry } from "./types";
 
 const PLAN_ID_PATTERN = /^[a-f0-9]{64}$/;
 const MAX_JOURNAL_BYTES = 16 * 1024 * 1024;
+const OWNER_DIRECTORY_MODE = 0o700;
 const OWNER_FILE_MODE = 0o600;
 
 function recoveryRequired(message: string): InstallRecoveryRequiredError {
@@ -20,6 +21,11 @@ function operatingUid(): number {
   return uid;
 }
 
+function descriptorPath(handle: FileHandle, name?: string): string {
+  const base = `/proc/self/fd/${handle.fd}`;
+  return name === undefined ? base : `${base}/${name}`;
+}
+
 export class DurableFileInstallJournal implements InstallJournal {
   readonly directory: string;
 
@@ -30,66 +36,145 @@ export class DurableFileInstallJournal implements InstallJournal {
     this.directory = resolve(directory);
   }
 
-  private paths(planId: string): { journal: string; lock: string } {
+  private names(planId: string): { journal: string; lock: string } {
     if (!PLAN_ID_PATTERN.test(planId)) {
       throw recoveryRequired("plan ID is not a canonical SHA-256 digest.");
     }
     return {
-      journal: join(this.directory, `${planId}.jsonl`),
-      lock: join(this.directory, `${planId}.lock`),
+      journal: `${planId}.jsonl`,
+      lock: `${planId}.lock`,
     };
   }
 
-  private async assertDirectory(): Promise<void> {
-    let stats: Stats;
+  /**
+   * Walk through already-opened directory descriptors so an ancestor cannot
+   * be swapped between validation and a child open. Journal children remain
+   * anchored to the returned descriptor for the complete operation.
+   */
+  private async openTrustedDirectory(): Promise<FileHandle> {
+    const flags =
+      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
+    let current: FileHandle;
     try {
-      stats = await lstat(this.directory);
-    } catch (error) {
-      throw recoveryRequired(
-        `directory is unavailable: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      current = await open("/", flags);
+    } catch {
+      throw recoveryRequired("could not open the filesystem root safely.");
     }
-    // `lstat(this.directory)` is the security boundary: the journal directory
-    // itself must be a real, owner-controlled directory.  Do not compare the
-    // spelling of its realpath to `this.directory`, because macOS exposes
-    // temporary directories through the trusted `/var -> /private/var`
-    // symlink (and Linux systems may have equivalent administrator-managed
-    // mount aliases).  Ancestor aliases do not let an attacker replace the
-    // already-opened journal directory entry; a symlink at the directory
-    // boundary is rejected by `stats.isSymbolicLink()` above.
+    try {
+      const filesystemOwnerUid = (await current.stat()).uid;
+      const components = this.directory.split("/").filter(Boolean);
+      for (let index = 0; index < components.length; index += 1) {
+        const component = components[index] as string;
+        let next: FileHandle;
+        try {
+          next = await open(descriptorPath(current, component), flags);
+        } catch {
+          throw recoveryRequired(
+            "a journal-path component could not be opened without following links.",
+          );
+        }
+        const stats = await next.stat();
+        const final = index === components.length - 1;
+        try {
+          this.assertTrustedDirectoryStats(stats, filesystemOwnerUid, final);
+        } catch (error) {
+          await next.close();
+          throw error;
+        }
+        await current.close();
+        current = next;
+      }
+      if (components.length === 0) {
+        throw recoveryRequired(
+          "directory must be a private service-owned directory below the filesystem root.",
+        );
+      }
+      return current;
+    } catch (error) {
+      await current.close().catch(() => {});
+      throw error;
+    }
+  }
+
+  private assertTrustedDirectoryStats(
+    stats: Stats,
+    filesystemOwnerUid: number,
+    final: boolean,
+  ): void {
+    const uid = operatingUid();
+    const writableByOthers = (stats.mode & 0o022) !== 0;
+    const trustedStickyDirectory =
+      stats.isDirectory() &&
+      stats.uid === filesystemOwnerUid &&
+      (stats.mode & 0o1000) !== 0;
     if (
       !stats.isDirectory() ||
-      stats.isSymbolicLink() ||
-      stats.uid !== operatingUid() ||
-      (stats.mode & 0o077) !== 0
+      (stats.uid !== uid && stats.uid !== filesystemOwnerUid) ||
+      (writableByOthers && !trustedStickyDirectory)
     ) {
       throw recoveryRequired(
-        "directory must be canonical, owner-controlled, and inaccessible to group/other users.",
+        "journal-path ancestors must be trusted real directories that cannot be replaced by another user.",
+      );
+    }
+    if (
+      final &&
+      (stats.uid !== uid || (stats.mode & 0o777) !== OWNER_DIRECTORY_MODE)
+    ) {
+      throw recoveryRequired(
+        "directory must be service-owned and inaccessible to group/other users.",
       );
     }
   }
 
-  private async assertUnlocked(lockPath: string): Promise<void> {
+  private async acquireLock(
+    directory: FileHandle,
+    lockName: string,
+  ): Promise<void> {
+    let lock: FileHandle;
     try {
-      await lstat(lockPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-      throw recoveryRequired("could not inspect the single-writer lock.");
+      lock = await open(
+        descriptorPath(directory, lockName),
+        constants.O_CREAT |
+          constants.O_EXCL |
+          constants.O_WRONLY |
+          constants.O_NOFOLLOW,
+        OWNER_FILE_MODE,
+      );
+    } catch {
+      throw recoveryRequired(
+        "single-writer lock exists or could not be acquired; interrupted or concurrent access requires explicit recovery.",
+      );
     }
-    throw recoveryRequired(
-      "single-writer lock exists; an interrupted or concurrent writer requires explicit recovery.",
-    );
+    try {
+      const stats = await lock.stat();
+      if (
+        !stats.isFile() ||
+        stats.nlink !== 1 ||
+        stats.uid !== operatingUid() ||
+        (stats.mode & 0o777) !== OWNER_FILE_MODE
+      ) {
+        throw recoveryRequired(
+          "single-writer lock is not an owner-only regular file with one link.",
+        );
+      }
+      await lock.sync();
+    } finally {
+      await lock.close();
+    }
+    await directory.sync();
   }
 
-  private async syncDirectory(): Promise<void> {
-    const handle = await open(
-      this.directory,
-      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
-    );
+  private async releaseLock(
+    directory: FileHandle,
+    lockName: string,
+  ): Promise<void> {
     try {
-      await handle.sync();
-    } finally {
-      await handle.close();
+      await unlink(descriptorPath(directory, lockName));
+      await directory.sync();
+    } catch {
+      throw recoveryRequired(
+        "single-writer lock cleanup was not durably completed; explicit recovery is required.",
+      );
     }
   }
 
@@ -123,14 +208,15 @@ export class DurableFileInstallJournal implements InstallJournal {
       });
   }
 
-  async read(planId: string): Promise<InstallJournalEntry[]> {
-    const paths = this.paths(planId);
-    await this.assertDirectory();
-    await this.assertUnlocked(paths.lock);
+  private async readHeld(
+    directory: FileHandle,
+    journalName: string,
+    planId: string,
+  ): Promise<InstallJournalEntry[]> {
     let handle: FileHandle;
     try {
       handle = await open(
-        paths.journal,
+        descriptorPath(directory, journalName),
         constants.O_RDONLY | constants.O_NOFOLLOW,
       );
     } catch (error) {
@@ -158,10 +244,31 @@ export class DurableFileInstallJournal implements InstallJournal {
     }
   }
 
+  async read(planId: string): Promise<InstallJournalEntry[]> {
+    const names = this.names(planId);
+    const directory = await this.openTrustedDirectory();
+    try {
+      await this.acquireLock(directory, names.lock);
+      let result: InstallJournalEntry[] | undefined;
+      let readError: unknown;
+      try {
+        result = await this.readHeld(directory, names.journal, planId);
+      } catch (error) {
+        readError = error;
+      }
+      await this.releaseLock(directory, names.lock);
+      if (readError !== undefined) throw readError;
+      if (result === undefined) {
+        throw recoveryRequired("journal read did not reach a result.");
+      }
+      return result;
+    } finally {
+      await directory.close();
+    }
+  }
+
   async append(entry: InstallJournalEntry): Promise<void> {
-    const paths = this.paths(entry.planId);
-    await this.assertDirectory();
-    await this.assertUnlocked(paths.lock);
+    const names = this.names(entry.planId);
     let encoded: string;
     try {
       encoded = JSON.stringify(entry);
@@ -174,79 +281,78 @@ export class DurableFileInstallJournal implements InstallJournal {
     if (serialized.length > 64 * 1024) {
       throw recoveryRequired("record exceeds the maximum atomic append size.");
     }
-    const lock = await open(
-      paths.lock,
-      constants.O_CREAT |
-        constants.O_EXCL |
-        constants.O_WRONLY |
-        constants.O_NOFOLLOW,
-      OWNER_FILE_MODE,
-    ).catch(() => {
-      throw recoveryRequired("failed to acquire the single-writer lock.");
-    });
-    await lock.sync();
-    await lock.close();
-    await this.syncDirectory();
-    let writeStarted = false;
+
+    const directory = await this.openTrustedDirectory();
     try {
-      const journal = await open(
-        paths.journal,
-        constants.O_CREAT |
-          constants.O_APPEND |
-          constants.O_RDWR |
-          constants.O_NOFOLLOW,
-        OWNER_FILE_MODE,
-      ).catch(() => {
-        throw recoveryRequired("journal file could not be opened for append.");
-      });
+      await this.acquireLock(directory, names.lock);
+      let writeStarted = false;
       try {
-        const stats = await journal.stat();
-        if (
-          !stats.isFile() ||
-          stats.nlink !== 1 ||
-          stats.uid !== operatingUid() ||
-          (stats.mode & 0o777) !== OWNER_FILE_MODE ||
-          stats.size + serialized.length > MAX_JOURNAL_BYTES
-        ) {
+        let journal: FileHandle;
+        try {
+          journal = await open(
+            descriptorPath(directory, names.journal),
+            constants.O_CREAT |
+              constants.O_APPEND |
+              constants.O_RDWR |
+              constants.O_NOFOLLOW,
+            OWNER_FILE_MODE,
+          );
+        } catch {
           throw recoveryRequired(
-            "journal append target is not a bounded, owner-only regular file with one link.",
+            "journal file could not be opened for append.",
           );
         }
-        const existing = this.parseRecords(
-          entry.planId,
-          await journal.readFile("utf8"),
-        );
-        if (
-          entry.sequence !== existing.length ||
-          entry.previousDigest !== (existing.at(-1)?.digest ?? null)
-        ) {
-          throw recoveryRequired(
-            "record is stale against the journal head held by the writer lock.",
+        try {
+          const stats = await journal.stat();
+          if (
+            !stats.isFile() ||
+            stats.nlink !== 1 ||
+            stats.uid !== operatingUid() ||
+            (stats.mode & 0o777) !== OWNER_FILE_MODE ||
+            stats.size + serialized.length > MAX_JOURNAL_BYTES
+          ) {
+            throw recoveryRequired(
+              "journal append target is not a bounded, owner-only regular file with one link.",
+            );
+          }
+          const existing = this.parseRecords(
+            entry.planId,
+            await journal.readFile("utf8"),
           );
+          if (
+            entry.sequence !== existing.length ||
+            entry.previousDigest !== (existing.at(-1)?.digest ?? null)
+          ) {
+            throw recoveryRequired(
+              "record is stale against the journal head held by the writer lock.",
+            );
+          }
+          writeStarted = true;
+          const result = await journal.write(
+            serialized,
+            0,
+            serialized.length,
+            null,
+          );
+          if (result.bytesWritten !== serialized.length) {
+            throw recoveryRequired(
+              "journal record was only partially appended.",
+            );
+          }
+          await journal.sync();
+        } finally {
+          await journal.close();
         }
-        writeStarted = true;
-        const result = await journal.write(
-          serialized,
-          0,
-          serialized.length,
-          null,
-        );
-        if (result.bytesWritten !== serialized.length) {
-          throw recoveryRequired("journal record was only partially appended.");
+        await directory.sync();
+      } catch (error) {
+        if (!writeStarted) {
+          await this.releaseLock(directory, names.lock);
         }
-        await journal.sync();
-      } finally {
-        await journal.close();
+        throw error;
       }
-      await this.syncDirectory();
-    } catch (error) {
-      if (!writeStarted) {
-        await unlink(paths.lock);
-        await this.syncDirectory();
-      }
-      throw error;
+      await this.releaseLock(directory, names.lock);
+    } finally {
+      await directory.close();
     }
-    await unlink(paths.lock);
-    await this.syncDirectory();
   }
 }

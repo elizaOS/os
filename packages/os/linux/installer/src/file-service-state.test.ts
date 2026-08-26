@@ -93,14 +93,17 @@ describe("durable installer root-service state", () => {
     expect(persisted).not.toContain("secret-not-persisted");
   });
 
-  it("serializes concurrent plans using different aliases for one disk", async () => {
+  it("serializes aliases and duplicate serials under one lock", async () => {
     const { root, state } = await stateFixture();
     const firstIdentity = createDiskExecutionIdentity(
       aliasInventory("wwn-0x5000c50012345678"),
     );
-    const secondIdentity = createDiskExecutionIdentity(
-      aliasInventory("ata-Samsung_SSD_Z4D3ABCD"),
-    );
+    const collision = aliasInventory("ata-Samsung_SSD_OTHER");
+    collision.kernelDeviceIdentity = "8:32:99";
+    collision.hardwareIdentity.wwn = "0x5000c50099999999";
+    collision.hardwareIdentity.firmwarePath =
+      "/sys/devices/pci0000:80/0000:80:01.0";
+    const secondIdentity = createDiskExecutionIdentity(collision);
     expect(secondIdentity).toBe(firstIdentity);
     let release: (() => void) | undefined;
     const held = new Promise<void>((resolve) => {

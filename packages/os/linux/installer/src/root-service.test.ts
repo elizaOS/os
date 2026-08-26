@@ -90,11 +90,10 @@ class MemoryJournal implements InstallJournal {
   }
 }
 
-function fixture(): {
+function fixture(target: DiskInventory = disk()): {
   message: LocalInstallExecutionRequest;
   target: DiskInventory;
 } {
-  const target = disk();
   const request: InstallRequest = {
     mode: "erase-disk",
     targetStableId: target.stableId,
@@ -325,6 +324,80 @@ describe("privileged installer root-service core", () => {
     );
   });
 
+  it("keeps the durable lock across firmware-path and kernel re-enumeration", () => {
+    const first = disk();
+    const reenumerated = {
+      ...first,
+      stableId: "ata-Samsung_SSD_Z4D3ABCD",
+      path: "/dev/disk/by-id/ata-Samsung_SSD_Z4D3ABCD",
+      kernelDeviceIdentity: "8:32:41",
+      hardwareIdentity: {
+        ...first.hardwareIdentity,
+        firmwarePath: "/sys/devices/pci0000:80/0000:80:01.0",
+      },
+    };
+
+    expect(createDiskExecutionIdentity(reenumerated)).toBe(
+      createDiskExecutionIdentity(first),
+    );
+  });
+
+  it("keeps one lock when WWN presence changes for the same serial", () => {
+    const first = disk();
+    const withoutWwn = {
+      ...first,
+      hardwareIdentity: {
+        ...first.hardwareIdentity,
+        wwn: undefined,
+      },
+    };
+
+    expect(createDiskExecutionIdentity(withoutWwn)).toBe(
+      createDiskExecutionIdentity(first),
+    );
+  });
+
+  it("maps duplicate serials to one conservative lock despite WWN drift", () => {
+    const first = disk();
+    const collision = {
+      ...first,
+      stableId: "usb-different-alias",
+      path: "/dev/disk/by-id/usb-different-alias",
+      hardwareIdentity: {
+        ...first.hardwareIdentity,
+        serial: "  z4d3abcd  ",
+        wwn: "0x5000c50099999999",
+        firmwarePath: "/sys/devices/pci0000:80/usb9/9-2",
+      },
+    };
+
+    expect(createDiskExecutionIdentity(collision)).toBe(
+      createDiskExecutionIdentity(first),
+    );
+  });
+
+  it("rejects privileged execution without a durable serial", () => {
+    const unidentified = disk();
+    unidentified.hardwareIdentity.serial = "";
+
+    expect(() => createDiskExecutionIdentity(unidentified)).toThrow(
+      /durable serial/,
+    );
+  });
+
+  it("rejects WWN-only execution before consuming replay state", async () => {
+    const target = disk();
+    target.hardwareIdentity.serial = "";
+    const { message } = fixture(target);
+    const deps = dependencies(target);
+
+    await expect(
+      new PrivilegedInstallService(deps).execute(message, PEER),
+    ).rejects.toThrow(/durable serial/);
+    expect(deps.claimed).toHaveLength(0);
+    expect(deps.applied).toHaveLength(0);
+  });
+
   it("rejects inventory drift before acquiring the physical lock", async () => {
     const { message, target } = fixture();
     let inspections = 0;
@@ -389,10 +462,16 @@ describe("privileged installer root-service core", () => {
   });
 
   it("rejects an oversized raw frame before parsing JSON", () => {
-    const frame = `${" ".repeat(1024 * 1024)}{}`;
+    const frame = Buffer.alloc(1024 * 1024 + 1, 0x20);
     expect(() => parseLocalInstallExecutionFrame(frame)).toThrow(
       /frame exceeds/,
     );
+  });
+
+  it("rejects decoded strings at the raw IPC frame boundary", () => {
+    expect(() =>
+      parseLocalInstallExecutionFrame("{}" as unknown as Uint8Array),
+    ).toThrow(/raw bytes/);
   });
 
   it("rejects malformed UTF-8 instead of decoding replacement characters", () => {

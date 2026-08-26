@@ -29,14 +29,17 @@ left by interruption is never silently removed: recovery must inspect it and
 the journal before execution can continue.
 
 `PrivilegedInstallService` is the root-side object core for a local IPC adapter.
-`parseLocalInstallExecutionFrame()` bounds raw bytes before JSON decoding and
-accepts only the typed `execute-reviewed-plan` request. The production adapter
+`parseLocalInstallExecutionFrame()` accepts only raw bytes, bounds them before
+JSON decoding, and accepts only the typed `execute-reviewed-plan` request. The
+production adapter
 must frame exactly one request per connection and reject trailing frames or
 bytes. The daemon itself must run as root and requires kernel-authenticated Unix
 peer credentials for a non-root process in the active, unlocked owner session.
-The adapter must bind those credentials to a non-reusable process-liveness
-token (a pidfd or PID plus verified process start time), reject transferred
-connected file descriptors, and never decode that token from request JSON. The
+The adapter must atomically bind those credentials to a kernel-owned,
+non-reusable process-liveness handle such as `SO_PEERPIDFD`, reject transferred
+connected file descriptors, and never decode that handle from request JSON. A
+numeric PID followed by a `/proc` lookup is not this boundary because PID reuse
+can occur between those operations. The
 owner/session binding and OS credential are rechecked immediately before the
 partition-table backup and every privileged disk mutation. Authorizations are
 single-use, and every plan targeting the same physical disk is serialized even
@@ -49,8 +52,12 @@ single-use owner/nonce claims are atomically created and synced without
 persisting credentials. Claims have strict field bounds and a durably
 serialized hard capacity; consumed records are never automatically removed,
 because deletion could permit replay. Capacity exhaustion fails closed pending
-an explicit recovery policy. Target locks use hashed immutable physical
-identity, record the plan-bound kernel device generation when available, and
+an explicit recovery policy. Target locks require and use normalized serial as
+their immutable physical identity. WWN remains bound into reviewed plans and
+inventory fingerprints but does not select the lock namespace, so transient
+WWN presence cannot split one disk across two locks. Duplicate serials
+conservatively share a lock. Locks record the plan-bound kernel device
+generation when available and
 remain after any failed operation or process interruption for explicit
 recovery. The production Unix socket adapter must obtain peer PID/UID/GID and
 process liveness from the kernel and active-session membership from logind or
@@ -105,11 +112,50 @@ so a same-path device replacement, repartition, mount, or protection-state
 change invalidates the entire inspection instead of returning mixed-time
 evidence.
 
-The package intentionally does not yet provide the production Unix socket and
-logind adapters, OS credential verifier, filesystem tools, GPT writer, image
-extractor, or bootloader backend. Those implementations and
+`createUnixInstallServer()` provides a bounded, one-request-per-connection
+AF_UNIX adapter. Its four-byte big-endian length prefix is checked before JSON
+decoding; partial frames, oversized frames, and trailing bytes are rejected.
+Peer PID/UID/GID must come from a trusted `LinuxUnixPeerCredentialProvider`;
+the production implementation must synchronously and atomically capture Linux
+`getsockopt(SO_PEERCRED)` plus a kernel-bound `SO_PEERPIDFD`/pidfd handle on the
+socket accepted by this process, before any asynchronous work. Numeric-PID-only
+implementations do not satisfy the interface. The logind adapter checks that
+same handle before and after resolving the process's session and before and
+after one `Properties.GetAll` transaction containing the session id, user,
+class, state, active, locked, remote, and seat properties. It never constructs
+authorization from a sequence of independently read properties. The systemd
+templates own
+a root-owned `0660` socket for the separately provisioned `elizaos-installer`
+group and harden the service. Production listening requires
+exactly one systemd-activated listener with `LISTEN_FDNAMES=installer`;
+an absent descriptor name is rejected, and the adapter does not accept a
+connected descriptor supplied by a caller. Connections have bounded size and
+concurrency. Framing has a separate five-second default deadline. Execution
+uses a configurable six-hour default bounded to one second through 24 hours,
+so admitted installation work is not constrained by the framing deadline.
+Execution is accepted only through an
+AbortSignal-aware service declaring `confirmed-stop-or-lock-retained`: after a
+timeout it must either confirm that work stopped or retain the fail-closed
+physical-target lock until work reaches a known terminal state. Transport
+execution timeout never claims an unabortable disk mutation was cancelled. The adapter
+retains its bounded handler slot and kernel process handle until the handler
+actually settles, even after the client socket is destroyed.
+
+The package now contains a Linux N-API `SO_PEERCRED`/`SO_PEERPIDFD` provider and
+a bounded `busctl`-based logind D-Bus resolver. Packaging must still build,
+install, and qualify the native module, and supply dedicated group membership,
+an OS credential verifier, AbortSignal-aware lock-retaining root-service
+composition, and an entry point. Until all are supplied,
+`/usr/libexec/elizaos-installer-service` and these unit templates must not be
+installed. The package intentionally does not yet provide the OS
+credential verifier, filesystem tools, GPT writer, image extractor, or
+bootloader backend. Those implementations and
 disposable-block-device qualification are required before the typed operation
-adapter may be connected to a real disk. Tests must use inventory fixtures or
+adapter may be connected to a real disk. A production mutation backend must
+open and authenticate the whole-disk block device inside its privileged method,
+retain that verified descriptor through the write, and mutate through that
+descriptor; reopening an inventory pathname after validation would leave a
+device-replacement TOCTOU window. Tests must use inventory fixtures or
 disposable virtual block devices only.
 
 ## Alongside support contract
@@ -150,4 +196,12 @@ Run the planner checks with:
 ```bash
 bun run --cwd packages/os/linux/installer test
 bun run --cwd packages/os/linux/installer typecheck
+bun run verify:installer-native
 ```
+
+`verify:installer-native` is the compile/load ABI gate and performs no kernel
+qualification. The dedicated Linux CI qualification uses a real cross-process
+accepted AF_UNIX connection and must prove peer PID/UID/GID and pidfd live,
+exited, and closed states without treating a denied syscall as a skip. A
+restricted local sandbox may therefore pass the compile gate while remaining
+explicitly non-qualified for the kernel boundary.

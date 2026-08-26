@@ -141,6 +141,18 @@ describe("durable file install journal", () => {
     ).rejects.toBeInstanceOf(InstallRecoveryRequiredError);
   });
 
+  it("refuses a journal reached through an untrusted writable ancestor", async () => {
+    const parent = await temporaryDirectory();
+    const unsafeAncestor = join(parent, "unsafe");
+    const directory = join(unsafeAncestor, "journal");
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await chmod(unsafeAncestor, 0o777);
+
+    await expect(
+      new DurableFileInstallJournal(directory).read(PLAN_ID),
+    ).rejects.toBeInstanceOf(InstallRecoveryRequiredError);
+  });
+
   it("rejects path-like plan identifiers before filesystem access", async () => {
     expect(() => new DurableFileInstallJournal("relative/journal")).toThrow(
       /absolute path/,
