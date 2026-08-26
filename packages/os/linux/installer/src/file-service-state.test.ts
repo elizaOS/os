@@ -5,6 +5,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  realpath,
   rm,
   symlink,
 } from "node:fs/promises";
@@ -28,7 +29,12 @@ async function stateFixture(): Promise<{
   root: string;
   state: DurableFileInstallServiceState;
 }> {
-  const root = await mkdtemp(join(tmpdir(), "elizaos-installer-service-"));
+  // The service's topology check rejects symlinked ancestors by design. On
+  // macOS os.tmpdir() sits under /var -> /private/var, so anchor the fixture
+  // at the resolved real path; the production check stays strict.
+  const root = await mkdtemp(
+    join(await realpath(tmpdir()), "elizaos-installer-service-"),
+  );
   temporaryDirectories.push(root);
   await mkdir(join(root, "authorizations"), { mode: 0o700 });
   await mkdir(join(root, "targets"), { mode: 0o700 });

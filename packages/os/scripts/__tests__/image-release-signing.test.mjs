@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { createHash, generateKeyPairSync } from "node:crypto";
+import { realpathSync } from "node:fs";
 import {
   chmod,
   link,
@@ -24,9 +25,13 @@ const repoRoot = path.resolve(
   fileURLToPath(new URL("../../../..", import.meta.url)),
 );
 const architectures = ["x86_64", "arm64", "riscv64"];
+// The signer requires canonical (realpath-stable) artifact roots by design;
+// macOS places os.tmpdir() under the /var -> /private/var symlink, so anchor
+// every fixture at the resolved real path.
+const tmpRoot = realpathSync(os.tmpdir());
 
 async function fixture() {
-  const root = await mkdtemp(path.join(os.tmpdir(), "elizaos-image-signing-"));
+  const root = await mkdtemp(path.join(tmpRoot, "elizaos-image-signing-"));
   await mkdir(root, { recursive: true });
   for (const architecture of architectures) {
     const base = path.join(root, `elizaos-1.2.3-beta.4-${architecture}.raw`);
@@ -350,7 +355,7 @@ test("signing rejects manifest and artifact signature path aliases", async () =>
 test("signing rejects a symlinked artifact root", async () => {
   const paths = await fixture();
   const aliasParent = await mkdtemp(
-    path.join(os.tmpdir(), "elizaos-image-signing-alias-"),
+    path.join(tmpRoot, "elizaos-image-signing-alias-"),
   );
   const alias = path.join(aliasParent, "artifact-root");
   await symlink(paths.root, alias);
@@ -366,7 +371,7 @@ test("signing rejects a symlinked artifact root", async () => {
 
 test("signing rejects an input path replaced after its handle is opened", async () => {
   const paths = await fixture();
-  const hooks = await mkdtemp(path.join(os.tmpdir(), "elizaos-sign-hooks-"));
+  const hooks = await mkdtemp(path.join(tmpRoot, "elizaos-sign-hooks-"));
   const signing = startSignRelease(paths, {
     env: {
       NODE_ENV: "test",
@@ -386,7 +391,7 @@ test("signing rejects an input path replaced after its handle is opened", async 
 
 test("signing rejects an artifact root replaced after trusted handles are opened", async () => {
   const paths = await fixture();
-  const hooks = await mkdtemp(path.join(os.tmpdir(), "elizaos-sign-hooks-"));
+  const hooks = await mkdtemp(path.join(tmpRoot, "elizaos-sign-hooks-"));
   const signing = startSignRelease(paths, {
     env: {
       NODE_ENV: "test",
@@ -415,7 +420,7 @@ test("signing rejects a staged pathname substitution and leaves no residue", {
   timeout: 15_000,
 }, async () => {
   const paths = await fixture();
-  const hooks = await mkdtemp(path.join(os.tmpdir(), "elizaos-sign-hooks-"));
+  const hooks = await mkdtemp(path.join(tmpRoot, "elizaos-sign-hooks-"));
   const signing = startSignRelease(paths, {
     env: {
       NODE_ENV: "test",
@@ -439,7 +444,7 @@ test("signing rejects a staged pathname substitution and leaves no residue", {
 
 test("signing does not overwrite an output raced into the release set", async () => {
   const paths = await fixture();
-  const hooks = await mkdtemp(path.join(os.tmpdir(), "elizaos-sign-hooks-"));
+  const hooks = await mkdtemp(path.join(tmpRoot, "elizaos-sign-hooks-"));
   const signing = startSignRelease(paths, {
     env: {
       NODE_ENV: "test",
@@ -512,7 +517,7 @@ test("input drift after promotion rolls the entire preexisting set back", async 
       outputs.map(async (filePath) => [filePath, await readFile(filePath)]),
     ),
   );
-  const hooks = await mkdtemp(path.join(os.tmpdir(), "elizaos-sign-hooks-"));
+  const hooks = await mkdtemp(path.join(tmpRoot, "elizaos-sign-hooks-"));
   const signing = startSignRelease(paths, {
     sequence: "43",
     env: {
