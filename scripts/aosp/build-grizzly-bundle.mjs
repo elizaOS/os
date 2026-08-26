@@ -640,7 +640,8 @@ function existingFilesystemPath(candidate) {
   let current = candidate;
   while (!fs.existsSync(current)) {
     const parent = path.dirname(current);
-    if (parent === current) fail(`no existing filesystem for path: ${candidate}`);
+    if (parent === current)
+      fail(`no existing filesystem for path: ${candidate}`);
     current = parent;
   }
   return current;
@@ -993,9 +994,17 @@ function parseProjectList(aospRoot) {
 
 function manifestAttributes(fragment, label) {
   const result = {};
-  for (const match of fragment.matchAll(
-    /(?:^|\s)([A-Za-z_][A-Za-z0-9_.:-]*)=(?:"([^"]*)"|'([^']*)')/g,
-  )) {
+  let remaining = fragment;
+  while (remaining.trim()) {
+    remaining = remaining.trimStart();
+    const match = remaining.match(
+      /^([A-Za-z_][A-Za-z0-9_.:-]*)=(?:"([^"]*)"|'([^']*)')/,
+    );
+    if (!match) {
+      fail(
+        `locked AOSP manifest contains invalid attribute syntax in ${label}`,
+      );
+    }
     const [, name, doubleQuoted, singleQuoted] = match;
     if (Object.hasOwn(result, name)) {
       fail(`locked AOSP manifest contains a duplicate ${name} in ${label}`);
@@ -1005,8 +1014,80 @@ function manifestAttributes(fragment, label) {
       fail(`locked AOSP manifest uses unsupported entities in ${label}`);
     }
     result[name] = value;
+    remaining = remaining.slice(match[0].length);
   }
   return result;
+}
+
+function exactObjectKeys(value, expected, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    fail(`${label} must be an object`);
+  }
+  const actual = Object.keys(value).sort((left, right) =>
+    left.localeCompare(right, "en"),
+  );
+  const wanted = [...expected].sort((left, right) =>
+    left.localeCompare(right, "en"),
+  );
+  if (!identicalSnapshot(actual, wanted)) {
+    fail(`${label} has unsupported or missing fields`);
+  }
+}
+
+function safeManifestPath(value) {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value !== "." &&
+    value !== ".repo" &&
+    !value.startsWith(".repo/") &&
+    !path.posix.isAbsolute(value) &&
+    value !== ".." &&
+    !value.startsWith("../") &&
+    !value.includes("\\") &&
+    path.posix.normalize(value) === value
+  );
+}
+
+function manifestRootEntries(projectPath, body) {
+  const entries = [];
+  const withoutEntries = body.replace(
+    /<(copyfile|linkfile)\b([^>]*)\/\s*>/g,
+    (_whole, directive, attributesFragment) => {
+      const attributes = manifestAttributes(
+        attributesFragment,
+        `${directive} in ${projectPath}`,
+      );
+      exactObjectKeys(
+        attributes,
+        ["src", "dest"],
+        `${directive} in ${projectPath}`,
+      );
+      if (
+        !safeManifestPath(attributes.src) ||
+        !safeManifestPath(attributes.dest)
+      ) {
+        fail(`locked AOSP manifest contains an unsafe ${directive}`);
+      }
+      entries.push({
+        path: attributes.dest,
+        projectPath,
+        sourcePath: attributes.src,
+        mode: directive === "copyfile" ? "copy" : "link",
+      });
+      return "";
+    },
+  );
+  const withoutAnnotations = withoutEntries.replace(
+    /<annotation\b[^>]*\/\s*>/g,
+    "",
+  );
+  if (withoutAnnotations.trim()) {
+    fail(
+      `locked AOSP manifest has unsupported project children in ${projectPath}`,
+    );
+  }
+  return entries;
 }
 
 function resolveManifestRemoteUrl(manifestUrl, fetch, projectName) {
@@ -1014,10 +1095,64 @@ function resolveManifestRemoteUrl(manifestUrl, fetch, projectName) {
   try {
     base = new URL(fetch.endsWith("/") ? fetch : `${fetch}/`, manifestUrl);
   } catch (error) {
-    fail(`locked AOSP manifest has an invalid remote fetch URL: ${error.message}`);
+    fail(
+      `locked AOSP manifest has an invalid remote fetch URL: ${error.message}`,
+    );
   }
   const resolved = new URL(projectName, base).href;
   return resolved.endsWith("/") ? resolved.slice(0, -1) : resolved;
+}
+
+function stripManifestComments(contents) {
+  if (
+    /<!(?:DOCTYPE|\[CDATA\[)/i.test(contents) ||
+    /<\?(?!xml\s)/i.test(contents)
+  ) {
+    fail("locked AOSP manifest uses unsupported XML constructs");
+  }
+  const withoutComments = contents.replace(/<!--[\s\S]*?-->/g, "");
+  if (withoutComments.includes("<!--") || withoutComments.includes("-->")) {
+    fail("locked AOSP manifest contains an invalid comment");
+  }
+  return withoutComments;
+}
+
+export function selectedManifestPath(aospRoot, manifestsRoot) {
+  const selectorPath = path.join(aospRoot, ".repo/manifest.xml");
+  const selectorState = fs.lstatSync(selectorPath);
+  let selectedManifest;
+  if (selectorState.isSymbolicLink()) {
+    selectedManifest = fs.realpathSync(selectorPath);
+  } else if (selectorState.isFile() && selectorState.nlink === 1) {
+    let selector = stripManifestComments(
+      readStableFile(selectorPath).toString("utf8"),
+    );
+    selector = selector.replace(/<\?xml\s[^?]*\?>/, "").trim();
+    const wrapper = selector.match(
+      /^<manifest\s*>\s*<include\b([^>]*)\/\s*>\s*<\/manifest\s*>$/,
+    );
+    if (!wrapper) {
+      fail("generated AOSP manifest selector must contain one exact include");
+    }
+    const include = manifestAttributes(wrapper[1], "manifest selector include");
+    exactObjectKeys(include, ["name"], "manifest selector include");
+    if (!safeManifestPath(include.name)) {
+      fail("generated AOSP manifest selector has an unsafe include");
+    }
+    selectedManifest = fs.realpathSync(path.join(manifestsRoot, include.name));
+  } else {
+    fail("AOSP manifest selector must be a private file or symlink");
+  }
+  const manifestRelative = path.relative(manifestsRoot, selectedManifest);
+  if (
+    !manifestRelative ||
+    manifestRelative === ".." ||
+    manifestRelative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(manifestRelative)
+  ) {
+    fail("selected AOSP manifest is not in the locked manifest checkout");
+  }
+  return { selectedManifest, manifestRelative };
 }
 
 export function requireResolvedManifestContract(lock) {
@@ -1031,6 +1166,7 @@ export function requireResolvedManifestContract(lock) {
       "grizzly source lock has no authoritative resolved AOSP manifest contract",
     );
   }
+  exactObjectKeys(contract, ["path", "sha256"], "resolvedManifest lock");
   return contract;
 }
 
@@ -1057,40 +1193,61 @@ function lockedManifestProjects(aospRoot, lock) {
   try {
     resolved = JSON.parse(resolvedBytes);
   } catch (error) {
-    fail(`authoritative resolved AOSP manifest is invalid JSON: ${error.message}`);
+    fail(
+      `authoritative resolved AOSP manifest is invalid JSON: ${error.message}`,
+    );
   }
   if (
     resolved?.schemaVersion !== 1 ||
     resolved.manifestCommit !== lock.manifestCommit ||
     !Array.isArray(resolved.projects) ||
-    resolved.projects.length === 0
+    resolved.projects.length === 0 ||
+    !Array.isArray(resolved.rootEntries)
   ) {
     fail("authoritative resolved AOSP manifest has an invalid contract");
   }
+  exactObjectKeys(
+    resolved,
+    ["schemaVersion", "manifestCommit", "projects", "rootEntries"],
+    "authoritative resolved AOSP manifest",
+  );
   const localManifests = path.join(aospRoot, ".repo/local_manifests");
   if (fs.existsSync(localManifests)) {
     fail("AOSP checkout must not contain local manifests");
   }
   const manifestsRoot = fs.realpathSync(path.join(aospRoot, ".repo/manifests"));
-  const selectedManifest = fs.realpathSync(path.join(aospRoot, ".repo/manifest.xml"));
-  const manifestRelative = path.relative(manifestsRoot, selectedManifest);
-  if (
-    !manifestRelative ||
-    manifestRelative === ".." ||
-    manifestRelative.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(manifestRelative)
-  ) {
-    fail("selected AOSP manifest is not in the locked manifest checkout");
-  }
+  const { selectedManifest, manifestRelative } = selectedManifestPath(
+    aospRoot,
+    manifestsRoot,
+  );
   run("git", ["ls-files", "--error-unmatch", manifestRelative], {
     cwd: manifestsRoot,
     capture: true,
   });
-  const contents = readStableFile(selectedManifest).toString("utf8");
+  const rawContents = readStableFile(selectedManifest).toString("utf8");
+  const contents = stripManifestComments(rawContents);
+  const supportedElements = new Set([
+    "manifest",
+    "remote",
+    "default",
+    "project",
+    "copyfile",
+    "linkfile",
+    "annotation",
+    "superproject",
+    "contactinfo",
+  ]);
+  for (const match of contents.matchAll(
+    /<\/?\s*([A-Za-z_:][A-Za-z0-9_.:-]*)\b/g,
+  )) {
+    if (!supportedElements.has(match[1])) {
+      fail(`locked AOSP manifest uses unsupported element ${match[1]}`);
+    }
+  }
   if (/<(?:include|remove-project|extend-project)\b/.test(contents)) {
     fail("locked AOSP manifest uses unsupported graph-altering directives");
   }
-  const defaultMatches = [...contents.matchAll(/<default\b([^>]*)\/?\s*>/g)];
+  const defaultMatches = [...contents.matchAll(/<default\b([^>]*?)\s*\/?>/g)];
   if (defaultMatches.length !== 1) {
     fail("locked AOSP manifest must contain exactly one default");
   }
@@ -1099,10 +1256,12 @@ function lockedManifestProjects(aospRoot, lock) {
     fail("locked AOSP manifest default must name a remote and revision");
   }
   if (defaults.revision !== `refs/tags/${lock.manifestRevision}`) {
-    fail("locked AOSP manifest default revision does not match the source lock");
+    fail(
+      "locked AOSP manifest default revision does not match the source lock",
+    );
   }
   const remotes = new Map();
-  for (const match of contents.matchAll(/<remote\b([^>]*)\/?\s*>/g)) {
+  for (const match of contents.matchAll(/<remote\b([^>]*?)\s*\/?>/g)) {
     const remote = manifestAttributes(match[1], "remote");
     if (!remote.name || !remote.fetch || remotes.has(remote.name)) {
       fail("locked AOSP manifest contains an invalid or duplicate remote");
@@ -1110,8 +1269,13 @@ function lockedManifestProjects(aospRoot, lock) {
     remotes.set(remote.name, remote);
   }
   const projects = [];
+  const rootEntries = [];
   const seen = new Set();
-  for (const match of contents.matchAll(/<project\b([^>]*)>/g)) {
+  let projectDeclarationCount = 0;
+  const projectPattern =
+    /<project\b([^>]*?)(?:\/\s*>|>([\s\S]*?)<\/project\s*>)/g;
+  for (const match of contents.matchAll(projectPattern)) {
+    projectDeclarationCount += 1;
     const project = manifestAttributes(match[1], "project");
     const projectPath = project.path ?? project.name;
     if (
@@ -1129,6 +1293,7 @@ function lockedManifestProjects(aospRoot, lock) {
     seen.add(projectPath);
     const groups = new Set((project.groups ?? "").split(",").filter(Boolean));
     if (groups.has("notdefault")) continue;
+    rootEntries.push(...manifestRootEntries(projectPath, match[2] ?? ""));
     const remoteName = project.remote ?? defaults.remote;
     const remote = remotes.get(remoteName);
     if (!remote) {
@@ -1146,12 +1311,19 @@ function lockedManifestProjects(aospRoot, lock) {
       revision: project.revision ?? defaults.revision,
     });
   }
+  if (
+    [...contents.matchAll(/<project\b/g)].length !== projectDeclarationCount
+  ) {
+    fail("locked AOSP manifest contains an unsupported project declaration");
+  }
   const expectedPaths = projects
     .map((project) => project.path)
     .sort((left, right) => left.localeCompare(right, "en"));
   const listedPaths = parseProjectList(aospRoot);
   if (!identicalSnapshot(expectedPaths, listedPaths)) {
-    fail("AOSP project list does not match the locked manifest's default graph");
+    fail(
+      "AOSP project list does not match the locked manifest's default graph",
+    );
   }
   const manifestGraph = projects
     .map(({ path: projectPath, name, remoteName, remoteUrl }) => ({
@@ -1163,14 +1335,21 @@ function lockedManifestProjects(aospRoot, lock) {
     .sort((left, right) => left.path.localeCompare(right.path, "en"));
   const resolvedGraph = resolved.projects
     .map((project) => {
+      exactObjectKeys(
+        project,
+        ["path", "name", "remoteName", "remoteUrl", "commit"],
+        "authoritative resolved AOSP manifest project",
+      );
       if (
-        typeof project?.path !== "string" ||
+        !safeManifestPath(project?.path) ||
         typeof project?.name !== "string" ||
         typeof project?.remoteName !== "string" ||
         typeof project?.remoteUrl !== "string" ||
         !/^[0-9a-f]{40}$/.test(project?.commit ?? "")
       ) {
-        fail("authoritative resolved AOSP manifest contains an invalid project");
+        fail(
+          "authoritative resolved AOSP manifest contains an invalid project",
+        );
       }
       return project;
     })
@@ -1181,9 +1360,50 @@ function lockedManifestProjects(aospRoot, lock) {
       resolvedGraph.map(({ commit: _commit, ...project }) => project),
     )
   ) {
-    fail("authoritative resolved AOSP manifest does not match the locked graph");
+    fail(
+      "authoritative resolved AOSP manifest does not match the locked graph",
+    );
   }
-  return resolvedGraph;
+  const seenRootEntries = new Set();
+  const resolvedRootEntries = resolved.rootEntries
+    .map((entry) => {
+      exactObjectKeys(
+        entry,
+        ["path", "projectPath", "sourcePath", "sourceType", "mode", "sha256"],
+        "authoritative resolved AOSP manifest root entry",
+      );
+      if (
+        !safeManifestPath(entry.path) ||
+        !safeManifestPath(entry.projectPath) ||
+        !safeManifestPath(entry.sourcePath) ||
+        !["file", "tree"].includes(entry.sourceType) ||
+        !["copy", "link"].includes(entry.mode) ||
+        (entry.mode === "copy" && entry.sourceType !== "file") ||
+        !/^[0-9a-f]{64}$/.test(entry.sha256 ?? "") ||
+        seenRootEntries.has(entry.path)
+      ) {
+        fail("authoritative resolved AOSP manifest has an invalid root entry");
+      }
+      seenRootEntries.add(entry.path);
+      return entry;
+    })
+    .sort((left, right) => left.path.localeCompare(right.path, "en"));
+  const derivedRootEntries = rootEntries.sort((left, right) =>
+    left.path.localeCompare(right.path, "en"),
+  );
+  if (
+    !identicalSnapshot(
+      derivedRootEntries,
+      resolvedRootEntries.map(
+        ({ sha256: _sha256, sourceType: _sourceType, ...entry }) => entry,
+      ),
+    )
+  ) {
+    fail(
+      "authoritative resolved AOSP root entries do not match manifest copy/link directives",
+    );
+  }
+  return { projects: resolvedGraph, rootEntries: resolvedRootEntries };
 }
 
 function parseProjectStatus(projectPath, status, allowedPaths) {
@@ -1217,13 +1437,214 @@ function parseProjectStatus(projectPath, status, allowedPaths) {
   return result;
 }
 
-function aospProjectSnapshot(aospRoot, lock) {
+function pathContains(parent, candidate) {
+  return candidate === parent || candidate.startsWith(`${parent}/`);
+}
+
+function isAncestorOfAny(candidate, roots) {
+  return roots.some((root) => root.startsWith(`${candidate}/`));
+}
+
+function verifyManifestRootEntry(aospRoot, entry) {
+  const source = path.join(aospRoot, entry.projectPath, entry.sourcePath);
+  const destination = path.join(aospRoot, entry.path);
+  const sourceState = fs.lstatSync(source, { throwIfNoEntry: false });
+  const sourceSha256 =
+    entry.sourceType === "file"
+      ? sha256File(source, { allowEmpty: true })
+      : sourceState?.isDirectory() && !sourceState.isSymbolicLink()
+        ? hashDirectoryTree(source, path.join(aospRoot, entry.projectPath))
+        : null;
+  if (sourceSha256 !== entry.sha256) {
+    fail(`manifest root-entry source drifted: ${entry.path}`);
+  }
+  const destinationState = fs.lstatSync(destination, {
+    throwIfNoEntry: false,
+  });
+  if (entry.mode === "copy") {
+    if (
+      !destinationState?.isFile() ||
+      destinationState.isSymbolicLink() ||
+      destinationState.nlink !== 1 ||
+      destinationState.size !== sourceState?.size ||
+      sha256File(destination, { allowEmpty: true }) !== entry.sha256
+    ) {
+      fail(`manifest copyfile output drifted: ${entry.path}`);
+    }
+  } else {
+    if (
+      !destinationState?.isSymbolicLink() ||
+      fs.realpathSync(destination) !== fs.realpathSync(source)
+    ) {
+      fail(`manifest linkfile output drifted: ${entry.path}`);
+    }
+  }
+}
+
+export function assertClosedAospSourceRoot({
+  aospRoot,
+  outRoot,
+  projectPaths,
+  boundTreePaths,
+  rootEntries,
+}) {
+  const authorizedTreePaths = [...projectPaths, ...boundTreePaths];
+  for (const value of authorizedTreePaths) {
+    if (!safeManifestPath(value)) {
+      fail(`AOSP source-root authorization contains an unsafe path: ${value}`);
+    }
+  }
+  if (new Set(authorizedTreePaths).size !== authorizedTreePaths.length) {
+    fail("AOSP source-root authorization contains duplicate paths");
+  }
+  const seenRootEntryPaths = new Set();
+  for (const entry of rootEntries) {
+    if (
+      !safeManifestPath(entry?.path) ||
+      !safeManifestPath(entry?.projectPath) ||
+      !safeManifestPath(entry?.sourcePath) ||
+      !["file", "tree"].includes(entry?.sourceType) ||
+      !["copy", "link"].includes(entry?.mode) ||
+      (entry.mode === "copy" && entry.sourceType !== "file") ||
+      !/^[0-9a-f]{64}$/.test(entry?.sha256 ?? "") ||
+      seenRootEntryPaths.has(entry.path)
+    ) {
+      fail("AOSP source-root authorization contains an invalid root entry");
+    }
+    seenRootEntryPaths.add(entry.path);
+  }
+  const normalizedProjects = projectPaths.map((entry) =>
+    path.posix.normalize(entry),
+  );
+  const normalizedBoundTrees = boundTreePaths.map((entry) =>
+    path.posix.normalize(entry),
+  );
+  const canonicalAospRoot = fs.realpathSync(aospRoot);
+  if (canonicalAospRoot !== aospRoot) {
+    fail("AOSP source root must be canonical");
+  }
+  const repoRoot = path.join(aospRoot, ".repo");
+  const repoState = fs.lstatSync(repoRoot, { throwIfNoEntry: false });
+  if (
+    !repoState?.isDirectory() ||
+    repoState.isSymbolicLink() ||
+    fs.realpathSync(repoRoot) !== repoRoot
+  ) {
+    fail("AOSP repo metadata root must be canonical");
+  }
+  for (const authorizedPath of [
+    ...normalizedProjects,
+    ...normalizedBoundTrees,
+  ]) {
+    const absolute = path.join(aospRoot, authorizedPath);
+    const state = fs.lstatSync(absolute, { throwIfNoEntry: false });
+    if (
+      !state?.isDirectory() ||
+      state.isSymbolicLink() ||
+      fs.realpathSync(absolute) !== absolute
+    ) {
+      fail(`authorized AOSP source tree is not canonical: ${authorizedPath}`);
+    }
+  }
+  const outputFilesystemPath = existingFilesystemPath(outRoot);
+  const canonicalOutRoot = fs.existsSync(outRoot)
+    ? fs.realpathSync(outRoot)
+    : path.join(
+        fs.realpathSync(outputFilesystemPath),
+        path.relative(outputFilesystemPath, outRoot),
+      );
+  const outRelativeNative = path.relative(canonicalAospRoot, canonicalOutRoot);
+  const outRelative = outRelativeNative.split(path.sep).join("/");
+  if (
+    canonicalOutRoot === canonicalAospRoot ||
+    canonicalAospRoot.startsWith(`${canonicalOutRoot}${path.sep}`) ||
+    outRelative === ".repo" ||
+    outRelative.startsWith(".repo/")
+  ) {
+    fail("AOSP OUT_DIR overlaps source or repo metadata");
+  }
+  const excludedRoots =
+    outRelative &&
+    outRelative !== ".." &&
+    !outRelative.startsWith("../") &&
+    !path.posix.isAbsolute(outRelative)
+      ? [outRelative]
+      : [];
+  const coveredRoots = [
+    ...normalizedProjects,
+    ...normalizedBoundTrees,
+    ...excludedRoots,
+  ];
+  const rootEntryPaths = rootEntries.map((entry) => entry.path);
+  const allExpectedPaths = [...coveredRoots, ...rootEntryPaths];
+
+  if (
+    excludedRoots.some((outputPath) =>
+      [...normalizedProjects, ...normalizedBoundTrees, ...rootEntryPaths].some(
+        (sourcePath) =>
+          pathContains(outputPath, sourcePath) ||
+          pathContains(sourcePath, outputPath),
+      ),
+    )
+  ) {
+    fail("AOSP OUT_DIR overlaps an authorized source path");
+  }
+
+  for (const entry of rootEntries) {
+    if (
+      coveredRoots.some((root) => pathContains(root, entry.path)) ||
+      rootEntryPaths.some(
+        (other) => other !== entry.path && pathContains(other, entry.path),
+      )
+    ) {
+      fail(
+        `manifest root entry overlaps another authorized source: ${entry.path}`,
+      );
+    }
+    verifyManifestRootEntry(aospRoot, entry);
+  }
+
+  const visit = (directory, prefix = "") => {
+    for (const entry of fs
+      .readdirSync(directory, { withFileTypes: true })
+      .sort((left, right) => left.name.localeCompare(right.name, "en"))) {
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (relative === ".repo") continue;
+      const absolute = path.join(directory, entry.name);
+      if (coveredRoots.includes(relative)) continue;
+      if (rootEntryPaths.includes(relative)) continue;
+      if (
+        entry.isDirectory() &&
+        !entry.isSymbolicLink() &&
+        isAncestorOfAny(relative, allExpectedPaths)
+      ) {
+        visit(absolute, relative);
+        continue;
+      }
+      fail(`AOSP source root contains an unlocked entry: ${relative}`);
+    }
+  };
+  visit(aospRoot);
+  return {
+    projectCount: normalizedProjects.length,
+    boundTrees: normalizedBoundTrees,
+    rootEntries: rootEntries.map(({ path: entryPath, sha256 }) => ({
+      path: entryPath,
+      sha256,
+    })),
+  };
+}
+
+function aospProjectSnapshot(aospRoot, outRoot, lock) {
   const allowedPaths = new Set(
     (lock.sourceOverlays ?? []).map(({ path: overlayPath }) =>
       path.posix.normalize(overlayPath),
     ),
   );
-  const manifestProjects = lockedManifestProjects(aospRoot, lock);
+  const { projects: manifestProjects, rootEntries } = lockedManifestProjects(
+    aospRoot,
+    lock,
+  );
   const expectedProjects = [
     ...manifestProjects,
     ...(lock.externalProjects ?? []).map((project) => ({
@@ -1235,7 +1656,7 @@ function aospProjectSnapshot(aospRoot, lock) {
       expectedCommit: project.commit,
     })),
   ];
-  return expectedProjects.map((expected) => {
+  const projects = expectedProjects.map((expected) => {
     const projectPath = expected.path;
     const projectRoot = path.join(aospRoot, projectPath);
     if (fs.realpathSync(projectRoot) !== projectRoot) {
@@ -1277,11 +1698,19 @@ function aospProjectSnapshot(aospRoot, lock) {
       remotes[0].name !== expected.remoteName ||
       remotes[0].url !== expected.remoteUrl
     ) {
-      fail(`AOSP project remote does not match the locked manifest: ${projectPath}`);
+      fail(
+        `AOSP project remote does not match the locked manifest: ${projectPath}`,
+      );
     }
     const status = run(
       "git",
-      ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+      [
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+        "--ignored=matching",
+      ],
       {
         cwd: path.join(aospRoot, projectPath),
         capture: true,
@@ -1297,12 +1726,21 @@ function aospProjectSnapshot(aospRoot, lock) {
       status: parseProjectStatus(projectPath, status, allowedPaths),
     };
   });
+  const sourceRoot = assertClosedAospSourceRoot({
+    aospRoot,
+    outRoot,
+    projectPaths: expectedProjects.map(({ path: projectPath }) => projectPath),
+    boundTreePaths: ["vendor/google_devices/grizzly", "vendor/eliza"],
+    rootEntries,
+  });
+  return { projects, sourceRoot };
 }
 
-function sourceSnapshot({ aospRoot, elizaRoot, lock, lockPath }) {
+function sourceSnapshot({ aospRoot, outRoot, elizaRoot, lock, lockPath }) {
   assertPinnedAospCheckout(aospRoot, lock);
   assertGeneratedVendorTree(aospRoot, lock);
   assertLockedOverlays(aospRoot, lock);
+  const { projects, sourceRoot } = aospProjectSnapshot(aospRoot, outRoot, lock);
   return {
     osCommit: cleanGitCommit(repositoryRoot, "elizaOS/os"),
     elizaCommit: cleanGitCommit(elizaRoot, "elizaOS/eliza"),
@@ -1315,7 +1753,8 @@ function sourceSnapshot({ aospRoot, elizaRoot, lock, lockPath }) {
       path.join(aospRoot, ".repo/repo"),
       "repo implementation",
     ),
-    aospProjects: aospProjectSnapshot(aospRoot, lock),
+    aospProjects: projects,
+    aospSourceRoot: sourceRoot,
     generatedVendorSha256: hashDirectoryTree(
       path.join(aospRoot, "vendor/google_devices/grizzly"),
       aospRoot,
@@ -1543,6 +1982,7 @@ export function main(argv = process.argv.slice(2)) {
   });
   const before = sourceSnapshot({
     aospRoot: args.aospRoot,
+    outRoot,
     elizaRoot,
     lock,
     lockPath: args.lockPath,
@@ -1706,10 +2146,7 @@ export function main(argv = process.argv.slice(2)) {
               "--image",
               path.join(staging, "flash", filename),
               "--key",
-              path.join(
-                args.aospRoot,
-                avbAuthorizations.get(filename).keyPath,
-              ),
+              path.join(args.aospRoot, avbAuthorizations.get(filename).keyPath),
               ...(filename === "vbmeta.img"
                 ? ["--follow_chain_partitions"]
                 : []),
@@ -1834,6 +2271,7 @@ export function main(argv = process.argv.slice(2)) {
     );
     const after = sourceSnapshot({
       aospRoot: args.aospRoot,
+      outRoot,
       elizaRoot,
       lock,
       lockPath: args.lockPath,
