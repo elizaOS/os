@@ -7630,7 +7630,7 @@
       "sourcePath": "core",
       "sourceType": "tree",
       "mode": "link",
-      "sha256": "b9a60f68cbcfd98945ff3a49d04ec966a4c75ab8dc7bdc8f44134c08a11c3707"
+      "sha256": "42243fa74efa126966c831b6add7260a5204023ca22afc88ed71187a09024685"
     },
     {
       "path": "build/envsetup.sh",
@@ -7646,7 +7646,7 @@
       "sourcePath": "target",
       "sourceType": "tree",
       "mode": "link",
-      "sha256": "da9d75acd884a9f369b18308e234aec064a1a13e5c791239de9f68cece5885fe"
+      "sha256": "8bd04d4c8628ee3ddf11a6d5b3338020c160287263a059ba4f8f9654bea41de0"
     },
     {
       "path": "build/tools",
@@ -7654,7 +7654,7 @@
       "sourcePath": "tools",
       "sourceType": "tree",
       "mode": "link",
-      "sha256": "83415f4232f4d09f4a3d38d2f758cd2024301e16668928bb70e0eae9722273c9"
+      "sha256": "4a3b02b7873b6d006a7f202cb2348a1c398341dea4f0f0443bc50cff38c97308"
     },
     {
       "path": "lk_inc.mk",
