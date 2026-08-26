@@ -77,10 +77,11 @@ The riscv64 target remains fail-closed and requires a locally built or hosted
 environment. The reusable workflow exposes `bun-riscv64-url` and
 `bun-riscv64-sha256` for that lane.
 
-The canonical Cuttlefish products depend only on this release repository and
-the checkout pinned by `aosp.lock.json`. They do not inherit external chip
-simulator trees. Any future simulator integration needs a dedicated product
-whose external sources are revision-locked and verified before the build.
+The canonical Cuttlefish products do not depend on device trees outside this
+release repository and its pinned AOSP checkout. A separately staged E1 NPU
+simulator can be enabled with `ELIZA_ENABLE_E1_NPU_SIM=true`; without that
+explicit opt-in, the Eliza launcher image builds without the external chip
+overlay.
 
 Before assembling the APK, the Make and workflow front doors build the
 mandatory arm64 fused inference library plus the selected Cuttlefish ABI.

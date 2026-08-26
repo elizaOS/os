@@ -110,7 +110,7 @@ describe("AOSP build contracts", () => {
     expect(makefile).not.toContain("ELIZA_MTP_ANDROID_LIBDIR");
   });
 
-  test("canonical Cuttlefish products use only pinned product inputs", () => {
+  test("canonical Cuttlefish launcher products gate the optional E1 tree", () => {
     const productsRoot = join(
       repositoryRoot,
       "packages/os/android/vendor/eliza/products",
@@ -133,14 +133,24 @@ describe("AOSP build contracts", () => {
         join(productsRoot, `eliza_cf_${architecture}_phone.mk`),
         "utf8",
       );
-      expect(product).not.toMatch(/device\/eliza\/|cuttlefish_e1/);
+      const optionalE1Product =
+        "$(call inherit-product, device/eliza/cuttlefish_e1/eliza_e1_cuttlefish.mk)";
       const expectedComposition = [
         `$(call inherit-product, device/google/cuttlefish/${deviceProduct}/phone/aosp_cf.mk)`,
         "$(call inherit-product, vendor/eliza/eliza_common.mk)",
+        optionalE1Product,
       ];
       expect(activeProductCompositionLines(product)).toEqual(
         expectedComposition,
       );
+      const guard = "ifeq ($(ELIZA_ENABLE_E1_NPU_SIM),true)";
+      expect(product).toContain(guard);
+      expect(product.indexOf(guard)).toBeLessThan(
+        product.indexOf(optionalE1Product),
+      );
+      expect(
+        product.indexOf("endif", product.indexOf(optionalE1Product)),
+      ).toBeGreaterThan(product.indexOf(optionalE1Product));
       for (const forbiddenDirective of [
         "$(call inherit-product-if-exists, device/eliza/cuttlefish_e1/eliza_e1_cuttlefish.mk)",
         "include device/eliza/cuttlefish_e1/eliza_e1_cuttlefish.mk",

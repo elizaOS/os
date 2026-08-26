@@ -2,8 +2,8 @@
 #
 # Cuttlefish: virtual phones. arm64, x86_64, and riscv64 are all declared so
 #   the elizaOS AOSP fork has explicit emulator lanes for each supported ABI.
-#   riscv64 boot transcripts are gated on a Linux x86_64 build host. External
-#   chip simulators require their own pinned product and source lock.
+#   riscv64 boot transcripts are gated on a Linux x86_64 build host. Optional
+#   external chip simulators are not part of these canonical product inputs.
 # Pixel hardware: each device has its own pinned source/stock-input contract.
 # Installer eligibility remains independently gated by hardware-targets.json
 # and a retained real-device flash/boot evidence bundle.
