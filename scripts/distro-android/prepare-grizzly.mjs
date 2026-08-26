@@ -14,7 +14,6 @@ import {
   materializeLockedSourceOverlays,
   verifyLockedArtifact,
 } from "./bootstrap-aosp.mjs";
-import { lintInitRc } from "./lint-init-rc.mjs";
 import { withSisoCompatibility } from "./siso-env.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -192,27 +191,6 @@ export function normalizeGeneratedF2fsMountOptions(aospRoot) {
   }
 }
 
-export function normalizeGeneratedUsbConfigfs(aospRoot) {
-  const filePath = path.join(
-    aospRoot,
-    "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.malibu.usb.rc",
-  );
-  if (!fs.existsSync(filePath)) return;
-  const contents = fs.readFileSync(filePath, "utf8");
-  const normalized = contents.replace(
-    /setprop sys\.usb\.configfs 2/g,
-    "setprop sys.usb.configfs 1",
-  );
-  const withAdbDefault = normalized.replace(
-    /on boot\n {4}# Use USB Gadget HAL\n {4}setprop sys\.usb\.configfs 1/,
-    "on boot\n    # Use USB Gadget HAL\n    setprop sys.usb.controller a210000.dwc3\n    setprop sys.usb.configfs 1\n    # Keep the unlocked userdebug bring-up reachable before framework USB policy.\n    setprop persist.sys.usb.config adb\n    setprop sys.usb.config adb",
-  );
-  if (withAdbDefault !== contents) {
-    fs.chmodSync(filePath, 0o644);
-    fs.writeFileSync(filePath, withAdbDefault);
-  }
-}
-
 // The extracted Pixel 11 vendor defaults route SurfaceFlinger through ANGLE
 // and select the Skia Graphite renderer (debug.renderengine.graphite=true).
 //
@@ -330,208 +308,8 @@ export function normalizeGeneratedGraphicsProperties(aospRoot) {
   if (normalized !== contents) fs.writeFileSync(filePath, normalized);
 }
 
-// The extracted stock grizzly init waits synchronously for every proprietary
-// kernel module before proceeding through early-boot.  During bring-up a
-// missing optional module must not strand init (and therefore USB/adbd) on the
-// splash screen; the module loader remains started asynchronously below.
-function normalizeGeneratedEarlyBootModuleWait(aospRoot) {
-  const filePath = path.join(
-    aospRoot,
-    "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.grizzly.rc",
-  );
-  if (!fs.existsSync(filePath)) return;
-  const contents = fs.readFileSync(filePath, "utf8");
-  const normalized = contents.replace(
-    /on early-boot\n {4}# Wait for insmod_sh to finish all common modules\n {4}wait_for_prop vendor\.common\.modules\.ready 1\n {4}start insmod_sh_grizzly/,
-    "on early-boot\n    # elizaOS: keep bring-up non-blocking when an optional module is absent\n    start insmod_sh_grizzly",
-  );
-  const debugImport = "import /vendor/etc/init/hw/init.elizaos-debug.rc";
-  const earlyInitMarker =
-    "    # elizaOS: prove vendor init reached the earliest normal-boot phase";
-  let withMarker = normalized;
-  if (!withMarker.includes(debugImport)) {
-    withMarker = withMarker.replace(
-      /^# grizzly specific init\.rc$/m,
-      `# grizzly specific init.rc\n${debugImport}`,
-    );
-  }
-  if (!withMarker.includes(earlyInitMarker)) {
-    // Marker channels, most reliable first: /dev/kmsg lands in the kernel log
-    // and pstore console-ramoops with no filesystem or sepolicy dependency;
-    // vendor.elizaos.* props are settable by vendor_init and visible to a live
-    // shell; the /metadata file needs metadata_file write access that stock
-    // policy may deny, so treat its absence as non-evidence. Do NOT `start
-    // adbd` here: the adbd service definition lives in the com.android.adbd
-    // APEX and does not exist before apexd runs at post-fs-data — an early
-    // start is a silent no-op that made "no ADB" look like an early-init hang.
-    withMarker = withMarker.replace(
-      /^on early-boot/m,
-      'on early-init\n    # elizaOS: prove vendor init reached the earliest normal-boot phase\n    write /dev/kmsg "elizaos-init: early-init reached"\n    setprop vendor.elizaos.boot_phase early-init\n    write /metadata/elizaos_vendor_init.marker 1\n    setprop sys.usb.controller a210000.dwc3\n    setprop sys.usb.configfs 1\n    setprop persist.sys.usb.config adb\n    setprop sys.usb.config adb\n\non early-boot',
-    );
-  }
-  if (withMarker !== contents) {
-    fs.chmodSync(filePath, 0o644);
-    fs.writeFileSync(filePath, withMarker);
-  }
-}
-
-function normalizeGeneratedDebugInit(aospRoot) {
-  const filePath = path.join(
-    aospRoot,
-    "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.elizaos-debug.rc",
-  );
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  // kmsg writes are the trustworthy channel (recovered via pstore
-  // console-ramoops after a forced reboot); the /metadata markers are
-  // best-effort because stock sepolicy may deny vendor_init writes there.
-  // No `start adbd` here: the service definition only exists after apexd
-  // activates the com.android.adbd APEX at post-fs-data; the on-boot USB
-  // property triggers in init.malibu.usb.rc are what legitimately start it.
-  const contents = `# elizaOS bring-up ordering probe; remove after normal boot is proven.
-
-on post-fs
-    write /dev/kmsg "elizaos-init: post-fs reached"
-    setprop vendor.elizaos.boot_phase post-fs
-    write /metadata/elizaos_debug_postfs.marker 1
-    setprop sys.usb.controller a210000.dwc3
-    setprop sys.usb.config adb
-
-on post-fs-data
-    write /dev/kmsg "elizaos-init: post-fs-data reached"
-    setprop vendor.elizaos.boot_phase post-fs-data
-    write /metadata/elizaos_debug_postfs_data.marker 1
-
-on boot
-    write /dev/kmsg "elizaos-init: boot reached"
-    setprop vendor.elizaos.boot_phase boot
-`;
-  fs.writeFileSync(filePath, contents);
-  fs.chmodSync(filePath, 0o644);
-}
-
-// adevtool's generated copy rules predate the probe rc file, so nothing would
-// install it into vendor.img — init would log a failed import and every probe
-// would silently read as "init never got there". Append an explicit product
-// copy rule while probes are enabled; the whole tree (including this edit) is
-// regenerated when probes are turned off.
-function normalizeGeneratedDebugInitInstallRule(aospRoot) {
-  const makefilePath = path.join(
-    aospRoot,
-    "vendor/google_devices/grizzly/grizzly.mk",
-  );
-  if (!fs.existsSync(makefilePath)) return;
-  const contents = fs.readFileSync(makefilePath, "utf8");
-  const copyRule =
-    "\n# elizaOS: install the bring-up ordering probe init file\n" +
-    "PRODUCT_COPY_FILES += \\\n" +
-    "    vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.elizaos-debug.rc:$(TARGET_COPY_OUT_VENDOR)/etc/init/hw/init.elizaos-debug.rc\n";
-  if (contents.includes(copyRule)) return;
-  fs.writeFileSync(makefilePath, `${contents}${copyRule}`);
-}
-
-function normalizeGeneratedModuleWaits(aospRoot) {
-  const relativePaths = [
-    "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.malibu.rc",
-    "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.modem.rc",
-    "vendor/google_devices/grizzly/proprietary/vendor/etc/init/dump_power.rc",
-  ];
-  for (const relativePath of relativePaths) {
-    const filePath = path.join(aospRoot, relativePath);
-    if (!fs.existsSync(filePath)) continue;
-    const contents = fs.readFileSync(filePath, "utf8");
-    const normalized = contents.replace(
-      /^\s*wait_for_prop vendor\.common\.modules\.ready 1\s*$/gm,
-      "    # elizaOS: do not block boot on optional module readiness",
-    );
-    if (normalized !== contents) {
-      fs.chmodSync(filePath, 0o644);
-      fs.writeFileSync(filePath, normalized);
-    }
-  }
-}
-
-// The stock storage proxy action waits synchronously for the secure-storage
-// SCSI node.  On an unlocked bring-up device that node can be late (or absent)
-// while the rest of init is healthy; blocking post-fs here prevents bootanim,
-// framework startup, and normal-boot ADB from ever becoming observable.  Keep
-// the service start, but let its own retry/error handling deal with readiness.
-function normalizeGeneratedStorageProxyWait(aospRoot) {
-  const filePath = path.join(
-    aospRoot,
-    "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.malibu.rc",
-  );
-  if (!fs.existsSync(filePath)) return;
-  const contents = fs.readFileSync(filePath, "utf8");
-  const normalized = contents.replace(
-    /^ {4}wait \/dev\/sg1\n {4}start storageproxyd$/m,
-    "    # elizaOS: do not block post-fs on optional secure-storage enumeration\n    start storageproxyd",
-  );
-  if (normalized !== contents) {
-    fs.chmodSync(filePath, 0o644);
-    fs.writeFileSync(filePath, normalized);
-  }
-}
-
-export function normalizeGeneratedInitPhaseMarkers(aospRoot) {
-  const filePath = path.join(
-    aospRoot,
-    "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.malibu.rc",
-  );
-  if (!fs.existsSync(filePath)) return;
-  const contents = fs.readFileSync(filePath, "utf8");
-  const lines = contents.split("\n");
-  // Two channels per phase: /dev/kmsg reaches pstore console-ramoops with no
-  // filesystem or sepolicy dependency; the /metadata file is best-effort
-  // (stock policy may deny vendor_init there — absence is non-evidence).
-  const markers = [
-    ["on boot", "/metadata/elizaos_boot.marker", "malibu boot"],
-    ["on post-fs", "/metadata/elizaos_postfs.marker", "malibu post-fs"],
-    ["on late-fs", "/metadata/elizaos_latefs.marker", "malibu late-fs"],
-    [
-      "on post-fs-data",
-      "/metadata/elizaos_postfs_data.marker",
-      "malibu post-fs-data",
-    ],
-    [
-      "on property:vendor.common.modules.ready=1",
-      "/metadata/elizaos_bootanim.marker",
-      "modules ready, bootanim trigger",
-    ],
-  ];
-  for (const [event, marker, label] of markers) {
-    const index = lines.indexOf(event);
-    const kmsgLine = `    write /dev/kmsg "elizaos-init: ${label}"`;
-    if (index >= 0 && lines[index + 1] !== kmsgLine) {
-      lines.splice(index + 1, 0, kmsgLine, `    write ${marker} 1`);
-    }
-  }
-  const mountIndex = lines.indexOf("    mount_all --late");
-  const lateDoneKmsg =
-    '    write /dev/kmsg "elizaos-init: mount_all --late done"';
-  if (mountIndex >= 0 && lines[mountIndex + 1] !== lateDoneKmsg) {
-    // init/fs_mgr emits post-fs-data after mount_all --late. Do not synthesize
-    // a second trigger: duplicate post-fs-data runs can remount or restart
-    // vendor services while SurfaceFlinger is initializing.
-    lines.splice(
-      mountIndex + 1,
-      0,
-      lateDoneKmsg,
-      "    write /metadata/elizaos_latefs_done.marker 1",
-    );
-  }
-  const normalized = lines.join("\n");
-  if (normalized !== contents) {
-    fs.chmodSync(filePath, 0o644);
-    fs.writeFileSync(filePath, normalized);
-  }
-}
-
 const PROBE_INIT_FILES = [
   "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.grizzly.rc",
-  "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.malibu.rc",
-  "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.malibu.usb.rc",
-  "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.modem.rc",
-  "vendor/google_devices/grizzly/proprietary/vendor/etc/init/dump_power.rc",
   "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.elizaos-debug.rc",
 ];
 
@@ -592,33 +370,13 @@ export function generatedTreeHasEglOverride(aospRoot) {
     .includes("# elizaOS: native PowerVR EGL override");
 }
 
-// Boot-time init parse errors are unrecoverable evidence loss on a device
-// with no shell. Hard-fail on the file we author outright; the stock files we
-// only edit may legitimately use vendor extensions the linter does not know,
-// so their issues are reported but not fatal.
-function lintGeneratedInitFiles(aospRoot) {
-  for (const relativePath of PROBE_INIT_FILES) {
-    const filePath = path.join(aospRoot, relativePath);
-    if (!fs.existsSync(filePath)) continue;
-    const issues = lintInitRc(filePath);
-    const authored = relativePath.endsWith("init.elizaos-debug.rc");
-    for (const issue of issues) {
-      const text = `${relativePath}:${issue.line}: ${issue.message}`;
-      if (authored && !issue.soft) fail(`init lint error: ${text}`);
-      console.warn(`[distro-android:grizzly] init lint: ${text}`);
-    }
-  }
-}
-
 export function normalizeGeneratedBringupProbes(aospRoot) {
-  normalizeGeneratedUsbConfigfs(aospRoot);
-  normalizeGeneratedEarlyBootModuleWait(aospRoot);
-  normalizeGeneratedDebugInit(aospRoot);
-  normalizeGeneratedDebugInitInstallRule(aospRoot);
-  normalizeGeneratedModuleWaits(aospRoot);
-  normalizeGeneratedStorageProxyWait(aospRoot);
-  normalizeGeneratedInitPhaseMarkers(aospRoot);
-  lintGeneratedInitFiles(aospRoot);
+  // Bring-up evidence must be observational. In particular, do not remove
+  // stock module/storage waits or rewrite USB triggers: doing so changes the
+  // boot path being diagnosed and can turn an evidence build into a new boot
+  // failure. Keep the production flag on the same debuggable-only helper that
+  // is covered by the init-ordering contract tests.
+  stageGeneratedBringupDiagnostics(aospRoot);
 }
 
 // After the generated tree exists, prove the graphics stack adevtool extracted

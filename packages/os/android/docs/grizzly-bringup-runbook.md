@@ -100,12 +100,10 @@ fstab. Two live sub-risks remain:
 ### H4 — init .rc bootstrap divergence
 
 Android 17 consolidated early triggers (e.g. single `load-bpf-programs`).
-Our probe edits to stock init files are linted (`lint-init-rc.mjs`), install
-rules exist, and no `start adbd` is attempted before apexd. Residual risk:
-the `wait_for_prop vendor.common.modules.ready` removal in
-`normalizeGeneratedEarlyBootModuleWait` changes stock module-load ordering —
-if a display/storage module needs full common-module load, this deviation can
-wedge later. Once boot is proven, restore stock ordering and re-verify.
+The probe file is imported separately, gated by `ro.debuggable=1`, and linted.
+It adds only marker writes: stock module-readiness waits, secure-storage
+ordering, USB triggers, and canonical init phases remain unchanged. No `start
+adbd` is attempted before apexd.
 
 ### H5 — sepolicy version claim
 
@@ -267,7 +265,7 @@ partition inventory against the stock flash-all set (missing/new partitions,
 
 1. Re-generate the tree with probes OFF (default env) and prove a clean boot
    from a probe-free attested build — probes are diagnostic, not shippable.
-2. Restore stock `wait_for_prop` module ordering (H4) and re-verify.
+2. Re-verify that stock module/storage ordering remains unchanged (H4).
 3. Replace the sepolicy 202704 claim with a real 202604 compat path (H5).
 4. Eliza launcher validation: `deploy-pixel.mjs` resolves the APK from
    `out/target/product/grizzly` (device dir, not product name) — then

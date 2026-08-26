@@ -49,9 +49,9 @@ import {
   probeSucceeded,
 } from "../../../../scripts/distro-android/collect-grizzly-graphics.mjs";
 import {
+  normalizeGeneratedBringupProbes,
   normalizeGeneratedRenderEngine,
   parseArgs as parseGrizzlyArgs,
-  stageGeneratedBringupDiagnostics,
 } from "../../../../scripts/distro-android/prepare-grizzly.mjs";
 import { loadCuttlefishE1Lock } from "../../../../scripts/distro-android/provision-cuttlefish-e1.mjs";
 import { withSisoCompatibility } from "../../../../scripts/distro-android/siso-env.mjs";
@@ -789,8 +789,10 @@ describe("AOSP build contracts", () => {
 
       normalizeGeneratedRenderEngine(root);
       normalizeGeneratedRenderEngine(root);
-      stageGeneratedBringupDiagnostics(root);
-      stageGeneratedBringupDiagnostics(root);
+      // Exercise the production ELIZAOS_GRIZZLY_EARLY_BOOT_PROBES path, not a
+      // lower-level helper that production might accidentally bypass.
+      normalizeGeneratedBringupProbes(root);
+      normalizeGeneratedBringupProbes(root);
 
       const init = readFileSync(initPath, "utf8");
       const debugInit = readFileSync(
