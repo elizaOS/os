@@ -161,11 +161,3 @@ export class WriteIncompleteError extends Error {
     this.actualBytes = actualBytes;
   }
 }
-
-export class RestoreCapabilityError extends Error {
-  override readonly name = "RestoreCapabilityError";
-}
-
-export class RestoreVerificationError extends Error {
-  override readonly name = "RestoreVerificationError";
-}

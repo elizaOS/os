@@ -20,7 +20,6 @@ import type {
   InstallerStep,
   InstallerStepId,
   RemovableDrive,
-  RestoreCapability,
   UsbInstallerBackend,
   WritePlan,
   WriteRequest,
@@ -409,16 +408,6 @@ export function deriveRawDisk(devicePath: string): string {
 // ---------------------------------------------------------------------------
 
 export class MacOsUsbInstallerBackend implements UsbInstallerBackend {
-  async getRestoreCapability(): Promise<RestoreCapability> {
-    return {
-      supported: false,
-      platform: "darwin",
-      filesystem: null,
-      reason:
-        "Restore USB is unavailable on macOS until a signed privileged restore helper is implemented and qualified.",
-    };
-  }
-
   constructor() {
     // Clean up any leftover partial downloads from a prior interrupted run.
     void cleanupPartialFiles(INSTALLER_TMP_DIR);

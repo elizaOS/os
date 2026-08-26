@@ -39,8 +39,6 @@ enumeration, privileged writes, and platform subprocesses stay server-side.
   write.
 - Requires explicit data-loss acknowledgement and target-drive identity
   confirmation in the UI.
-- Offers Restore USB after both a successful and an interrupted write only
-  when the active backend reports a qualified runtime capability.
 - Rejects ISO assets, HTTP URLs, expired manifests, placeholder hashes, missing
   signatures, impossible sizes, redirects, and network/parse errors without
   falling back to scraped GitHub assets or fabricated releases.
@@ -64,18 +62,6 @@ enumeration, privileged writes, and platform subprocesses stay server-side.
   device flush, and exact expanded-byte readback. macOS, Windows, and any
   unrecognized backend remain fail-closed until they provide the same boundary;
   compressed bytes can never fall through to their legacy ISO writers.
-- Restore USB uses a separate opaque plan, expires with the write-plan TTL, and
-  is consumed before execution. It requires a serial/WWN-backed stable identity
-  and re-enumerates the target immediately before destructive work. Restore and
-  write operations share the same per-target lock and invalidate stale plans.
-- Linux Restore USB is offered only when wipefs, parted, partprobe, udevadm,
-  mkfs.exfat, lsblk, sync, and a safe privilege escalator are available. It
-  creates one GPT/exFAT ELIZAOS-USB volume, flushes it, then revalidates the
-  stable drive identity, safety classification, filesystem, label, and exact
-  one-partition layout before emitting a typed completion receipt. Any failure
-  consumes the plan and requires a rescan.
-- macOS, Windows, unknown platforms, drives without a serial/WWN identity, and
-  system/internal/unknown drives explicitly report Restore USB as unsupported.
 
 The manifest signature defaults to `<manifest URL>.sig`; release automation may
 pin a distinct HTTPS `.sig` URL with
@@ -174,9 +160,6 @@ Linux:
   so an elizaOS/Tails live USB cannot overwrite itself.
 - Unmounts mounted child partitions before writing.
 - Writes through `pkexec`, cached/allowed `sudo`, `kdesu`, or `doas` plus `dd`.
-- Restores qualified removable media through `pkexec`, cached `sudo`, or
-  `doas`; `kdesu` is intentionally unsupported for the structured restore
-  sequence.
 
 Windows:
 
@@ -210,6 +193,3 @@ Remaining production hardening:
   expanded readback bytes to `sha256Expanded`. Unsupported backends remain
   fail-closed and cannot route `.raw.zst` bytes through legacy ISO writers.
 - Add packaged-app launch smoke tests and platform hardware/VM write evidence.
-- Qualify Restore USB after successful, interrupted, and power-loss writes on
-  real Linux USB media. The repository tests prove the fail-closed contract and
-  command sequence but do not claim physical-media recovery evidence.

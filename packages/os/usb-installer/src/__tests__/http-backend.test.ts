@@ -1,7 +1,7 @@
 // Exercises USB installer server and dry-run application behavior.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HttpUsbInstallerBackend } from "../backend/http-backend";
-import type { InstallerStepId, RestorePlan, WritePlan } from "../backend/types";
+import type { InstallerStepId, WritePlan } from "../backend/types";
 
 const plan = {
   planId: "plan-1",
@@ -39,26 +39,6 @@ const plan = {
   privilegedWriteImplemented: true,
 } satisfies WritePlan;
 
-const restorePlan = {
-  planId: "restore-1",
-  request: {
-    driveId: "usb",
-    acknowledgeDataLoss: true,
-    expectedDrive: {
-      devicePath: "/dev/sdb",
-      sizeBytes: 16 * 1024 ** 3,
-      stableId: "linux:serial",
-    },
-  },
-  drive: {
-    ...plan.drive,
-    stableId: "linux:serial",
-  },
-  filesystem: "exfat",
-  label: "ELIZAOS-USB",
-  steps: ["unmount", "wipe", "partition", "format", "verify", "complete"],
-} satisfies RestorePlan;
-
 function streamResponse(chunks: string[]) {
   const encoder = new TextEncoder();
   return new Response(
@@ -79,66 +59,6 @@ afterEach(() => {
 });
 
 describe("HttpUsbInstallerBackend", () => {
-  it("requires and returns the typed durable restore terminal receipt", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      streamResponse([
-        'data: {"stepId":"format","progress":1}\n\n',
-        'data: {"terminal":{"kind":"restore-complete","receipt":{"status":"complete","driveId":"usb","devicePath":"/dev/sdb","stableId":"linux:serial","filesystem":"exfat","label":"ELIZAOS-USB"}}}\n\n',
-      ]),
-    );
-    const progress: Array<[string, number]> = [];
-    const receipt = await new HttpUsbInstallerBackend().executeRestorePlan(
-      restorePlan,
-      (step, value) => progress.push([step, value]),
-    );
-    expect(progress).toEqual([["format", 1]]);
-    expect(receipt).toMatchObject({
-      status: "complete",
-      stableId: "linux:serial",
-      filesystem: "exfat",
-    });
-  });
-
-  it.each([
-    [
-      "missing terminal",
-      ['data: {"stepId":"format","progress":1}\n\n'],
-      "without a durable terminal",
-    ],
-    [
-      "duplicate terminal",
-      [
-        'data: {"terminal":{"kind":"restore-failed","error":"failed","name":"Error"}}\n\ndata: {"terminal":{"kind":"restore-failed","error":"again","name":"Error"}}\n\n',
-      ],
-      "event after",
-    ],
-    [
-      "progress after terminal",
-      [
-        'data: {"terminal":{"kind":"restore-failed","error":"failed","name":"Error"}}\n\ndata: {"stepId":"verify","progress":1}\n\n',
-      ],
-      "event after",
-    ],
-  ])("rejects %s restore streams", async (_label, chunks, message) => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(streamResponse(chunks));
-    await expect(
-      new HttpUsbInstallerBackend().executeRestorePlan(restorePlan, () => {}),
-    ).rejects.toThrow(message);
-  });
-
-  it("preserves typed restore failures", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      streamResponse([
-        'data: {"terminal":{"kind":"restore-failed","error":"filesystem mismatch","name":"RestoreVerificationError"}}\n\n',
-      ]),
-    );
-    await expect(
-      new HttpUsbInstallerBackend().executeRestorePlan(restorePlan, () => {}),
-    ).rejects.toMatchObject({
-      name: "RestoreVerificationError",
-      message: "filesystem mismatch",
-    });
-  });
   it("parses fragmented server-sent events", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       streamResponse([

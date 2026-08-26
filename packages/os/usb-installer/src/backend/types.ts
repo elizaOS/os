@@ -91,54 +91,6 @@ export interface WriteExecutionOptions {
   signal?: AbortSignal;
 }
 
-export interface RestoreCapability {
-  supported: boolean;
-  platform: PlatformId;
-  filesystem: "exfat" | null;
-  reason: string;
-}
-
-export type RestoreStepId =
-  | "unmount"
-  | "wipe"
-  | "partition"
-  | "format"
-  | "verify"
-  | "complete";
-
-export interface RestoreRequest {
-  driveId: string;
-  acknowledgeDataLoss: boolean;
-  expectedDrive: {
-    devicePath: string;
-    sizeBytes: number;
-    name?: string;
-    stableId: string;
-  };
-}
-
-export interface RestorePlan {
-  planId?: string;
-  request: RestoreRequest;
-  drive: RemovableDrive;
-  filesystem: "exfat";
-  label: "ELIZAOS-USB";
-  steps: RestoreStepId[];
-}
-
-export interface RestoreReceipt {
-  status: "complete";
-  driveId: string;
-  devicePath: string;
-  stableId: string;
-  filesystem: "exfat";
-  label: "ELIZAOS-USB";
-}
-
-export type RestoreExecutionTerminal =
-  | { kind: "restore-complete"; receipt: RestoreReceipt }
-  | { kind: "restore-failed"; error: string; name: string };
-
 export interface UsbInstallerBackend {
   /** True only when this backend streams, verifies, expands, and reads back raw.zst media. */
   readonly canonicalRawZstdSupported?: boolean;
@@ -154,10 +106,4 @@ export interface UsbInstallerBackend {
   ): Promise<void>;
   /** Request cancellation of an execution already accepted by the backend. */
   cancelWritePlan?(plan: WritePlan): Promise<void>;
-  getRestoreCapability?(): Promise<RestoreCapability>;
-  createRestorePlan?(request: RestoreRequest): Promise<RestorePlan>;
-  executeRestorePlan?(
-    plan: RestorePlan,
-    onProgress: (step: RestoreStepId, progress: number) => void,
-  ): Promise<RestoreReceipt>;
 }
