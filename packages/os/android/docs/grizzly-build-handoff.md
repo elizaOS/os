@@ -86,7 +86,7 @@ make -C packages/os/android bundle-grizzly \
 The bundle front door checks both the source and `OUT_DIR` filesystems against
 the builder storage floor, rebuilds and stages the privileged Eliza APK, and
 completes the complete `droidcore`/`dist` image set while running explicit
-`host_init_verifier_check` and `check-vintf-all` gates and building `apksigner`,
+host init verifier and `check-vintf-all` gates and building `apksigner`,
 `aapt2`, and `avbtool`. It retains a successful command receipt for every gate
 and the corresponding product-output receipts, verifies
 every referenced AVB image against its lock-authorized key, validates the

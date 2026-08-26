@@ -1855,7 +1855,7 @@ function runRequiredBuildGates({ aospRoot, jobs, evidenceDir }) {
     ["dist", `m -j${jobs} dist`],
     [
       "host-init-verifier",
-      `product_out="$(get_build_var PRODUCT_OUT)" && m -j${jobs} host_init_verifier_check "$product_out/host_init_verifier_output.txt"`,
+      `product_out="$(get_build_var PRODUCT_OUT)" && m -j${jobs} "$product_out/host_init_verifier_output.txt"`,
     ],
     ["check-vintf-all", `m -j${jobs} check-vintf-all`],
     ["host-tools", `m -j${jobs} apksigner aapt2 avbtool`],
