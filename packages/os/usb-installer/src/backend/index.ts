@@ -34,6 +34,7 @@ export {
   FileReleaseSequenceStore,
   RELEASE_SEQUENCE_STATE_PATH_ENV,
 } from "./release-sequence-store";
+export { assertRestoreTargetAllowed, RESTORE_STEPS } from "./restore-safety";
 export type {
   DriveSafety,
   ElizaOsImage,
@@ -42,6 +43,12 @@ export type {
   InstallerStepStatus,
   PlatformId,
   RemovableDrive,
+  RestoreCapability,
+  RestoreExecutionTerminal,
+  RestorePlan,
+  RestoreReceipt,
+  RestoreRequest,
+  RestoreStepId,
   UsbInstallerBackend,
   WriteExecutionOptions,
   WritePlan,
