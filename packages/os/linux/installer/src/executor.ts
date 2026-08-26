@@ -85,6 +85,7 @@ function assertTargetIdentity(
   if (
     inventory.stableId !== plan.target.stableId ||
     inventory.path !== plan.target.path ||
+    inventory.kernelDeviceIdentity !== plan.target.kernelDeviceIdentity ||
     inventory.sizeBytes !== plan.target.sizeBytes ||
     inventory.logicalSectorBytes !== plan.target.logicalSectorBytes ||
     inventory.gptRedundancyVerified !== plan.target.gptRedundancyVerified ||
@@ -141,6 +142,10 @@ export interface InstallExecutionDependencies {
   authorization: OwnerAuthorizationVerifier;
   journal: InstallJournal;
   operations: PrivilegedInstallOperations;
+  /** Trusted service hook used in each final pre-write revalidation sequence. */
+  beforePrivilegedMutation?: (
+    kind: "partition-table-backup" | "installer-action",
+  ) => Promise<void>;
   now?: () => Date;
 }
 
@@ -443,6 +448,45 @@ export async function executeAuthorizedInstallPlan(
   assertTargetIdentity(plan, inventory);
   let fingerprint = createDiskInventoryFingerprint(inventory);
 
+  const revalidateImmediatelyBeforeMutation = async (
+    kind: "partition-table-backup" | "installer-action",
+    expectedInventoryFingerprint: string,
+  ): Promise<DiskInventory> => {
+    await dependencies.beforePrivilegedMutation?.(kind);
+    if (
+      assertIsoDate("authorization.expiresAt", plan.authorization.expiresAt) <=
+        now().getTime() ||
+      !(await dependencies.authorization.verify(plan.authorization))
+    ) {
+      throw new Error(
+        `Owner authorization expired or failed immediately before ${kind}.`,
+      );
+    }
+
+    // Inventory reproduction deliberately follows every asynchronous owner and
+    // credential check. This is the final awaited operation before the backend
+    // write, so drift while a session/credential provider is consulted cannot
+    // reach a stale device path or kernel-device incarnation.
+    const current = await dependencies.inventory.inspect(plan.target.stableId);
+    assertTargetIdentity(plan, current);
+    if (
+      createDiskInventoryFingerprint(current) !== expectedInventoryFingerprint
+    ) {
+      throw new InstallRecoveryRequiredError(
+        `Disk inventory drifted immediately before ${kind}.`,
+      );
+    }
+    if (
+      assertIsoDate("authorization.expiresAt", plan.authorization.expiresAt) <=
+      now().getTime()
+    ) {
+      throw new Error(
+        `Owner authorization expired immediately before ${kind}.`,
+      );
+    }
+    return current;
+  };
+
   if (entries.length === 0) {
     if (fingerprint !== plan.authorization.inventoryFingerprint) {
       throw new Error("Disk inventory drifted before execution began.");
@@ -453,6 +497,11 @@ export async function executeAuthorizedInstallPlan(
       inventoryFingerprint: fingerprint,
       receiptId: authorizationDigest(plan.authorization),
     });
+    inventory = await revalidateImmediatelyBeforeMutation(
+      "partition-table-backup",
+      plan.authorization.inventoryFingerprint,
+    );
+    fingerprint = createDiskInventoryFingerprint(inventory);
     const backup =
       await dependencies.operations.backupPartitionTable(inventory);
     if (
@@ -519,15 +568,6 @@ export async function executeAuthorizedInstallPlan(
         "Disk inventory drifted immediately before a privileged action.",
       );
     }
-    if (
-      assertIsoDate("authorization.expiresAt", plan.authorization.expiresAt) <=
-        now().getTime() ||
-      !(await dependencies.authorization.verify(plan.authorization))
-    ) {
-      throw new Error(
-        "Owner authorization expired or failed immediately before mutation.",
-      );
-    }
     const digest = actionDigest(action);
     entries = await appendDurably(dependencies.journal, plan.planId, entries, {
       event: "action-started",
@@ -537,6 +577,11 @@ export async function executeAuthorizedInstallPlan(
       actionDigest: digest,
     });
     try {
+      inventory = await revalidateImmediatelyBeforeMutation(
+        "installer-action",
+        expectedFingerprint,
+      );
+      fingerprint = createDiskInventoryFingerprint(inventory);
       const receipt = await dependencies.operations.apply(action, inventory);
       if (!receipt.receiptId.trim() || receipt.actionDigest !== digest) {
         throw new Error(

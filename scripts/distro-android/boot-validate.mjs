@@ -209,6 +209,29 @@ function adbArgs(serial, args) {
   return serial ? ["-s", serial, ...args] : args;
 }
 
+export function parseAdbDevicesOutput(output) {
+  return output
+    .split(/\r?\n/)
+    .slice(1)
+    .map((line) => line.trim().split(/\s+/, 2))
+    .filter(([serial, state]) => Boolean(serial && state))
+    .map(([serial, state]) => ({ serial, state }));
+}
+
+export function selectBrandDeviceSerial(observations, expectedProduct) {
+  const matches = observations.filter(
+    ({ state, product }) => state === "device" && product === expectedProduct,
+  );
+  if (matches.length > 1) {
+    throw new Error(
+      `Multiple booted devices report the expected product ${expectedProduct}: ${matches
+        .map(({ serial }) => serial)
+        .join(", ")}`,
+    );
+  }
+  return matches[0]?.serial ?? null;
+}
+
 function runAdb(adb, serial, args) {
   return run(adb, adbArgs(serial, args));
 }
@@ -221,9 +244,46 @@ async function sleep(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitForBoot({ adb, serial, timeoutMs }) {
+function probeProductProperty(adb, serial, property) {
+  const result = spawnSync(
+    adb,
+    ["-s", serial, "shell", `getprop ${property}`],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024,
+      timeout: 5_000,
+    },
+  );
+  if (result.error || result.status !== 0) return null;
+  return result.stdout.trim();
+}
+
+async function waitForBrandDevice({ adb, brand, deadline }) {
+  const property = `ro.${brand.propertyPrefix}.product`;
+  let observed = [];
+  while (Date.now() < deadline) {
+    observed = parseAdbDevicesOutput(run(adb, ["devices"]));
+    const candidates = observed.map(({ serial, state }) => ({
+      serial,
+      state,
+      product:
+        state === "device" ? probeProductProperty(adb, serial, property) : null,
+    }));
+    const serial = selectBrandDeviceSerial(candidates, brand.productName);
+    if (serial) return serial;
+    await sleep(1_000);
+  }
+  const summary = observed.length
+    ? observed.map(({ serial, state }) => `${serial} (${state})`).join(", ")
+    : "none";
+  throw new Error(
+    `No adb device reported ${property}=${brand.productName} before timeout; observed: ${summary}`,
+  );
+}
+
+async function waitForBoot({ adb, serial, deadline }) {
   runAdb(adb, serial, ["wait-for-device"]);
-  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const completed = shell(adb, serial, "getprop sys.boot_completed").trim();
     if (completed === "1") {
@@ -233,7 +293,7 @@ async function waitForBoot({ adb, serial, timeoutMs }) {
     await sleep(1_000);
   }
   throw new Error(
-    `Device did not report sys.boot_completed=1 within ${timeoutMs}ms`,
+    `Device ${serial} did not report sys.boot_completed=1 before timeout`,
   );
 }
 
@@ -469,9 +529,11 @@ function validateLogcat(adb, serial, brand) {
 
 export async function validateBootedDevice(options, brand) {
   const adb = resolveAdb(options.adb);
-  const serial = options.serial || null;
+  const deadline = Date.now() + options.timeoutMs;
+  const serial =
+    options.serial || (await waitForBrandDevice({ adb, brand, deadline }));
 
-  await waitForBoot({ adb, serial, timeoutMs: options.timeoutMs });
+  await waitForBoot({ adb, serial, deadline });
 
   const result = {
     adb,

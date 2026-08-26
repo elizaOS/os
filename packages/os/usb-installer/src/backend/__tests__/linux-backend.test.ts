@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   LsblkParseError,
   NoPrivilegeEscalatorError,
+  RestoreVerificationError,
   UnmountFailedError,
   WriteIncompleteError,
 } from "../errors";
@@ -242,5 +243,202 @@ describe("typed Linux errors", () => {
     const e = new LsblkParseError("a".repeat(800), cause);
     expect(e.stdoutSnippet.length).toBe(500);
     expect(e.message).toContain("Unexpected token");
+  });
+});
+
+describe("Linux Restore USB", () => {
+  const inventory = (serial = "RESTORE-SERIAL") =>
+    JSON.stringify({
+      blockdevices: [
+        {
+          name: "sdb",
+          size: String(16 * 1024 ** 3),
+          type: "disk",
+          rm: true,
+          model: "Restore USB",
+          serial,
+          wwn: null,
+          tran: "usb",
+          hotplug: true,
+          mountpoints: [],
+        },
+      ],
+    });
+
+  function restoreBackend(
+    finalFilesystem = "exfat",
+    options: { mountsClear?: boolean } = {},
+  ) {
+    const elevated: string[][] = [];
+    let layoutCalls = 0;
+    const backend = new LinuxUsbInstallerBackend({
+      currentSystemDiskNames: async () => new Set(),
+      restoreCommandExists: async () => true,
+      findEscalator: async () => ({ command: "sudo", argsPrefix: ["-n"] }),
+      execFile: async (command, args) => {
+        if (command === "sudo") {
+          elevated.push([...args]);
+          return { stdout: "", stderr: "" };
+        }
+        expect(command).toBe("lsblk");
+        if (args.includes("--bytes")) {
+          return { stdout: inventory(), stderr: "" };
+        }
+        if (args.includes("--fs")) {
+          return {
+            stdout: JSON.stringify({
+              blockdevices: [
+                {
+                  name: "sdb",
+                  path: "/dev/sdb",
+                  type: "disk",
+                  children: [
+                    {
+                      name: "sdb1",
+                      path: "/dev/sdb1",
+                      type: "part",
+                      pkname: "sdb",
+                      fstype: finalFilesystem,
+                      label: "ELIZAOS-USB",
+                    },
+                  ],
+                },
+              ],
+            }),
+            stderr: "",
+          };
+        }
+        layoutCalls += 1;
+        return {
+          stdout: JSON.stringify({
+            blockdevices: [
+              {
+                name: "sdb",
+                path: "/dev/sdb",
+                type: "disk",
+                children: [
+                  {
+                    name: "sdb1",
+                    path: "/dev/sdb1",
+                    type: "part",
+                    pkname: "sdb",
+                    mountpoints:
+                      layoutCalls === 1 || options.mountsClear === false
+                        ? ["/media/test/ELIZAOS"]
+                        : [null],
+                  },
+                ],
+              },
+            ],
+          }),
+          stderr: "",
+        };
+      },
+    });
+    return { backend, elevated };
+  }
+
+  it("reports unavailable when a required formatting tool is missing", async () => {
+    const backend = new LinuxUsbInstallerBackend({
+      restoreCommandExists: async (command) => command !== "mkfs.exfat",
+      findEscalator: async () => ({ command: "sudo", argsPrefix: ["-n"] }),
+    });
+    await expect(backend.getRestoreCapability()).resolves.toMatchObject({
+      supported: false,
+      filesystem: null,
+      reason: expect.stringContaining("mkfs.exfat"),
+    });
+  });
+
+  it("rebuilds one GPT/exFAT volume and verifies it after a durable sync", async () => {
+    const { backend, elevated } = restoreBackend();
+    const [drive] = await backend.listRemovableDrives();
+    const plan = await backend.createRestorePlan({
+      driveId: drive?.id as string,
+      acknowledgeDataLoss: true,
+      expectedDrive: {
+        devicePath: drive?.devicePath as string,
+        sizeBytes: drive?.sizeBytes as number,
+        stableId: drive?.stableId as string,
+      },
+    });
+    const progress: string[] = [];
+    const receipt = await backend.executeRestorePlan(plan, (step, value) => {
+      if (value === 1) progress.push(step);
+    });
+
+    expect(elevated).toEqual([
+      ["-n", "umount", "/dev/sdb1"],
+      ["-n", "wipefs", "--all", "/dev/sdb"],
+      [
+        "-n",
+        "parted",
+        "--script",
+        "--align",
+        "optimal",
+        "/dev/sdb",
+        "mklabel",
+        "gpt",
+        "mkpart",
+        "ELIZAOS-DATA",
+        "1MiB",
+        "100%",
+      ],
+      ["-n", "partprobe", "/dev/sdb"],
+      ["-n", "udevadm", "settle", "--timeout=30"],
+      ["-n", "mkfs.exfat", "-n", "ELIZAOS-USB", "/dev/sdb1"],
+      ["-n", "sync", "/dev/sdb"],
+    ]);
+    expect(progress).toEqual([
+      "unmount",
+      "wipe",
+      "partition",
+      "format",
+      "verify",
+      "complete",
+    ]);
+    expect(receipt).toMatchObject({
+      status: "complete",
+      stableId: "linux:RESTORE-SERIAL",
+      filesystem: "exfat",
+      label: "ELIZAOS-USB",
+    });
+  });
+
+  it("never emits a completion receipt when final filesystem verification fails", async () => {
+    const { backend } = restoreBackend("ext4");
+    const [drive] = await backend.listRemovableDrives();
+    const plan = await backend.createRestorePlan({
+      driveId: drive?.id as string,
+      acknowledgeDataLoss: true,
+      expectedDrive: {
+        devicePath: drive?.devicePath as string,
+        sizeBytes: drive?.sizeBytes as number,
+        stableId: drive?.stableId as string,
+      },
+    });
+    await expect(
+      backend.executeRestorePlan(plan, () => undefined),
+    ).rejects.toBeInstanceOf(RestoreVerificationError);
+  });
+
+  it("fails before wiping when the target remains mounted", async () => {
+    const { backend, elevated } = restoreBackend("exfat", {
+      mountsClear: false,
+    });
+    const [drive] = await backend.listRemovableDrives();
+    const plan = await backend.createRestorePlan({
+      driveId: drive?.id as string,
+      acknowledgeDataLoss: true,
+      expectedDrive: {
+        devicePath: drive?.devicePath as string,
+        sizeBytes: drive?.sizeBytes as number,
+        stableId: drive?.stableId as string,
+      },
+    });
+    await expect(
+      backend.executeRestorePlan(plan, () => undefined),
+    ).rejects.toThrow("still has mounted filesystems");
+    expect(elevated).toEqual([["-n", "umount", "/dev/sdb1"]]);
   });
 });

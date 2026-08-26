@@ -49,6 +49,12 @@ export interface DiskHardwareIdentity {
 export interface DiskInventory {
   stableId: string;
   path: string;
+  /**
+   * Provider-owned identity for this kernel device incarnation. Linux uses
+   * block-device rdev plus diskseq. A reviewed plan carries this value, but it
+   * is trusted only after reproduction from a fresh provider inventory.
+   */
+  kernelDeviceIdentity?: string;
   hardwareIdentity: DiskHardwareIdentity;
   sizeBytes: number;
   logicalSectorBytes: number;
@@ -104,6 +110,7 @@ export interface InstallPlan {
   target: {
     stableId: string;
     path: string;
+    kernelDeviceIdentity?: string;
     hardwareIdentity: DiskHardwareIdentity;
     sizeBytes: number;
     logicalSectorBytes: number;

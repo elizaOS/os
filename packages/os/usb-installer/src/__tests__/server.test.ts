@@ -5,6 +5,11 @@ import type {
   ElizaOsImage,
   InstallerStepId,
   RemovableDrive,
+  RestoreCapability,
+  RestorePlan,
+  RestoreReceipt,
+  RestoreRequest,
+  RestoreStepId,
   UsbInstallerBackend,
   WriteExecutionOptions,
   WritePlan,
@@ -23,6 +28,7 @@ const drive: RemovableDrive = {
   bus: "usb",
   platform: "linux",
   safety: "safe-removable",
+  stableId: "linux:test-usb-serial",
 };
 
 const image: ElizaOsImage = {
@@ -58,6 +64,8 @@ const canonicalRawImage: ElizaOsImage = {
 class FakeBackend implements UsbInstallerBackend {
   public createRequests: WriteRequest[] = [];
   public executedPlan: WritePlan | null = null;
+  public restoreRequests: RestoreRequest[] = [];
+  public restoreExecutions = 0;
 
   constructor(
     public currentDrive: RemovableDrive = drive,
@@ -91,6 +99,73 @@ class FakeBackend implements UsbInstallerBackend {
   ): Promise<void> {
     this.executedPlan = plan;
     onProgress("write", 1);
+  }
+
+  async getRestoreCapability(): Promise<RestoreCapability> {
+    return {
+      supported: true,
+      platform: "linux",
+      filesystem: "exfat",
+      reason: "test restore capability",
+    };
+  }
+
+  async createRestorePlan(request: RestoreRequest): Promise<RestorePlan> {
+    this.restoreRequests.push(request);
+    if (
+      request.expectedDrive.devicePath !== this.currentDrive.devicePath ||
+      request.expectedDrive.sizeBytes !== this.currentDrive.sizeBytes ||
+      request.expectedDrive.stableId !== this.currentDrive.stableId
+    ) {
+      throw new Error("Selected drive changed before restore.");
+    }
+    return {
+      request,
+      drive: this.currentDrive,
+      filesystem: "exfat",
+      label: "ELIZAOS-USB",
+      steps: ["unmount", "wipe", "partition", "format", "verify", "complete"],
+    };
+  }
+
+  async executeRestorePlan(
+    plan: RestorePlan,
+    onProgress: (step: RestoreStepId, progress: number) => void,
+  ): Promise<RestoreReceipt> {
+    this.restoreExecutions += 1;
+    onProgress("complete", 1);
+    return {
+      status: "complete",
+      driveId: plan.drive.id,
+      devicePath: plan.drive.devicePath,
+      stableId: plan.drive.stableId as string,
+      filesystem: "exfat",
+      label: "ELIZAOS-USB",
+    };
+  }
+}
+
+class BlockingRestoreBackend extends FakeBackend {
+  private releaseRestore!: () => void;
+  private markStarted!: () => void;
+  readonly restoreStarted = new Promise<void>((resolve) => {
+    this.markStarted = resolve;
+  });
+  private readonly restoreReleased = new Promise<void>((resolve) => {
+    this.releaseRestore = resolve;
+  });
+
+  release(): void {
+    this.releaseRestore();
+  }
+
+  override async executeRestorePlan(
+    plan: RestorePlan,
+    onProgress: (step: RestoreStepId, progress: number) => void,
+  ): Promise<RestoreReceipt> {
+    this.markStarted();
+    await this.restoreReleased;
+    return super.executeRestorePlan(plan, onProgress);
   }
 }
 
@@ -228,6 +303,174 @@ afterEach(() => {
 });
 
 describe("USB installer server", () => {
+  it("reports the backend restore capability without inferring support", async () => {
+    process.env.ELIZAOS_USB_ENABLE_RAW_WRITE = "1";
+    const response = await createUsbInstallerHandler(new FakeBackend())(
+      request("/restore/capability"),
+    );
+    expect(response.status).toBe(200);
+    await expect(json(response)).resolves.toMatchObject({
+      supported: true,
+      platform: "linux",
+      filesystem: "exfat",
+    });
+  });
+
+  it("does not advertise restore while the destructive-write gate is disabled", async () => {
+    const response = await createUsbInstallerHandler(new FakeBackend())(
+      request("/restore/capability"),
+    );
+    await expect(json(response)).resolves.toMatchObject({
+      supported: false,
+      filesystem: null,
+      reason: expect.stringContaining("ELIZAOS_USB_ENABLE_RAW_WRITE=1"),
+    });
+  });
+
+  it("uses an opaque single-use restore plan and emits a typed terminal receipt", async () => {
+    process.env.ELIZAOS_USB_ENABLE_RAW_WRITE = "1";
+    const backend = new FakeBackend();
+    const handler = createUsbInstallerHandler(backend);
+    const planResponse = await handler(
+      request("/restore/plan", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          driveId: drive.id,
+          acknowledgeDataLoss: true,
+          expectedDrive: {
+            devicePath: drive.devicePath,
+            sizeBytes: drive.sizeBytes,
+            stableId: drive.stableId,
+          },
+        }),
+      }),
+    );
+    const plan = (await planResponse.json()) as RestorePlan;
+    expect(plan.planId).toEqual(expect.any(String));
+
+    const execute = () =>
+      handler(
+        request("/restore/execute", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ planId: plan.planId }),
+        }),
+      );
+    const first = await execute();
+    expect(await first.text()).toContain('"kind":"restore-complete"');
+    expect(backend.restoreExecutions).toBe(1);
+
+    const replay = await execute();
+    expect(replay.status).toBe(409);
+    await expect(json(replay)).resolves.toMatchObject({
+      error: expect.stringContaining("already-used"),
+    });
+    expect(backend.restoreExecutions).toBe(1);
+  });
+
+  it("consumes a restore authorization when stable identity revalidation fails", async () => {
+    process.env.ELIZAOS_USB_ENABLE_RAW_WRITE = "1";
+    const backend = new FakeBackend();
+    const handler = createUsbInstallerHandler(backend);
+    const planResponse = await handler(
+      request("/restore/plan", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          driveId: drive.id,
+          acknowledgeDataLoss: true,
+          expectedDrive: {
+            devicePath: drive.devicePath,
+            sizeBytes: drive.sizeBytes,
+            stableId: drive.stableId,
+          },
+        }),
+      }),
+    );
+    const plan = (await planResponse.json()) as RestorePlan;
+    backend.currentDrive = { ...drive, stableId: "linux:swapped-usb" };
+
+    const executeRequest = () =>
+      request("/restore/execute", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ planId: plan.planId }),
+      });
+    const failed = await handler(executeRequest());
+    expect(await failed.text()).toContain('"kind":"restore-failed"');
+    expect(backend.restoreExecutions).toBe(0);
+    expect((await handler(executeRequest())).status).toBe(409);
+  });
+
+  it("shares the target lock with writes and invalidates stale target plans", async () => {
+    process.env.ELIZAOS_USB_ENABLE_RAW_WRITE = "1";
+    const backend = new BlockingRestoreBackend();
+    const handler = createUsbInstallerHandler(backend);
+    const restorePlanResponse = await handler(
+      request("/restore/plan", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          driveId: drive.id,
+          acknowledgeDataLoss: true,
+          expectedDrive: {
+            devicePath: drive.devicePath,
+            sizeBytes: drive.sizeBytes,
+            stableId: drive.stableId,
+          },
+        }),
+      }),
+    );
+    const restorePlan = (await restorePlanResponse.json()) as RestorePlan;
+    const writePlanResponse = await handler(
+      request("/plan", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          driveId: drive.id,
+          imageId: image.id,
+          dryRun: false,
+          acknowledgeDataLoss: true,
+        }),
+      }),
+    );
+    const writePlan = (await writePlanResponse.json()) as WritePlan;
+
+    const restoreResponse = await handler(
+      request("/restore/execute", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ planId: restorePlan.planId }),
+      }),
+    );
+    await backend.restoreStarted;
+    const competingWrite = await handler(
+      request("/execute", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ planId: writePlan.planId }),
+      }),
+    );
+    expect(competingWrite.status).toBe(409);
+    await expect(json(competingWrite)).resolves.toMatchObject({
+      error: expect.stringContaining("already active"),
+    });
+
+    backend.release();
+    expect(await restoreResponse.text()).toContain('"restore-complete"');
+    const staleWrite = await handler(
+      request("/execute", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ planId: writePlan.planId }),
+      }),
+    );
+    expect(staleWrite.status).toBe(409);
+    await expect(json(staleWrite)).resolves.toMatchObject({
+      error: expect.stringContaining("Unknown or expired"),
+    });
+  });
   it("rejects non-local browser origins", async () => {
     const handler = createUsbInstallerHandler(new FakeBackend());
     const res = await handler(
