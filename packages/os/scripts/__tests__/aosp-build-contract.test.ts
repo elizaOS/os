@@ -25,6 +25,7 @@ import {
   collectGrizzlyArtifacts,
   parseArgs as parseBundleArgs,
   parseFastbootInfoArtifacts,
+  requireResolvedManifestContract,
   REQUIRED_APK_PROVENANCE,
   REQUIRED_GRIZZLY_ARTIFACTS,
 } from "../../../../scripts/aosp/build-grizzly-bundle.mjs";
@@ -1493,6 +1494,31 @@ describe("AOSP build contracts", () => {
     ).toThrow("unknown argument: --skip-build");
   });
 
+  test("the grizzly handoff fails closed without an authoritative resolved graph", () => {
+    const lock = loadAospLock(
+      join(repositoryRoot, "packages/os/android/pixel11pro.lock.json"),
+    );
+    expect(() => requireResolvedManifestContract(lock)).toThrow(
+      "no authoritative resolved AOSP manifest contract",
+    );
+    expect(lock.avbVerification).toEqual([
+      {
+        image: "vbmeta.img",
+        keyPath: "external/avb/test/data/testkey_rsa4096.pem",
+        keySha256:
+          "6a224754880a57ab9cbd308267cd157d94cf05a1c8cb851aec4090e045d24121",
+        authorization: "public-aosp-userdebug-test-key",
+      },
+    ]);
+    const collector = readFileSync(
+      join(repositoryRoot, "scripts/aosp/build-grizzly-bundle.mjs"),
+      "utf8",
+    );
+    expect(collector).toContain("host_init_verifier_check");
+    expect(collector).toContain("host_init_verifier_output.txt");
+    expect(collector).not.toContain(".repo/repo/repo");
+  });
+
   test("the grizzly handoff rejects symlinked flash inputs", async () => {
     const root = await mkdtemp(join(tmpdir(), "eliza-grizzly-bundle-"));
     const productOut = join(root, "product");
@@ -1631,6 +1657,24 @@ describe("AOSP build contracts", () => {
         ),
       }),
     ).toThrow("unsafe image filename");
+    expect(() =>
+      assertSafeFlashMetadata({
+        androidInfo: "require board=grizzly\n",
+        fastbootInfo: validGrizzlyFastbootInfo.replace(
+          "version 1\n",
+          "version 1\nreboot\n",
+        ),
+      }),
+    ).toThrow("exactly one terminal reboot");
+    expect(() =>
+      assertSafeFlashMetadata({
+        androidInfo: "require board=grizzly\n",
+        fastbootInfo: validGrizzlyFastbootInfo.replace(
+          "flash --apply-vbmeta vbmeta",
+          "flash vbmeta",
+        ),
+      }),
+    ).toThrow("unsafe flash mapping");
   });
 
   test("the grizzly handoff rejects an unsafe or unknown flash authority", () => {

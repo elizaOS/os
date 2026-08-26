@@ -440,8 +440,18 @@ export function assertSafeFlashMetadata({ androidInfo, fastbootInfo }) {
   const updateSuperIndexes = commands.flatMap(({ command }, index) =>
     command === "update-super" ? [index] : [],
   );
+  const terminalRebootIndexes = commands.flatMap(
+    ({ command, tokens }, index) =>
+      command === "reboot" && tokens.length === 0 ? [index] : [],
+  );
   if (rebootFastbootIndexes.length !== 1 || updateSuperIndexes.length !== 1) {
     fail("fastboot-info must contain one reboot fastboot and one update-super");
+  }
+  if (
+    terminalRebootIndexes.length !== 1 ||
+    terminalRebootIndexes[0] !== commands.length - 1
+  ) {
+    fail("fastboot-info must contain exactly one terminal reboot");
   }
   const rebootFastbootIndex = rebootFastbootIndexes[0];
   const updateSuperIndex = updateSuperIndexes[0];
@@ -468,7 +478,8 @@ export function assertSafeFlashMetadata({ androidInfo, fastbootInfo }) {
     }
     if (
       filename !== `${logicalPartition}.img` ||
-      (flags.includes("--apply-vbmeta") && logicalPartition !== "vbmeta")
+      (flags.includes("--apply-vbmeta") && logicalPartition !== "vbmeta") ||
+      (logicalPartition === "vbmeta" && !flags.includes("--apply-vbmeta"))
     ) {
       fail(
         `fastboot-info contains an unsafe flash mapping: ${commandEntry.line}`,
@@ -625,17 +636,38 @@ export function assertBuilderCapacity({
   return { physicalCores, memoryBytes, totalBytes, freeBytes };
 }
 
-export function assertDedicatedBuilder(aospRoot) {
+function existingFilesystemPath(candidate) {
+  let current = candidate;
+  while (!fs.existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) fail(`no existing filesystem for path: ${candidate}`);
+    current = parent;
+  }
+  return current;
+}
+
+export function assertDedicatedBuilder(aospRoot, outRoot = aospRoot) {
   if (!fs.existsSync(aospRoot)) fail(`AOSP root does not exist: ${aospRoot}`);
-  const filesystem = fs.statfsSync(aospRoot);
-  return assertBuilderCapacity({
+  const sourceFilesystem = fs.statfsSync(aospRoot);
+  const outputFilesystemPath = existingFilesystemPath(outRoot);
+  const outputFilesystem = fs.statfsSync(outputFilesystemPath);
+  const host = {
     platform: process.platform,
     architecture: process.arch,
     physicalCores: physicalCoreCount(),
     memoryBytes: os.totalmem(),
-    totalBytes: filesystem.blocks * filesystem.bsize,
-    freeBytes: filesystem.bavail * filesystem.bsize,
+  };
+  const sourceCapacity = assertBuilderCapacity({
+    ...host,
+    totalBytes: sourceFilesystem.blocks * sourceFilesystem.bsize,
+    freeBytes: sourceFilesystem.bavail * sourceFilesystem.bsize,
   });
+  const outputCapacity = assertBuilderCapacity({
+    ...host,
+    totalBytes: outputFilesystem.blocks * outputFilesystem.bsize,
+    freeBytes: outputFilesystem.bavail * outputFilesystem.bsize,
+  });
+  return { ...sourceCapacity, outputCapacity, outputFilesystemPath };
 }
 
 function sourceDate() {
@@ -704,7 +736,12 @@ function captureBuilderEnvironment({ aospRoot, outRoot, builder }) {
     },
     buildFilesystem: run(
       "df",
-      ["-B1", "--output=source,fstype,size,avail,target", aospRoot],
+      [
+        "-B1",
+        "--output=source,fstype,size,avail,target",
+        aospRoot,
+        builder.outputFilesystemPath,
+      ],
       { capture: true },
     ),
     storageDevices: run(
@@ -833,6 +870,18 @@ function verifyApkProvenance(apk, apkEntries, elizaCommit, scratchDir) {
       fs.rmSync(extracted, { force: true });
     }
   }
+  const unboundAgentAssets = apkEntries.filter(
+    (entry) =>
+      entry.startsWith("assets/agent/") &&
+      !entry.endsWith("/") &&
+      entry !== runtime.entry &&
+      !seen.has(entry),
+  );
+  if (unboundAgentAssets.length > 0) {
+    fail(
+      `privileged APK contains agent assets outside runtime provenance: ${unboundAgentAssets.join(", ")}`,
+    );
+  }
   return [runtime, build].map(({ entry, parsed, sha256 }) => ({
     entry,
     schema: parsed.schema,
@@ -917,7 +966,7 @@ function assertLockedOverlays(aospRoot, lock) {
   }
 }
 
-function parseProjectList(aospRoot, lock) {
+function parseProjectList(aospRoot) {
   const projectListPath = path.join(aospRoot, ".repo/project.list");
   const listed = readStableFile(projectListPath)
     .toString("utf8")
@@ -939,19 +988,202 @@ function parseProjectList(aospRoot, lock) {
     }
     unique.add(projectPath);
   }
-  for (const { path: projectPath } of lock.externalProjects ?? []) {
+  return [...unique].sort((left, right) => left.localeCompare(right, "en"));
+}
+
+function manifestAttributes(fragment, label) {
+  const result = {};
+  for (const match of fragment.matchAll(
+    /(?:^|\s)([A-Za-z_][A-Za-z0-9_.:-]*)=(?:"([^"]*)"|'([^']*)')/g,
+  )) {
+    const [, name, doubleQuoted, singleQuoted] = match;
+    if (Object.hasOwn(result, name)) {
+      fail(`locked AOSP manifest contains a duplicate ${name} in ${label}`);
+    }
+    const value = doubleQuoted ?? singleQuoted;
+    if (value.includes("&")) {
+      fail(`locked AOSP manifest uses unsupported entities in ${label}`);
+    }
+    result[name] = value;
+  }
+  return result;
+}
+
+function resolveManifestRemoteUrl(manifestUrl, fetch, projectName) {
+  let base;
+  try {
+    base = new URL(fetch.endsWith("/") ? fetch : `${fetch}/`, manifestUrl);
+  } catch (error) {
+    fail(`locked AOSP manifest has an invalid remote fetch URL: ${error.message}`);
+  }
+  const resolved = new URL(projectName, base).href;
+  return resolved.endsWith("/") ? resolved.slice(0, -1) : resolved;
+}
+
+export function requireResolvedManifestContract(lock) {
+  const contract = lock?.resolvedManifest;
+  if (
+    !contract ||
+    typeof contract.path !== "string" ||
+    !/^[0-9a-f]{64}$/.test(contract.sha256 ?? "")
+  ) {
+    fail(
+      "grizzly source lock has no authoritative resolved AOSP manifest contract",
+    );
+  }
+  return contract;
+}
+
+function lockedManifestProjects(aospRoot, lock) {
+  const resolvedContract = requireResolvedManifestContract(lock);
+  const resolvedPath = path.join(repositoryRoot, resolvedContract.path);
+  const resolvedRelative = path.relative(repositoryRoot, resolvedPath);
+  if (
+    !resolvedRelative ||
+    resolvedRelative === ".." ||
+    resolvedRelative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(resolvedRelative)
+  ) {
+    fail("resolved AOSP manifest must be retained in the elizaOS/os checkout");
+  }
+  const resolvedBytes = readStableFile(resolvedPath);
+  if (
+    createHash("sha256").update(resolvedBytes).digest("hex") !==
+    resolvedContract.sha256
+  ) {
+    fail("authoritative resolved AOSP manifest digest does not match the lock");
+  }
+  let resolved;
+  try {
+    resolved = JSON.parse(resolvedBytes);
+  } catch (error) {
+    fail(`authoritative resolved AOSP manifest is invalid JSON: ${error.message}`);
+  }
+  if (
+    resolved?.schemaVersion !== 1 ||
+    resolved.manifestCommit !== lock.manifestCommit ||
+    !Array.isArray(resolved.projects) ||
+    resolved.projects.length === 0
+  ) {
+    fail("authoritative resolved AOSP manifest has an invalid contract");
+  }
+  const localManifests = path.join(aospRoot, ".repo/local_manifests");
+  if (fs.existsSync(localManifests)) {
+    fail("AOSP checkout must not contain local manifests");
+  }
+  const manifestsRoot = fs.realpathSync(path.join(aospRoot, ".repo/manifests"));
+  const selectedManifest = fs.realpathSync(path.join(aospRoot, ".repo/manifest.xml"));
+  const manifestRelative = path.relative(manifestsRoot, selectedManifest);
+  if (
+    !manifestRelative ||
+    manifestRelative === ".." ||
+    manifestRelative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(manifestRelative)
+  ) {
+    fail("selected AOSP manifest is not in the locked manifest checkout");
+  }
+  run("git", ["ls-files", "--error-unmatch", manifestRelative], {
+    cwd: manifestsRoot,
+    capture: true,
+  });
+  const contents = readStableFile(selectedManifest).toString("utf8");
+  if (/<(?:include|remove-project|extend-project)\b/.test(contents)) {
+    fail("locked AOSP manifest uses unsupported graph-altering directives");
+  }
+  const defaultMatches = [...contents.matchAll(/<default\b([^>]*)\/?\s*>/g)];
+  if (defaultMatches.length !== 1) {
+    fail("locked AOSP manifest must contain exactly one default");
+  }
+  const defaults = manifestAttributes(defaultMatches[0][1], "default");
+  if (!defaults.remote || !defaults.revision) {
+    fail("locked AOSP manifest default must name a remote and revision");
+  }
+  if (defaults.revision !== `refs/tags/${lock.manifestRevision}`) {
+    fail("locked AOSP manifest default revision does not match the source lock");
+  }
+  const remotes = new Map();
+  for (const match of contents.matchAll(/<remote\b([^>]*)\/?\s*>/g)) {
+    const remote = manifestAttributes(match[1], "remote");
+    if (!remote.name || !remote.fetch || remotes.has(remote.name)) {
+      fail("locked AOSP manifest contains an invalid or duplicate remote");
+    }
+    remotes.set(remote.name, remote);
+  }
+  const projects = [];
+  const seen = new Set();
+  for (const match of contents.matchAll(/<project\b([^>]*)>/g)) {
+    const project = manifestAttributes(match[1], "project");
+    const projectPath = project.path ?? project.name;
     if (
+      !project.name ||
+      !projectPath ||
       path.isAbsolute(projectPath) ||
       projectPath === ".." ||
       projectPath.startsWith("../") ||
       projectPath.includes("\\") ||
-      path.posix.normalize(projectPath) !== projectPath
+      path.posix.normalize(projectPath) !== projectPath ||
+      seen.has(projectPath)
     ) {
-      fail(`AOSP external project has an unsafe path: ${projectPath}`);
+      fail("locked AOSP manifest contains an unsafe or duplicate project");
     }
-    unique.add(projectPath);
+    seen.add(projectPath);
+    const groups = new Set((project.groups ?? "").split(",").filter(Boolean));
+    if (groups.has("notdefault")) continue;
+    const remoteName = project.remote ?? defaults.remote;
+    const remote = remotes.get(remoteName);
+    if (!remote) {
+      fail(`locked AOSP project ${projectPath} references an unknown remote`);
+    }
+    projects.push({
+      path: projectPath,
+      name: project.name,
+      remoteName,
+      remoteUrl: resolveManifestRemoteUrl(
+        lock.manifestUrl,
+        remote.fetch,
+        project.name,
+      ),
+      revision: project.revision ?? defaults.revision,
+    });
   }
-  return [...unique].sort((left, right) => left.localeCompare(right, "en"));
+  const expectedPaths = projects
+    .map((project) => project.path)
+    .sort((left, right) => left.localeCompare(right, "en"));
+  const listedPaths = parseProjectList(aospRoot);
+  if (!identicalSnapshot(expectedPaths, listedPaths)) {
+    fail("AOSP project list does not match the locked manifest's default graph");
+  }
+  const manifestGraph = projects
+    .map(({ path: projectPath, name, remoteName, remoteUrl }) => ({
+      path: projectPath,
+      name,
+      remoteName,
+      remoteUrl,
+    }))
+    .sort((left, right) => left.path.localeCompare(right.path, "en"));
+  const resolvedGraph = resolved.projects
+    .map((project) => {
+      if (
+        typeof project?.path !== "string" ||
+        typeof project?.name !== "string" ||
+        typeof project?.remoteName !== "string" ||
+        typeof project?.remoteUrl !== "string" ||
+        !/^[0-9a-f]{40}$/.test(project?.commit ?? "")
+      ) {
+        fail("authoritative resolved AOSP manifest contains an invalid project");
+      }
+      return project;
+    })
+    .sort((left, right) => left.path.localeCompare(right.path, "en"));
+  if (
+    !identicalSnapshot(
+      manifestGraph,
+      resolvedGraph.map(({ commit: _commit, ...project }) => project),
+    )
+  ) {
+    fail("authoritative resolved AOSP manifest does not match the locked graph");
+  }
+  return resolvedGraph;
 }
 
 function parseProjectStatus(projectPath, status, allowedPaths) {
@@ -991,7 +1223,20 @@ function aospProjectSnapshot(aospRoot, lock) {
       path.posix.normalize(overlayPath),
     ),
   );
-  return parseProjectList(aospRoot, lock).map((projectPath) => {
+  const manifestProjects = lockedManifestProjects(aospRoot, lock);
+  const expectedProjects = [
+    ...manifestProjects,
+    ...(lock.externalProjects ?? []).map((project) => ({
+      path: project.path,
+      name: project.path,
+      remoteName: "origin",
+      remoteUrl: project.url,
+      revision: project.commit,
+      expectedCommit: project.commit,
+    })),
+  ];
+  return expectedProjects.map((expected) => {
+    const projectPath = expected.path;
     const projectRoot = path.join(aospRoot, projectPath);
     if (fs.realpathSync(projectRoot) !== projectRoot) {
       fail(`AOSP project path is not canonical: ${projectPath}`);
@@ -1007,6 +1252,12 @@ function aospProjectSnapshot(aospRoot, lock) {
       cwd: projectRoot,
       capture: true,
     });
+    const expectedCommit = expected.expectedCommit ?? expected.commit;
+    if (commit !== expectedCommit) {
+      fail(
+        `AOSP project ${projectPath} is not at its authoritative resolved commit`,
+      );
+    }
     const remotes = run("git", ["remote"], {
       cwd: projectRoot,
       capture: true,
@@ -1021,8 +1272,12 @@ function aospProjectSnapshot(aospRoot, lock) {
           capture: true,
         }),
       }));
-    if (remotes.length === 0) {
-      fail(`AOSP project has no recorded source remote: ${projectPath}`);
+    if (
+      remotes.length !== 1 ||
+      remotes[0].name !== expected.remoteName ||
+      remotes[0].url !== expected.remoteUrl
+    ) {
+      fail(`AOSP project remote does not match the locked manifest: ${projectPath}`);
     }
     const status = run(
       "git",
@@ -1035,7 +1290,9 @@ function aospProjectSnapshot(aospRoot, lock) {
     );
     return {
       path: projectPath,
+      name: expected.name,
       commit,
+      revision: expected.revision ?? expected.commit,
       remotes,
       status: parseProjectStatus(projectPath, status, allowedPaths),
     };
@@ -1133,21 +1390,20 @@ function runRequiredBuildGates({ aospRoot, jobs, evidenceDir }) {
   const shellPrefix =
     "source build/envsetup.sh && lunch eliza_grizzly_phone-trunk_staging-userdebug";
   const gates = [
-    ["droidcore", "droidcore"],
-    ["dist", "dist"],
-    ["host-init-verifier", "host_init_verifier"],
-    ["check-vintf-all", "check-vintf-all"],
-    ["host-tools", "apksigner aapt2 avbtool"],
+    ["droidcore", `m -j${jobs} droidcore`],
+    ["dist", `m -j${jobs} dist`],
+    [
+      "host-init-verifier",
+      `product_out="$(get_build_var PRODUCT_OUT)" && m -j${jobs} host_init_verifier_check "$product_out/host_init_verifier_output.txt"`,
+    ],
+    ["check-vintf-all", `m -j${jobs} check-vintf-all`],
+    ["host-tools", `m -j${jobs} apksigner aapt2 avbtool`],
   ];
-  return gates.map(([name, targets]) =>
-    runWithReceipt(
-      "bash",
-      ["-lc", `${shellPrefix} && m -j${jobs} ${targets}`],
-      {
-        cwd: aospRoot,
-        receiptPath: path.join(evidenceDir, `build-${name}.log`),
-      },
-    ),
+  return gates.map(([name, command]) =>
+    runWithReceipt("bash", ["-lc", `${shellPrefix} && ${command}`], {
+      cwd: aospRoot,
+      receiptPath: path.join(evidenceDir, `build-${name}.log`),
+    }),
   );
 }
 
@@ -1234,7 +1490,11 @@ function assertPrivateBundleTree(root) {
 
 export function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
-  const builder = assertDedicatedBuilder(args.aospRoot);
+  const configuredOut = process.env.OUT_DIR?.trim() || "out";
+  const outRoot = path.isAbsolute(configuredOut)
+    ? configuredOut
+    : path.resolve(args.aospRoot, configuredOut);
+  const builder = assertDedicatedBuilder(args.aospRoot, outRoot);
   if (args.preflightOnly) {
     process.stdout.write(
       `[grizzly-bundle] builder preflight passed: ${JSON.stringify(builder)}\n`,
@@ -1271,10 +1531,6 @@ export function main(argv = process.argv.slice(2)) {
   if (fs.realpathSync(elizaRoot) !== elizaRoot) {
     fail("elizaOS/eliza root must be a canonical path without symlink aliases");
   }
-  const configuredOut = process.env.OUT_DIR?.trim() || "out";
-  const outRoot = path.isAbsolute(configuredOut)
-    ? configuredOut
-    : path.resolve(args.aospRoot, configuredOut);
   const productOut = path.join(outRoot, "target/product/grizzly");
   const hostBin = path.join(outRoot, "host/linux-x86/bin");
   const outputParent = assertBundleOutputLocation({
@@ -1345,7 +1601,7 @@ export function main(argv = process.argv.slice(2)) {
     const apkBadgingReceipt = run(aapt2, ["dump", "badging", stagedApk], {
       capture: true,
     });
-    if (!apkBadgingReceipt.includes("package: name='ai.elizaos.app'")) {
+    if (!/^package: name='ai\.elizaos\.app'(?:\s|$)/m.test(apkBadgingReceipt)) {
       fail("privileged APK package name is not ai.elizaos.app");
     }
     const platformCertificate = path.join(
@@ -1389,6 +1645,35 @@ export function main(argv = process.argv.slice(2)) {
     const verifiedVbmetaImages = artifactFilenames.filter((filename) =>
       /^vbmeta(?:_[A-Za-z0-9._+-]+)?\.img$/.test(filename),
     );
+    const avbAuthorizations = new Map(
+      (lock.avbVerification ?? []).map((entry) => [entry.image, entry]),
+    );
+    if (
+      avbAuthorizations.size !== verifiedVbmetaImages.length ||
+      verifiedVbmetaImages.some((filename) => !avbAuthorizations.has(filename))
+    ) {
+      fail(
+        "every referenced vbmeta image must have exactly one locked AVB key authorization",
+      );
+    }
+    const avbKeyEvidence = Object.fromEntries(
+      verifiedVbmetaImages.map((filename) => {
+        const authorization = avbAuthorizations.get(filename);
+        const keyPath = path.join(args.aospRoot, authorization.keyPath);
+        const keySha256 = sha256File(keyPath);
+        if (keySha256 !== authorization.keySha256) {
+          fail(`locked AVB verification key drifted for ${filename}`);
+        }
+        return [
+          filename,
+          {
+            keyPath: authorization.keyPath,
+            keySha256,
+            authorization: authorization.authorization,
+          },
+        ];
+      }),
+    );
     const sourceManifest = path.join(staging, "aosp-source-snapshot.json");
     writeExclusiveFile(sourceManifest, `${JSON.stringify(before, null, 2)}\n`);
     const artifacts = collectGrizzlyArtifacts({
@@ -1420,6 +1705,11 @@ export function main(argv = process.argv.slice(2)) {
               "verify_image",
               "--image",
               path.join(staging, "flash", filename),
+              "--key",
+              path.join(
+                args.aospRoot,
+                avbAuthorizations.get(filename).keyPath,
+              ),
               ...(filename === "vbmeta.img"
                 ? ["--follow_chain_partitions"]
                 : []),
@@ -1514,6 +1804,7 @@ export function main(argv = process.argv.slice(2)) {
         collectionMode: "built-and-verified-in-this-invocation",
         verificationTools: toolsBefore,
         verifiedVbmetaImages,
+        avbKeyEvidence,
         flashMetadata,
       },
       physicalDevice: "pending",
@@ -1566,19 +1857,19 @@ export function main(argv = process.argv.slice(2)) {
     if (!sameInode(stagingState, currentStagingState)) {
       fail("bundle staging directory changed before publication");
     }
-    run("mv", [
+    run("/usr/bin/mv", [
       "--no-clobber",
       "--no-target-directory",
       staging,
       args.outputDir,
     ]);
+    renamed = !fs.lstatSync(staging, { throwIfNoEntry: false });
     const outputState = fs.lstatSync(args.outputDir, { throwIfNoEntry: false });
     if (!outputState || !sameInode(stagingState, outputState)) {
       fail(
         "published bundle identity does not match its verified staging directory",
       );
     }
-    renamed = true;
     const parentDescriptor = fs.openSync(
       outputParent,
       fs.constants.O_RDONLY | fs.constants.O_DIRECTORY,

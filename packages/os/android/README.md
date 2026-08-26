@@ -189,13 +189,17 @@ Preparation uses sparse exact-commit Git checkouts for the generation inputs,
 runs `adevtool generate-all -d grizzly`, verifies the required output, and
 retains and verifies both factory images. Downloads are governed by Google's
 Pixel factory-image terms, which `adevtool` displays before download. The
-bundle target completes explicit `droidcore`, `dist`, `host_init_verifier`, and
-`check-vintf-all` gates, retains their command and product-output receipts, and
-verifies every referenced vbmeta image with the built `avbtool`.
+bundle target completes explicit `droidcore`, `dist`,
+`host_init_verifier_check`, and `check-vintf-all` gates, retains their command
+and product-output receipts, and verifies every referenced vbmeta image with
+the built `avbtool` against a lock-authorized key.
 It validates the generated dynamic-super flash plan, binds the privileged APK
 and its embedded runtime provenance to the Eliza commit and checked-out AOSP
 platform certificate, and compares pre/post AOSP-project and vendor source
-snapshots without executing the mutable `repo` implementation. It rejects any
+snapshots without executing the mutable `repo` implementation. The collector
+requires an authoritative resolved-project manifest digest in the source lock
+and rejects local manifests; it fails closed while that reviewed artifact is
+absent. It rejects any
 unstable or missing input, publishes only a complete recursively synced bundle
 from private staging without replacing an existing path, and emits exact
 source identities, retained gate receipts, builder facts, SHA-256 values, and

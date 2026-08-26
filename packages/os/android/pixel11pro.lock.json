@@ -13,6 +13,14 @@
     "productName": "eliza_grizzly_phone",
     "expectedFingerprintPrefix": "elizaOS/eliza_grizzly_phone/grizzly:"
   },
+  "avbVerification": [
+    {
+      "image": "vbmeta.img",
+      "keyPath": "external/avb/test/data/testkey_rsa4096.pem",
+      "keySha256": "6a224754880a57ab9cbd308267cd157d94cf05a1c8cb851aec4090e045d24121",
+      "authorization": "public-aosp-userdebug-test-key"
+    }
+  ],
   "externalProjects": [
     {
       "path": "vendor/adevtool",

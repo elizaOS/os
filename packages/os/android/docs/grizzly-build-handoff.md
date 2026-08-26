@@ -58,6 +58,13 @@ Open changes against `develop`, sync the branch before final verification, and
 use the immutable locks in this repository. Do not substitute a newer factory
 image, AOSP tag, `adevtool`, vendor-state commit, or application artifact.
 
+The bundle collector also requires `pixel11pro.lock.json` to name an
+authoritatively generated resolved-manifest artifact and its SHA-256. That
+artifact must bind every selected AOSP project path, name, remote, and commit;
+an operator's local `.repo/project.list` or tag refs are not authority. The
+lane deliberately fails closed until reviewed resolved-manifest bytes are
+retained and pinned. Local manifests are never allowed.
+
 ```bash
 bun install --frozen-lockfile
 bun run verify
@@ -76,21 +83,25 @@ make -C packages/os/android bundle-grizzly \
   BUNDLE_DIR=/work/bundles/grizzly-"$(git rev-parse --short=12 HEAD)"
 ```
 
-The bundle front door rebuilds and stages the privileged Eliza APK, completes
-the complete `droidcore`/`dist` image set while running explicit
-`host_init_verifier` and `check-vintf-all` gates and building `apksigner`,
+The bundle front door checks both the source and `OUT_DIR` filesystems against
+the builder storage floor, rebuilds and stages the privileged Eliza APK, and
+completes the complete `droidcore`/`dist` image set while running explicit
+`host_init_verifier_check` and `check-vintf-all` gates and building `apksigner`,
 `aapt2`, and `avbtool`. It retains a successful command receipt for every gate
 and the corresponding product-output receipts, verifies
-every referenced AVB image, validates the complete dynamic-super flash plan,
+every referenced AVB image against its lock-authorized key, validates the
+complete dynamic-super flash plan,
 and rejects an unconditional userdata or metadata erase. The APK must contain
 both application provenance records exactly once, match the pinned Eliza
 commit, have the expected package name, and be signed by the platform
 certificate in the checked-out AOSP tree.
 
 The collector deliberately does not execute the mutable `repo` implementation.
-Instead, it records and compares a deterministic pre/post snapshot containing
-the manifest and repo-implementation commits plus every path and HEAD from
-`.repo/project.list`, while rejecting unlocked project changes. It also
+Instead, it validates the selected locked manifest against the pinned resolved
+graph, then records and compares a deterministic pre/post snapshot containing
+the manifest and repo-implementation commits plus every authorized project
+path, remote, and exact commit, while rejecting local manifests and unlocked
+project changes. It also
 compares the locked overlays, generated Google vendor tree, synced elizaOS
 vendor tree, OS commit, and Eliza commit. Large build inputs are copied from
 stable non-symlink file descriptors into private staging before verification;
@@ -110,9 +121,12 @@ flash-artifact checksum before promotion. Environment evidence is expected to
 differ when the isolated builder differs; unexplained artifact drift is a
 release failure.
 
-Production signing happens offline after this unsigned bundle passes host and
-device qualification. Sign the exact `SHA256SUMS` bytes; never copy a private
-key onto the builder or into CI.
+The current userdebug candidate is authorized only against the public AOSP AVB
+test key recorded in the lock. That is verification evidence, not production
+signing and not eligibility for a locked retail device. Production Android/AVB
+signing happens at the separate offline release boundary after qualification.
+Sign the exact `SHA256SUMS` bytes for handoff integrity; never copy a private
+production key onto the builder or into CI.
 
 ## Flash and retained evidence
 
