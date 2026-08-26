@@ -1,5 +1,26 @@
 # Pixel 11 Pro (grizzly) bring-up runbook
 
+## LEADING ROOT-CAUSE HYPOTHESIS (2026-08-26)
+
+The strongest current hypothesis is that second-stage init wedges in
+`on post-fs-data` at
+`exec - system system -- /system/bin/vdc keymaster earlyBootEnded`: the
+keystore2 ↔ KeyMint chain never answers against the CD1A vendor's
+Trusty/Titan-M3 "epic" post-quantum KeyMint (the exact component GrapheneOS
+flagged). Recovery-side disk forensics show the /data skeleton stops at
+`mkdir /data/misc/keystore` with `/data/property` absent. This is a strong
+correlation, not yet a retained normal-boot trace: the `exec_background`
+bypass experiment and its claimed advancement still need to be reproduced
+with a stamped image and persistent evidence. The next frontier is
+`wait_for_prop apexd.status activated` (apexd never activates; logcat-to-disk
+instrumentation in flight). Channel facts learned the hard way: pstore is
+scrubbed every boot on grizzly (never plan around it), the klog partition is
+encrypted, `fastboot oem dmesg` dumps only the current bootloader session,
+slot-A retry exhaustion silently forces fastboot after 2-3 failed boots, and
+logical partitions flash only from fastbootd (`getvar is-userspace` first).
+Evidence that works: /metadata marker files + /data dir-creation timeline read
+from our (booting) recovery, and an init.rc-injected logcat service.
+
 Status: device hangs at the static G logo with no adb when booting our images.
 This runbook is the deterministic debug and verification plan: ranked
 hypotheses, the decision tree that spends each phone-interaction cycle on the
@@ -15,7 +36,10 @@ Companion tooling:
   image is ever flashed again.
 - `scripts/distro-android/prepare-grizzly.mjs` — probe/renderer/fstab stances
   are opt-in env vars recorded in a prepare stamp; `build-aosp.mjs` fails
-  closed when the tree and env disagree.
+  closed when the tree and env disagree. The diagnostic-only
+  `ELIZAOS_GRIZZLY_KEYMASTER_NONBLOCKING=1` stance overlays the system init
+  command without dirtying the pinned AOSP checkout; it must be reproduced
+  with a full attested image before treating a boot advance as evidence.
 
 ## Symptom model — read this before proposing a fix
 
@@ -133,8 +157,11 @@ grizzly runs Graphite + `persist.graphics.egl=angle`; the Lineage stance is
 the fallback experiment if stock-config SurfaceFlinger crashes on our build.
 Renderer A/B experiments are only meaningful via
 `ELIZAOS_GRIZZLY_RENDERENGINE_BACKEND` / `_GRAPHITE` (and an EGL-selection
-override if we add one) with the prepare-stamp + attestation chain proving
-what was flashed.
+override) with the prepare-stamp + attestation chain proving what was flashed.
+The independent KeyMint experiment is
+`ELIZAOS_GRIZZLY_KEYMASTER_NONBLOCKING=1`; do not combine conclusions from a
+renderer A/B image and a keymaster-bypass image unless both stances are in the
+stamp and the boot evidence identifies them.
 
 ### Ruled out
 
@@ -213,7 +240,7 @@ partition inventory against the stock flash-all set (missing/new partitions,
    class of error dies here.
 2. **No ambiguous slot.** `--slot` implies `--set-active`; evidence capture
    records `current-slot` + retry counters every time.
-3. **No stance drift.** Probe/renderer/fstab stances live only in
+3. **No stance drift.** Probe/renderer/fstab/keymaster stances live only in
    `ELIZAOS_GRIZZLY_*` env vars, recorded in the prepare stamp, enforced by
    `assertPreparedTreeMatchesEnv` at build and printed by the attestation
    check at flash time.

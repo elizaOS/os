@@ -52,6 +52,7 @@ function scaffoldAospRoot(options: {
           eglSelection: null,
           earlyBootProbes: false,
           conservativeF2fs: false,
+          keymasterNonblocking: false,
         },
       ),
     );
@@ -68,14 +69,30 @@ function scaffoldAospRoot(options: {
     join(vendorDir, "etc/fstab.malibu"),
     options.fstabLine ?? STOCK_FSTAB_DATA_LINE,
   );
+  mkdirSync(join(productDir, "system/etc/init/hw"), { recursive: true });
+  mkdirSync(join(productDir, "system/lib64"), { recursive: true });
+  writeFileSync(join(productDir, "system/lib64/libEGL_angle.so"), "angle-elf");
+  writeFileSync(
+    join(productDir, "system/etc/init/hw/init.rc"),
+    "on post-fs-data\n    exec - system system -- /system/bin/vdc keymaster earlyBootEnded\n",
+  );
   if (options.probeRc) {
     writeFileSync(
       join(vendorDir, "etc/init/hw/init.elizaos-debug.rc"),
       'on post-fs\n    write /dev/kmsg "elizaos-init: post-fs reached"\n',
     );
   }
-  // The full core set: attesting a partial build is refused outright, so the
-  // scaffold must stage everything a real `m` produces.
+  // The complete flash chain: attesting a partial build is refused outright,
+  // so the scaffold must stage every image a real grizzly dist produces.
+  for (const image of [
+    "boot.img",
+    "init_boot.img",
+    "dtbo.img",
+    "vendor_kernel_boot.img",
+    "pvmfw.img",
+    "vendor_boot.img",
+  ])
+    writeFileSync(join(productDir, image), `${image}-bytes`);
   writeFileSync(join(productDir, "system.img"), "system-image-bytes");
   writeFileSync(join(productDir, "system_ext.img"), "system-ext-image-bytes");
   writeFileSync(join(productDir, "product.img"), "product-image-bytes");
@@ -83,6 +100,11 @@ function scaffoldAospRoot(options: {
   writeFileSync(join(productDir, "vendor_dlkm.img"), "vendor-dlkm-image-bytes");
   writeFileSync(join(productDir, "system_dlkm.img"), "system-dlkm-image-bytes");
   writeFileSync(join(productDir, "vbmeta.img"), "vbmeta-image-bytes");
+  writeFileSync(
+    join(productDir, "system_other.img"),
+    "system-other-image-bytes",
+  );
+  writeFileSync(join(productDir, "super_empty.img"), "super-empty-image-bytes");
   return { root, productDir };
 }
 
@@ -255,7 +277,7 @@ describe("verify-grizzly-artifacts check", () => {
     try {
       expect(run(["attest", "--aosp-root", root]).status).toBe(0);
       copyAttestedImages(productDir, artifactDir);
-      writeFileSync(join(artifactDir, "boot.img"), "week-old-stray-bytes");
+      writeFileSync(join(artifactDir, "stray.img"), "week-old-stray-bytes");
       const result = run([
         "check",
         "--manifest",

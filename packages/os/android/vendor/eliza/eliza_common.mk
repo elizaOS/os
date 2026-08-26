@@ -86,12 +86,9 @@ PRODUCT_COPY_FILES += \
     vendor/eliza/bootanimation/bootanimation.zip:$(TARGET_COPY_OUT_PRODUCT)/media/bootanimation.zip
 endif
 
-# KNOWN GAP: BOARD_* variables are consumed during BoardConfig evaluation,
-# not product-config evaluation — an append from an inherited product .mk
-# never reaches the sepolicy build, so vendor/eliza/sepolicy (including
-# eliza_agent.te's platform_app execute allow) is NOT compiled into any
-# image today. Wiring it requires a BoardConfig-level include per target;
-# until then, expect `avc: denied` for the on-device agent exec path and
-# treat this line as documentation of intent, not mechanism. Tracked as a
-# follow-up with boot-level (adb sesearch/denial) verification.
+# Keep the declaration next to the product overlay so Cuttlefish and generated
+# Pixel products share the same intended policy contract. Whether this
+# product-level append is consumed by a given Android 17 board is build-system
+# dependent; the compiled CIL and on-device denials are authoritative and are
+# required in the hardware gate.
 BOARD_VENDOR_SEPOLICY_DIRS += vendor/eliza/sepolicy

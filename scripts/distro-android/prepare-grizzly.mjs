@@ -386,6 +386,108 @@ export function normalizeGeneratedBringupProbes(aospRoot) {
   stageGeneratedBringupDiagnostics(aospRoot);
 }
 
+// DIAGNOSTIC-ONLY init experiment, opt-in via
+// ELIZAOS_GRIZZLY_KEYMASTER_NONBLOCKING=1. The stock Android 17 init script
+// waits synchronously for `vdc keymaster earlyBootEnded` during post-fs-data.
+// On the unpublished CD1A vendor branch that call is a plausible early-boot
+// wedge. Make the experiment explicit, reversible, and stamp-bound; never
+// silently ship it in the default product.
+export function normalizeAospKeymasterInit(aospRoot, enabled = false) {
+  const sourceInitPath = path.join(aospRoot, "system/core/rootdir/init.rc");
+  const generatedRoot = path.join(aospRoot, "vendor/google_devices/grizzly");
+  const overlayInitPath = path.join(
+    generatedRoot,
+    "diagnostics/system/etc/init/hw/init.rc",
+  );
+  const makefilePath = path.join(generatedRoot, "grizzly.mk");
+  if (!fs.existsSync(sourceInitPath) || !fs.existsSync(makefilePath)) {
+    fail(`keymaster diagnostic requires ${sourceInitPath} and ${makefilePath}`);
+  }
+  const contents = fs.readFileSync(sourceInitPath, "utf8");
+  const blocking =
+    "exec - system system -- /system/bin/vdc keymaster earlyBootEnded";
+  const background =
+    "exec_background - system system -- /system/bin/vdc keymaster earlyBootEnded";
+  const marker = "elizaOS: diagnostic non-blocking keymaster notification";
+  const markedBackground = new RegExp(
+    `^([\\t ]*)# ${marker}\\n\\1${background.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}\\n?`,
+    "m",
+  );
+  if (!enabled) {
+    fs.rmSync(overlayInitPath, { force: true });
+    const makefile = fs.readFileSync(makefilePath, "utf8");
+    const withoutOverlay = makefile.replace(
+      /\n?# elizaOS diagnostic keymaster init overlay\nPRODUCT_COPY_FILES \+= \\\n {4}vendor\/google_devices\/grizzly\/diagnostics\/system\/etc\/init\/hw\/init\.rc:\$\(TARGET_COPY_OUT_SYSTEM\)\/etc\/init\/hw\/init\.rc\n?/m,
+      "\n",
+    );
+    if (withoutOverlay !== makefile)
+      fs.writeFileSync(makefilePath, withoutOverlay);
+    return;
+  }
+  const blockingPattern = new RegExp(
+    `^([\\t ]*)${blocking.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}$`,
+    "m",
+  );
+  if (!blockingPattern.test(contents)) {
+    if (
+      new RegExp(
+        `^([\\t ]*)${background.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}$`,
+        "m",
+      ).test(contents)
+    ) {
+      fail(
+        `${sourceInitPath} already uses exec_background without the elizaOS marker; refusing to claim or alter an unowned init change`,
+      );
+    }
+    fail(
+      `${sourceInitPath} is missing the expected vdc keymaster earlyBootEnded command`,
+    );
+  }
+  const normalized = contents.replace(
+    blockingPattern,
+    `$1# ${marker}\n$1${background}`,
+  );
+  const existingOverlay = fs.existsSync(overlayInitPath)
+    ? fs.readFileSync(overlayInitPath, "utf8")
+    : "";
+  if (
+    markedBackground.test(existingOverlay) &&
+    existingOverlay === normalized
+  ) {
+    return;
+  }
+  fs.mkdirSync(path.dirname(overlayInitPath), { recursive: true });
+  fs.writeFileSync(overlayInitPath, normalized);
+  const makefile = fs.readFileSync(makefilePath, "utf8");
+  const copyEntry =
+    "    vendor/google_devices/grizzly/diagnostics/system/etc/init/hw/init.rc:$(TARGET_COPY_OUT_SYSTEM)/etc/init/hw/init.rc";
+  if (!makefile.includes(copyEntry)) {
+    fs.writeFileSync(
+      makefilePath,
+      `${makefile.trimEnd()}\n\n# elizaOS diagnostic keymaster init overlay\nPRODUCT_COPY_FILES += \\\n${copyEntry}\n`,
+    );
+  }
+}
+
+export function generatedTreeHasKeymasterOverride(aospRoot) {
+  const generatedRoot = path.join(aospRoot, "vendor/google_devices/grizzly");
+  const overlayPath = path.join(
+    generatedRoot,
+    "diagnostics/system/etc/init/hw/init.rc",
+  );
+  const makefilePath = path.join(generatedRoot, "grizzly.mk");
+  return (
+    (fs.existsSync(overlayPath) &&
+      /diagnostic non-blocking keymaster notification/.test(
+        fs.readFileSync(overlayPath, "utf8"),
+      )) ||
+    (fs.existsSync(makefilePath) &&
+      /diagnostic keymaster init overlay/.test(
+        fs.readFileSync(makefilePath, "utf8"),
+      ))
+  );
+}
+
 // After the generated tree exists, prove the graphics stack adevtool extracted
 // is complete enough to boot past SurfaceFlinger init. These are the pieces
 // whose absence produces a silent hang or an EGL-loader abort at runtime; the
@@ -424,7 +526,9 @@ export function assertGeneratedGraphicsStack(aospRoot) {
   }
   // The EGL loader has no fallback when ANGLE is selected: every EGL client
   // (SurfaceFlinger included) aborts if persist.graphics.egl=angle and the
-  // ANGLE libraries are absent from the search path.
+  // ANGLE libraries are absent from the search path. ANGLE is an AOSP system
+  // component, not a vendor blob, so validate its source here and its staged
+  // output in verify-grizzly-artifacts after the image is built.
   const vendorProp = path.join(
     aospRoot,
     "vendor/google_devices/grizzly/sysprop/vendor.prop",
@@ -434,10 +538,10 @@ export function assertGeneratedGraphicsStack(aospRoot) {
     /^persist\.graphics\.egl=angle$/m.test(
       fs.readFileSync(vendorProp, "utf8"),
     ) &&
-    !eglLibs.some((name) => name.includes("angle"))
+    !fs.existsSync(path.join(aospRoot, "external/angle"))
   ) {
     fail(
-      "vendor.prop selects persist.graphics.egl=angle but no ANGLE library exists under vendor/lib64/egl; the EGL loader aborts every client in this state",
+      "vendor.prop selects persist.graphics.egl=angle but the AOSP external/angle source is absent; the staged EGL loader would abort every client in this state",
     );
   }
   const firmwareDir = path.join(vendorRoot, "firmware");
@@ -465,6 +569,7 @@ export function currentPrepareStamp(env = process.env) {
     eglSelection: resolveEglOverride(env),
     earlyBootProbes: env.ELIZAOS_GRIZZLY_EARLY_BOOT_PROBES === "1",
     conservativeF2fs: env.ELIZAOS_GRIZZLY_CONSERVATIVE_F2FS === "1",
+    keymasterNonblocking: env.ELIZAOS_GRIZZLY_KEYMASTER_NONBLOCKING === "1",
   };
 }
 
@@ -690,11 +795,14 @@ export async function prepareGrizzly({
     process.env.ELIZAOS_GRIZZLY_EARLY_BOOT_PROBES === "1";
   const conservativeF2fs =
     process.env.ELIZAOS_GRIZZLY_CONSERVATIVE_F2FS === "1";
+  const keymasterNonblocking =
+    process.env.ELIZAOS_GRIZZLY_KEYMASTER_NONBLOCKING === "1";
   let generatedTreeComplete = false;
   if (
     fs.existsSync(generatedRoot) &&
     ((!enableBringupProbes && generatedTreeHasBringupProbes(aospRoot)) ||
       (!conservativeF2fs && generatedTreeHasF2fsFallback(aospRoot)) ||
+      (!keymasterNonblocking && generatedTreeHasKeymasterOverride(aospRoot)) ||
       (resolveEglOverride() !== "native" &&
         generatedTreeHasEglOverride(aospRoot)))
   ) {
@@ -710,6 +818,7 @@ export async function prepareGrizzly({
       normalizeGeneratedProprietaryNamespace(aospRoot);
       normalizeGeneratedSePolicy(aospRoot);
       normalizeGeneratedVintf(aospRoot);
+      normalizeAospKeymasterInit(aospRoot, keymasterNonblocking);
       if (conservativeF2fs) normalizeGeneratedF2fsMountOptions(aospRoot);
       normalizeGeneratedGraphicsProperties(aospRoot);
       if (enableBringupProbes) normalizeGeneratedBringupProbes(aospRoot);
@@ -738,6 +847,7 @@ export async function prepareGrizzly({
     normalizeGeneratedProprietaryNamespace(aospRoot);
     normalizeGeneratedSePolicy(aospRoot);
     normalizeGeneratedVintf(aospRoot);
+    normalizeAospKeymasterInit(aospRoot, keymasterNonblocking);
     if (conservativeF2fs) normalizeGeneratedF2fsMountOptions(aospRoot);
     normalizeGeneratedGraphicsProperties(aospRoot);
     if (enableBringupProbes) normalizeGeneratedBringupProbes(aospRoot);

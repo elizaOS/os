@@ -60,8 +60,8 @@ Device and safety options:
                               partition-exists) against fastboot getvar before
                               flashing.
   --allow-stale-artifacts     Skip the artifact-coherence check that refuses an
-                              artifact dir whose image mtimes span more than an
-                              hour (a signature of mixed build generations).
+                              artifact dir whose image mtimes span more than a
+                              day (a signature of mixed build generations).
   --skip-preflight            Skip USB debugging and bootloader unlock checks.
   --assume-bootloader         Do not plan or run adb reboot bootloader.
   --wipe-data                 Add fastboot -w after flashing. Never implied.
@@ -425,7 +425,7 @@ collect_images() {
   # must not judge.
   local explicit_partitions=" "
   local explicit_spec
-  for explicit_spec in ${IMAGE_SPECS[@]+"${IMAGE_SPECS[@]}"}; do
+  for explicit_spec in "${IMAGE_SPECS[@]}"; do
     explicit_partitions+="${explicit_spec%%=*} "
   done
 

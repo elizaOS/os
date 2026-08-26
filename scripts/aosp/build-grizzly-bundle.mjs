@@ -14,6 +14,7 @@ import {
   loadAospLock,
 } from "../distro-android/bootstrap-aosp.mjs";
 import { isMainModule } from "../distro-android/is-main.mjs";
+import { assertPreparedTreeMatchesEnv } from "../distro-android/prepare-grizzly.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(here, "../..");
@@ -432,6 +433,10 @@ function main(argv = process.argv.slice(2)) {
   if (lock.device?.codename !== "grizzly") fail("lock is not for grizzly");
   assertPinnedAospCheckout(args.aospRoot, lock);
   assertGeneratedVendorTree(args.aospRoot, lock);
+  // The bundle front door is independently runnable from build-aosp; enforce
+  // the same stamped renderer/probe/fstab/keymaster stance before collecting
+  // any image bytes so a direct dist handoff cannot bypass the prepare guard.
+  assertPreparedTreeMatchesEnv(args.aospRoot);
   const elizaRootValue = process.env.ELIZAOS_ELIZA_ROOT?.trim();
   if (!elizaRootValue) fail("ELIZAOS_ELIZA_ROOT is required");
   const elizaRoot = path.resolve(elizaRootValue);

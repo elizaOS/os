@@ -55,6 +55,8 @@ import {
   generatedTreeHasBringupProbes,
   generatedTreeHasEglOverride,
   generatedTreeHasF2fsFallback,
+  generatedTreeHasKeymasterOverride,
+  normalizeAospKeymasterInit,
   normalizeGeneratedBringupProbes,
   normalizeGeneratedF2fsMountOptions,
   normalizeGeneratedGraphicsProperties,
@@ -985,6 +987,7 @@ describe("AOSP build contracts", () => {
         eglSelection: null,
         earlyBootProbes: false,
         conservativeF2fs: false,
+        keymasterNonblocking: false,
       });
       expect(() =>
         currentPrepareStamp({ ELIZAOS_GRIZZLY_EGL: "invalid" }),
@@ -1007,6 +1010,56 @@ describe("AOSP build contracts", () => {
           /different environment/,
         );
       }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("Pixel keymaster diagnostic is opt-in and reversible", async () => {
+    const root = await mkdtemp(join(tmpdir(), "elizaos-grizzly-keymaster-"));
+    const initDir = join(root, "system/core/rootdir");
+    const initPath = join(initDir, "init.rc");
+    const generatedDir = join(root, "vendor/google_devices/grizzly");
+    await mkdir(initDir, { recursive: true });
+    await mkdir(generatedDir, { recursive: true });
+    await writeFile(
+      join(generatedDir, "grizzly.mk"),
+      "PRODUCT_NAME := grizzly\n",
+    );
+    await writeFile(
+      initPath,
+      "on post-fs-data\n    exec - system system -- /system/bin/vdc keymaster earlyBootEnded\n",
+    );
+    try {
+      normalizeAospKeymasterInit(root, true);
+      const diagnostic = readFileSync(
+        join(generatedDir, "diagnostics/system/etc/init/hw/init.rc"),
+        "utf8",
+      );
+      expect(diagnostic).toContain(
+        "diagnostic non-blocking keymaster notification",
+      );
+      expect(diagnostic).toContain(
+        "exec_background - system system -- /system/bin/vdc keymaster earlyBootEnded",
+      );
+      expect(readFileSync(initPath, "utf8")).toContain(
+        "exec - system system -- /system/bin/vdc keymaster earlyBootEnded",
+      );
+      normalizeAospKeymasterInit(root, false);
+      expect(
+        existsSync(
+          join(generatedDir, "diagnostics/system/etc/init/hw/init.rc"),
+        ),
+      ).toBe(false);
+      expect(readFileSync(initPath, "utf8")).toContain(
+        "exec - system system -- /system/bin/vdc keymaster earlyBootEnded",
+      );
+      expect(currentPrepareStamp({}).keymasterNonblocking).toBe(false);
+      expect(
+        currentPrepareStamp({ ELIZAOS_GRIZZLY_KEYMASTER_NONBLOCKING: "1" })
+          .keymasterNonblocking,
+      ).toBe(true);
+      expect(generatedTreeHasKeymasterOverride(root)).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -54,31 +54,32 @@ const STAMP_RELATIVE_PATH =
 // exist — a missing core image means the build is incomplete and attesting a
 // partial set is exactly the stale-mix hazard this tool exists to prevent.
 const REQUIRED_ATTESTED_IMAGES = [
+  // The boot chain is not optional on grizzly. A vendor/system-only
+  // attestation can still be paired with stale boot or vendor_boot bytes and
+  // reproduce the device's vendor_boot AVB failure. Keep this list aligned
+  // with build-grizzly-bundle.mjs' flash handoff contract.
+  "boot.img",
+  "init_boot.img",
+  "dtbo.img",
+  "vendor_kernel_boot.img",
+  "pvmfw.img",
+  "vendor_boot.img",
+  "vbmeta.img",
   "system.img",
   "system_ext.img",
   "product.img",
   "vendor.img",
   "vendor_dlkm.img",
   "system_dlkm.img",
-  "vbmeta.img",
+  "system_other.img",
+  "super_empty.img",
 ];
 // Attested when present: chained vbmeta split varies by board config, and the
 // boot chain is stock (factory kernel) but still ships in the flash set — its
 // bytes must be pinned so the flash host proves one coherent generation.
 // vendor_boot additionally carries the vendor_ramdisk fstab, so it is
 // promoted to required whenever the conservative-f2fs stance is stamped.
-const OPTIONAL_ATTESTED_IMAGES = [
-  "vbmeta_system.img",
-  "vbmeta_vendor.img",
-  "boot.img",
-  "init_boot.img",
-  "vendor_boot.img",
-  "vendor_kernel_boot.img",
-  "dtbo.img",
-  "pvmfw.img",
-  "super_empty.img",
-  "system_other.img",
-];
+const OPTIONAL_ATTESTED_IMAGES = ["vbmeta_system.img", "vbmeta_vendor.img"];
 
 function fail(message) {
   console.error(`[verify-grizzly-artifacts] ERROR: ${message}`);
@@ -174,7 +175,7 @@ function productOutDir(aospRoot) {
 
 // The staged vendor/build.prop is what vendor.img is packaged from; verifying
 // it (rather than the source tree) catches the built-before-edited hazard.
-function assertStagedRenderEngine(stagedVendorDir, stamp) {
+function assertStagedRenderEngine(productDir, stagedVendorDir, stamp) {
   const buildProp = path.join(stagedVendorDir, "build.prop");
   if (!fs.existsSync(buildProp)) {
     fail(`staged vendor build.prop missing: ${buildProp}`);
@@ -209,6 +210,18 @@ function assertStagedRenderEngine(stagedVendorDir, stamp) {
     fail(
       "staged vendor build.prop lost the stock persist.graphics.egl=angle selection without a native-EGL stamp; the image does not match any declared stance",
     );
+  }
+  if (stamp.eglSelection !== "native") {
+    const angleCandidates = [
+      path.join(stagedVendorDir, "..", "system", "lib64", "libEGL_angle.so"),
+      path.join(productDir, "system", "lib64", "libEGL_angle.so"),
+      path.join(productDir, "product", "priv-app", "ANGLE", "ANGLE.apk"),
+    ];
+    if (!angleCandidates.some((candidate) => fs.existsSync(candidate))) {
+      fail(
+        "stock ANGLE EGL stance selected but no staged libEGL_angle.so or ANGLE.apk exists; rebuild the AOSP ANGLE component before flashing",
+      );
+    }
   }
   info(
     `staged renderengine verified: backend=${stagedBackend ?? "(stock)"} graphite=${stagedGraphite} egl=${stamp.eglSelection ?? "(stock angle)"}`,
@@ -289,6 +302,41 @@ function assertStagedProbes(stagedVendorDir, stamp) {
   info(`staged bring-up probes verified (enabled=${stamp.earlyBootProbes})`);
 }
 
+function assertStagedKeymaster(productDir, stamp) {
+  const initPath = path.join(
+    productDir,
+    "system",
+    "etc",
+    "init",
+    "hw",
+    "init.rc",
+  );
+  if (!fs.existsSync(initPath))
+    fail(`staged system init.rc missing: ${initPath}`);
+  const contents = fs.readFileSync(initPath, "utf8");
+  const nonblocking =
+    /# elizaOS: diagnostic non-blocking keymaster notification\n[ \t]*exec_background - system system -- \/system\/bin\/vdc keymaster earlyBootEnded/m.test(
+      contents,
+    );
+  const expected = stamp.keymasterNonblocking === true;
+  if (nonblocking !== expected) {
+    fail(
+      `staged system init keymaster mode=${nonblocking} but prepare stamp says keymasterNonblocking=${expected}; rebuild after re-running prepare-grizzly`,
+    );
+  }
+  if (
+    !nonblocking &&
+    /exec_background - system system -- \/system\/bin\/vdc keymaster earlyBootEnded/m.test(
+      contents,
+    )
+  ) {
+    fail(
+      "staged system init.rc uses unmarked exec_background for keymaster; refuse an ambiguous diagnostic image",
+    );
+  }
+  info(`staged keymaster init verified (nonblocking=${nonblocking})`);
+}
+
 // 16 KiB page-size kernels refuse to map ELFs whose LOAD segments are aligned
 // below 16384. Stock vendor blobs are Google's problem; the binaries WE add
 // (Eliza app JNI, inference runtimes) are ours. Uses llvm-readelf from the
@@ -363,9 +411,10 @@ function attest({ aospRoot, out }) {
     fail(`product out dir missing: ${productDir}; build first`);
   }
   const stagedVendorDir = path.join(productDir, "vendor");
-  assertStagedRenderEngine(stagedVendorDir, stamp);
+  assertStagedRenderEngine(productDir, stagedVendorDir, stamp);
   assertStagedFstab(productDir, stagedVendorDir, stamp);
   assertStagedProbes(stagedVendorDir, stamp);
+  assertStagedKeymaster(productDir, stamp);
   checkElfAlignment(aospRoot, productDir);
 
   // The conservative-f2fs stance ships inside vendor_boot's vendor_ramdisk;
