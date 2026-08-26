@@ -21,6 +21,7 @@ const SGDISK = "/usr/sbin/sgdisk";
 const DUMPE2FS = "/usr/sbin/dumpe2fs";
 const E2FSCK = "/usr/sbin/e2fsck";
 const RESIZE2FS = "/usr/sbin/resize2fs";
+const BTRFS = "/usr/bin/btrfs";
 
 interface LsblkDevice {
   path?: unknown;
@@ -68,6 +69,47 @@ export interface LinuxInventoryCommandRunner {
 export interface LinuxExt4ProbeEvidence {
   filesystemHealth: NonNullable<PartitionInventory["filesystemHealth"]>;
   minimumBytes?: number;
+}
+
+export interface LinuxBtrfsProbeEvidence {
+  filesystemHealth: NonNullable<PartitionInventory["filesystemHealth"]>;
+}
+
+const BTRFS_CLEAN_PATTERN = /\bno error found\b/i;
+const BTRFS_FAILURE_PATTERN =
+  /\b(?:warning|corrupt(?:ed|ion)?|damaged|invalid|unrecoverable|failed|failure|errors?)\b/i;
+
+/**
+ * Classify an unmounted btrfs filesystem with the native read-only checker.
+ * btrfs minimum-device-size needs a mounted path, so this probe intentionally
+ * does not manufacture automatic-shrink evidence from an unsafe mount.
+ */
+export async function probeLinuxBtrfsFilesystem(options: {
+  runner: LinuxInventoryCommandRunner;
+  devicePath: string;
+}): Promise<LinuxBtrfsProbeEvidence> {
+  if (!isSafeDevicePath(options.devicePath)) {
+    throw new Error("Linux btrfs probe device path is invalid.");
+  }
+  const check = await options.runner.run(BTRFS, [
+    "check",
+    "--readonly",
+    options.devicePath,
+  ]);
+  if (check.exitCode === 127) {
+    return { filesystemHealth: "unknown" };
+  }
+  if (check.exitCode !== 0) {
+    return { filesystemHealth: "unhealthy" };
+  }
+  const report = `${check.stdout}\n${check.stderr}`;
+  const withoutCleanMarker = report.replace(BTRFS_CLEAN_PATTERN, "");
+  if (BTRFS_FAILURE_PATTERN.test(withoutCleanMarker)) {
+    return { filesystemHealth: "unhealthy" };
+  }
+  return {
+    filesystemHealth: BTRFS_CLEAN_PATTERN.test(report) ? "healthy" : "unknown",
+  };
 }
 
 const EXT4_BLOCK_SIZE_PATTERN = /^Block size:\s*(\d+)\s*$/m;
@@ -437,6 +479,59 @@ function partitionDevicePaths(serialized: string): Map<string, string> {
   return result;
 }
 
+export async function probeLinuxPartitionFilesystems(options: {
+  inventory: DiskInventory;
+  serialized: string;
+  runner: LinuxInventoryCommandRunner;
+}): Promise<PartitionInventory[]> {
+  const devicePaths = partitionDevicePaths(options.serialized);
+  return Promise.all(
+    options.inventory.partitions.map(async (partition) => {
+      if (partition.filesystem !== "ext4" && partition.filesystem !== "btrfs") {
+        return partition;
+      }
+      const partitionPath = devicePaths.get(partition.id);
+      if (!partitionPath) {
+        throw new Error(
+          `Linux inventory partition ${partition.id} lost its device path.`,
+        );
+      }
+      if (partition.mounted) {
+        return { ...partition, filesystemHealth: "unknown" as const };
+      }
+      if (partition.filesystem === "btrfs") {
+        const evidence = await probeLinuxBtrfsFilesystem({
+          runner: options.runner,
+          devicePath: partitionPath,
+        });
+        return {
+          ...partition,
+          filesystemHealth: evidence.filesystemHealth,
+        };
+      }
+      const evidence = await probeLinuxExt4Filesystem({
+        runner: options.runner,
+        devicePath: partitionPath,
+        partitionSizeBytes: partition.endBytes - partition.startBytes,
+      });
+      return {
+        ...partition,
+        filesystemHealth: evidence.filesystemHealth,
+        ...(evidence.minimumBytes !== undefined
+          ? {
+              resize: {
+                filesystemHealthy: true,
+                mounted: false,
+                minimumBytes: evidence.minimumBytes,
+                dirty: false,
+              },
+            }
+          : {}),
+      };
+    }),
+  );
+}
+
 function freeExtents(
   sizeBytes: number,
   partitions: PartitionInventory[],
@@ -707,40 +802,11 @@ export class LinuxInstallInventoryProvider implements InstallInventoryProvider {
       bootAncestorPaths,
       bootAncestryResolved,
     });
-    const devicePaths = partitionDevicePaths(lsblk.stdout);
-    inventory.partitions = await Promise.all(
-      inventory.partitions.map(async (partition) => {
-        if (partition.filesystem !== "ext4") return partition;
-        const partitionPath = devicePaths.get(partition.id);
-        if (!partitionPath) {
-          throw new Error(
-            `Linux inventory partition ${partition.id} lost its device path.`,
-          );
-        }
-        if (partition.mounted) {
-          return { ...partition, filesystemHealth: "unknown" as const };
-        }
-        const evidence = await probeLinuxExt4Filesystem({
-          runner: this.runner,
-          devicePath: partitionPath,
-          partitionSizeBytes: partition.endBytes - partition.startBytes,
-        });
-        return {
-          ...partition,
-          filesystemHealth: evidence.filesystemHealth,
-          ...(evidence.minimumBytes !== undefined
-            ? {
-                resize: {
-                  filesystemHealthy: true,
-                  mounted: false,
-                  minimumBytes: evidence.minimumBytes,
-                  dirty: false,
-                },
-              }
-            : {}),
-        };
-      }),
-    );
+    inventory.partitions = await probeLinuxPartitionFilesystems({
+      inventory,
+      serialized: lsblk.stdout,
+      runner: this.runner,
+    });
     const unsafeFilesystem = inventory.partitions.find(
       (partition) =>
         partition.filesystemHealth === "dirty" ||

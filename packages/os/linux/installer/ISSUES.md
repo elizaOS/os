@@ -20,12 +20,16 @@ package never changes a partition table.
   plan-bound; an exit-zero in-memory recovery is rejected. Root-device ancestry
   is now resolved through `findmnt` plus inverse `lsblk` dependencies and is
   also plan-bound; unresolved or stacked boot targets fail closed. Add the
-  btrfs and Windows-native filesystem health, encryption, hibernation, and
-  shrink-minimum probes before connecting it to the root service. Unmounted
-  ext4 now uses fixed-argv, read-only native health and minimum-size probes;
+  Windows-native filesystem health, encryption, hibernation, and shrink-minimum
+  probes, plus a separately reviewed btrfs minimum-size boundary, before
+  connecting it to the root service. Unmounted ext4 now uses fixed-argv,
+  read-only native health and minimum-size probes;
   only clean 4 KiB filesystems receive resize evidence, while dirty/unhealthy
   filesystems protect the target. Mount state already propagates through
-  stacked descendants and must agree with any resize evidence.
+  stacked descendants and must agree with any resize evidence. Unmounted btrfs
+  now has a fixed-argv native read-only health check, but intentionally receives
+  no automatic-shrink evidence because native minimum-size discovery requires
+  a mounted path.
 - **Connect plan revalidation and authorization to the root service.** The
   library now reproduces the initial inventory/plan ID, verifies an expiring
   owner credential, re-enumerates before every typed action, and stops on
