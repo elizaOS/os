@@ -19,12 +19,18 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   assertApkProvenanceEntries,
+  assertBuilderCapacity,
+  assertBundleOutputLocation,
+  assertClosedAospSourceRoot,
   assertSafeFlashMetadata,
   collectGrizzlyArtifacts,
+  hashDirectoryTree,
   parseArgs as parseBundleArgs,
   parseFastbootInfoArtifacts,
   REQUIRED_APK_PROVENANCE,
   REQUIRED_GRIZZLY_ARTIFACTS,
+  requireResolvedManifestContract,
+  selectedManifestPath,
 } from "../../../../scripts/aosp/build-grizzly-bundle.mjs";
 import {
   loadPhysicalTargetContract,
@@ -69,6 +75,29 @@ import { loadCuttlefishE1Lock } from "../../../../scripts/distro-android/provisi
 import { withSisoCompatibility } from "../../../../scripts/distro-android/siso-env.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../../../..", import.meta.url));
+
+const validGrizzlyFastbootInfo = [
+  "version 1",
+  "flash boot",
+  "flash init_boot",
+  "flash dtbo",
+  "flash vendor_kernel_boot",
+  "flash pvmfw",
+  "flash vendor_boot",
+  "flash --apply-vbmeta vbmeta",
+  "reboot fastboot",
+  "update-super",
+  "flash system",
+  "flash system_dlkm",
+  "flash system_ext",
+  "flash product",
+  "flash vendor",
+  "flash vendor_dlkm",
+  "flash --slot-other system system_other.img",
+  "if-wipe erase userdata",
+  "reboot",
+  "",
+].join("\n");
 
 function activeProductCompositionLines(source: string): string[] {
   return source
@@ -1383,17 +1412,10 @@ describe("AOSP build contracts", () => {
         await writeFile(
           join(productOut, artifact),
           artifact === "fastboot-info.txt"
-            ? [
-                "version 1",
-                "flash boot",
-                "flash --apply-vbmeta vbmeta",
-                "flash vbmeta_system",
-                "flash --slot-other system system_other.img",
+            ? validGrizzlyFastbootInfo.replace(
                 "reboot fastboot",
-                "update-super",
-                "if-wipe erase userdata",
-                "",
-              ].join("\n")
+                "flash vbmeta_system\nreboot fastboot",
+              )
             : `${artifact}\n`,
         );
       }
@@ -1436,6 +1458,305 @@ describe("AOSP build contracts", () => {
     }
   });
 
+  test("the grizzly handoff enforces the documented dedicated builder floor", () => {
+    const threshold = {
+      platform: "linux",
+      architecture: "x64",
+      physicalCores: 32,
+      memoryBytes: 128 * 1024 ** 3,
+      totalBytes: 1_500_000_000_000,
+      freeBytes: 600 * 1024 ** 3,
+    };
+    expect(assertBuilderCapacity(threshold)).toMatchObject({
+      physicalCores: 32,
+      memoryBytes: threshold.memoryBytes,
+    });
+    expect(() =>
+      assertBuilderCapacity({ ...threshold, physicalCores: 31 }),
+    ).toThrow("require 32/128");
+    expect(() =>
+      assertBuilderCapacity({ ...threshold, freeBytes: 599 * 1024 ** 3 }),
+    ).toThrow("require 1500 GB/600 GiB");
+    expect(() =>
+      assertBuilderCapacity({ ...threshold, totalBytes: 1_499_999_999_999 }),
+    ).toThrow("require 1500 GB/600 GiB");
+    expect(() =>
+      assertBuilderCapacity({ ...threshold, architecture: "arm64" }),
+    ).toThrow("Linux x86_64");
+  });
+
+  test("the grizzly handoff cannot infer build gates from existing output", () => {
+    expect(() =>
+      parseBundleArgs([
+        "--aosp-root",
+        "/build/aosp-grizzly",
+        "--output-dir",
+        "/build/bundle",
+        "--skip-build",
+      ]),
+    ).toThrow("unknown argument: --skip-build");
+  });
+
+  test("the grizzly handoff fails closed without an authoritative resolved graph", () => {
+    const lock = loadAospLock(
+      join(repositoryRoot, "packages/os/android/pixel11pro.lock.json"),
+    );
+    expect(() => requireResolvedManifestContract(lock)).toThrow(
+      "no authoritative resolved AOSP manifest contract",
+    );
+    expect(lock.avbVerification).toEqual([
+      {
+        image: "vbmeta.img",
+        keyPath: "external/avb/test/data/testkey_rsa4096.pem",
+        keySha256:
+          "6a224754880a57ab9cbd308267cd157d94cf05a1c8cb851aec4090e045d24121",
+        authorization: "public-aosp-userdebug-test-key",
+      },
+    ]);
+    const collector = readFileSync(
+      join(repositoryRoot, "scripts/aosp/build-grizzly-bundle.mjs"),
+      "utf8",
+    );
+    expect(collector).toContain("host_init_verifier_check");
+    expect(collector).toContain("host_init_verifier_output.txt");
+    expect(collector).not.toContain(".repo/repo/repo");
+  });
+
+  test("the grizzly handoff rejects loose files outside the resolved source graph", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eliza-grizzly-source-root-"));
+    try {
+      const makeProject = join(root, "build/make");
+      const soongProject = join(root, "build/soong");
+      await mkdir(join(makeProject, "core"), { recursive: true });
+      await mkdir(soongProject, { recursive: true });
+      await mkdir(join(root, ".repo"));
+      await mkdir(join(root, "out"));
+      await mkdir(join(root, "vendor/google_devices/grizzly"), {
+        recursive: true,
+      });
+      await mkdir(join(root, "vendor/eliza"), { recursive: true });
+      await writeFile(join(makeProject, "core/root.mk"), "root-make\n");
+      await writeFile(join(soongProject, "root.bp"), "root-blueprint\n");
+      await writeFile(join(root, "Makefile"), "root-make\n");
+      await symlink("build/soong/root.bp", join(root, "Android.bp"));
+      const sha256 = (value: string) =>
+        createHash("sha256").update(value).digest("hex");
+      const contract = {
+        aospRoot: root,
+        outRoot: join(root, "out"),
+        projectPaths: ["build/make", "build/soong"],
+        boundTreePaths: ["vendor/google_devices/grizzly", "vendor/eliza"],
+        rootEntries: [
+          {
+            path: "Makefile",
+            projectPath: "build/make",
+            sourcePath: "core/root.mk",
+            sourceType: "file",
+            mode: "copy",
+            sha256: sha256("root-make\n"),
+          },
+          {
+            path: "Android.bp",
+            projectPath: "build/soong",
+            sourcePath: "root.bp",
+            sourceType: "file",
+            mode: "link",
+            sha256: sha256("root-blueprint\n"),
+          },
+        ],
+      };
+      expect(assertClosedAospSourceRoot(contract)).toMatchObject({
+        projectCount: 2,
+      });
+
+      await writeFile(join(root, "buildspec.mk"), "ROGUE := true\n");
+      expect(() => assertClosedAospSourceRoot(contract)).toThrow(
+        "unlocked entry: buildspec.mk",
+      );
+      await rm(join(root, "buildspec.mk"));
+
+      await mkdir(join(root, "vendor/foo"));
+      await writeFile(join(root, "vendor/foo/Android.bp"), "rogue_module {}\n");
+      expect(() => assertClosedAospSourceRoot(contract)).toThrow(
+        "unlocked entry: vendor/foo",
+      );
+      await rm(join(root, "vendor/foo"), { recursive: true });
+
+      expect(() =>
+        assertClosedAospSourceRoot({
+          ...contract,
+          outRoot: join(root, ".repo/out"),
+        }),
+      ).toThrow("OUT_DIR overlaps source or repo metadata");
+      expect(() =>
+        assertClosedAospSourceRoot({ ...contract, outRoot: root }),
+      ).toThrow("OUT_DIR overlaps source or repo metadata");
+
+      expect(() =>
+        assertClosedAospSourceRoot({
+          ...contract,
+          projectPaths: [...contract.projectPaths, "build/make"],
+        }),
+      ).toThrow("duplicate paths");
+      expect(() =>
+        assertClosedAospSourceRoot({
+          ...contract,
+          projectPaths: [...contract.projectPaths, ".repo/projects/rogue"],
+        }),
+      ).toThrow("unsafe path: .repo/projects/rogue");
+      expect(() =>
+        assertClosedAospSourceRoot({
+          ...contract,
+          rootEntries: [
+            {
+              ...contract.rootEntries[0],
+              path: ".repo/manifest.xml",
+            },
+          ],
+        }),
+      ).toThrow("invalid root entry");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the grizzly handoff rejects vendor symlinks into repo metadata or output", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eliza-grizzly-source-links-"));
+    try {
+      const vendor = join(root, "vendor/eliza");
+      const repoMetadata = join(root, ".repo/project-objects");
+      const out = join(root, "out/target/product/grizzly");
+      await mkdir(vendor, { recursive: true });
+      await mkdir(repoMetadata, { recursive: true });
+      await mkdir(out, { recursive: true });
+      await writeFile(join(repoMetadata, "metadata.bp"), "metadata\n");
+      await writeFile(join(out, "generated.bp"), "generated\n");
+
+      await symlink(
+        join(repoMetadata, "metadata.bp"),
+        join(vendor, "metadata.bp"),
+      );
+      expect(() =>
+        hashDirectoryTree(vendor, root, [
+          join(root, ".repo"),
+          join(root, "out"),
+        ]),
+      ).toThrow("targets excluded AOSP metadata or output");
+
+      await rm(join(vendor, "metadata.bp"));
+      await symlink(join(out, "generated.bp"), join(vendor, "generated.bp"));
+      expect(() =>
+        hashDirectoryTree(vendor, root, [
+          join(root, ".repo"),
+          join(root, "out"),
+        ]),
+      ).toThrow("targets excluded AOSP metadata or output");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the grizzly handoff accepts repo's standard generated manifest selector", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "eliza-grizzly-manifest-selector-"),
+    );
+    try {
+      const manifests = join(root, ".repo/manifests");
+      await mkdir(manifests, { recursive: true });
+      await writeFile(join(manifests, "default.xml"), "<manifest />\n");
+      await writeFile(
+        join(root, ".repo/manifest.xml"),
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          "<!-- DO NOT EDIT: generated by repo -->",
+          "<manifest>",
+          '  <include name="default.xml" />',
+          "</manifest>",
+          "",
+        ].join("\n"),
+      );
+      expect(selectedManifestPath(root, manifests)).toEqual({
+        selectedManifest: join(manifests, "default.xml"),
+        manifestRelative: "default.xml",
+      });
+
+      await writeFile(
+        join(root, ".repo/manifest.xml"),
+        '<manifest><include name="default.xml"/><include name="other.xml"/></manifest>\n',
+      );
+      expect(() => selectedManifestPath(root, manifests)).toThrow(
+        "must contain one exact include",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the grizzly handoff rejects symlinked flash inputs", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eliza-grizzly-bundle-"));
+    const productOut = join(root, "product");
+    try {
+      await mkdir(productOut, { recursive: true });
+      for (const artifact of REQUIRED_GRIZZLY_ARTIFACTS) {
+        await writeFile(
+          join(productOut, artifact),
+          artifact === "fastboot-info.txt"
+            ? validGrizzlyFastbootInfo
+            : `${artifact}\n`,
+        );
+      }
+      await rm(join(productOut, "boot.img"));
+      await symlink(
+        join(productOut, "vbmeta.img"),
+        join(productOut, "boot.img"),
+      );
+      expect(() =>
+        collectGrizzlyArtifacts({
+          productOut,
+          bundleDir: join(root, "bundle"),
+        }),
+      ).toThrow("private non-empty regular file");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the grizzly handoff rejects source aliases and unsafe publication parents", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eliza-grizzly-output-"));
+    try {
+      const source = join(root, "source");
+      const outputParent = join(root, "bundles");
+      await mkdir(join(source, "nested"), { recursive: true, mode: 0o700 });
+      await mkdir(outputParent, { mode: 0o700 });
+      expect(() =>
+        assertBundleOutputLocation({
+          outputDir: join(source, "nested", "bundle"),
+          sourceRoots: [[source, "source"]],
+        }),
+      ).toThrow("outside the source checkout");
+
+      const aliasedParent = join(root, "bundle-alias");
+      await symlink(outputParent, aliasedParent);
+      expect(() =>
+        assertBundleOutputLocation({
+          outputDir: join(aliasedParent, "bundle"),
+          sourceRoots: [[source, "source"]],
+        }),
+      ).toThrow("canonical");
+
+      const existingOutput = join(outputParent, "existing");
+      await mkdir(existingOutput);
+      expect(() =>
+        assertBundleOutputLocation({
+          outputDir: existingOutput,
+          sourceRoots: [[source, "source"]],
+        }),
+      ).toThrow("must not already exist");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("the grizzly handoff requires both APK provenance records", () => {
     expect(assertApkProvenanceEntries([...REQUIRED_APK_PROVENANCE])).toEqual([
       ...REQUIRED_APK_PROVENANCE,
@@ -1443,30 +1764,90 @@ describe("AOSP build contracts", () => {
     expect(() =>
       assertApkProvenanceEntries(["META-INF/eliza/aosp-build-provenance.json"]),
     ).toThrow("assets/agent/android-agent-runtime-provenance.json");
+    expect(() =>
+      assertApkProvenanceEntries([
+        ...REQUIRED_APK_PROVENANCE,
+        REQUIRED_APK_PROVENANCE[0],
+      ]),
+    ).toThrow("exactly once");
   });
 
   test("the grizzly handoff requires a safe dynamic-super flash plan", () => {
     expect(
       assertSafeFlashMetadata({
         androidInfo: "require board=grizzly\n",
-        fastbootInfo:
-          "version 1\nflash boot\nreboot fastboot\nupdate-super\nflash system\n",
+        fastbootInfo: validGrizzlyFastbootInfo,
       }),
-    ).toEqual({ rebootFastbootIndex: 2, updateSuperIndex: 3 });
+    ).toMatchObject({ rebootFastbootIndex: 8, updateSuperIndex: 9 });
     expect(() =>
       assertSafeFlashMetadata({
         androidInfo: "require board=grizzly\n",
-        fastbootInfo:
-          "version 1\nflash system\nreboot fastboot\nupdate-super\n",
+        fastbootInfo: validGrizzlyFastbootInfo.replace(
+          "reboot fastboot\nupdate-super\nflash system",
+          "flash system\nreboot fastboot\nupdate-super",
+        ),
       }),
     ).toThrow("flash system before update-super");
     expect(() =>
       assertSafeFlashMetadata({
         androidInfo: "require board=grizzly\n",
-        fastbootInfo:
-          "version 1\nreboot fastboot\nupdate-super\nerase userdata\n",
+        fastbootInfo: validGrizzlyFastbootInfo.replace(
+          "if-wipe erase userdata",
+          "erase userdata",
+        ),
       }),
     ).toThrow("must not erase userdata or metadata");
+    expect(() =>
+      assertSafeFlashMetadata({
+        androidInfo: "require board=grizzly\n",
+        fastbootInfo: validGrizzlyFastbootInfo.replace(
+          "flash --slot-other system system_other.img\n",
+          "",
+        ),
+      }),
+    ).toThrow("does not reference required flash artifact system_other.img");
+    expect(() =>
+      assertSafeFlashMetadata({
+        androidInfo: "require board=grizzly\n",
+        fastbootInfo: validGrizzlyFastbootInfo.replace("flash pvmfw\n", ""),
+      }),
+    ).toThrow("does not reference required flash artifact pvmfw.img");
+    expect(() =>
+      assertSafeFlashMetadata({
+        androidInfo: "require board=grizzly\n",
+        fastbootInfo: validGrizzlyFastbootInfo.replace(
+          "flash --slot-other system system_other.img",
+          "flash --slot-other vendor system_other.img",
+        ),
+      }),
+    ).toThrow("unsupported --slot-other flash");
+    expect(() =>
+      assertSafeFlashMetadata({
+        androidInfo: "require board=grizzly\n",
+        fastbootInfo: validGrizzlyFastbootInfo.replace(
+          "flash boot",
+          "flash boot ../../host.img",
+        ),
+      }),
+    ).toThrow("unsafe image filename");
+    expect(() =>
+      assertSafeFlashMetadata({
+        androidInfo: "require board=grizzly\n",
+        fastbootInfo: validGrizzlyFastbootInfo.replace(
+          "version 1\n",
+          "version 1\nreboot\n",
+        ),
+      }),
+    ).toThrow("exactly one terminal reboot");
+    expect(() =>
+      assertSafeFlashMetadata({
+        androidInfo: "require board=grizzly\n",
+        fastbootInfo: validGrizzlyFastbootInfo.replace(
+          "flash --apply-vbmeta vbmeta",
+          "flash vbmeta",
+        ),
+      }),
+    ).toThrow("unsafe flash mapping");
   });
 
   test("the grizzly handoff rejects an unsafe or unknown flash authority", () => {
