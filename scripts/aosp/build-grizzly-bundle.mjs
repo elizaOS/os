@@ -943,7 +943,7 @@ export function hashDirectoryTree(root, allowedRoot = root, deniedRoots = []) {
         visit(absolute, relative);
       } else if (stat.isFile()) {
         hash.update(
-          `f ${relative} ${stat.mode & 0o777}\0${sha256File(absolute)}\0`,
+          `f ${relative} ${stat.mode & 0o777}\0${sha256File(absolute, { allowEmpty: true })}\0`,
         );
       } else if (stat.isSymbolicLink()) {
         const target = fs.realpathSync(absolute);

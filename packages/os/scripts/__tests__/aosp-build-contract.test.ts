@@ -1778,6 +1778,9 @@ describe("AOSP build contracts", () => {
     const lock = loadAospLock(
       join(repositoryRoot, "packages/os/android/pixel11pro.lock.json"),
     );
+    // The repository lock now contains the required contract; exercise the
+    // fail-closed branch with an explicitly incomplete copy.
+    delete lock.resolvedManifest;
     expect(() => requireResolvedManifestContract(lock)).toThrow(
       "no authoritative resolved AOSP manifest contract",
     );
