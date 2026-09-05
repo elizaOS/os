@@ -324,6 +324,33 @@ describe("verify-grizzly-artifacts attest", () => {
 });
 
 describe("verify-grizzly-artifacts check", () => {
+  test("refuses a self-consistent but truncated attestation manifest", () => {
+    const { root, productDir } = scaffoldAospRoot({});
+    const artifactDir = mkdtempSync(join(tmpdir(), "grizzly-partial-"));
+    try {
+      expect(run(["attest", "--aosp-root", root]).status).toBe(0);
+      const manifestPath = join(productDir, "grizzly-artifacts.json");
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+      manifest.images = { "boot.img": manifest.images["boot.img"] };
+      writeFileSync(manifestPath, JSON.stringify(manifest));
+      writeFileSync(
+        join(artifactDir, "boot.img"),
+        readFileSync(join(productDir, "boot.img")),
+      );
+      const result = run([
+        "check",
+        "--manifest",
+        manifestPath,
+        "--artifact-dir",
+        artifactDir,
+      ]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("manifest omits required images");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(artifactDir, { recursive: true, force: true });
+    }
+  });
   test("verifies matching images and refuses tampered bytes", () => {
     const { root, productDir } = scaffoldAospRoot({});
     const artifactDir = mkdtempSync(join(tmpdir(), "elizaos-grizzly-check-"));

@@ -555,6 +555,13 @@ function check({ manifest: manifestPath, artifactDir }) {
   if (manifest.device !== PRODUCT_DEVICE) {
     fail(`manifest device is ${manifest.device}, expected ${PRODUCT_DEVICE}`);
   }
+  if (
+    manifest.schemaVersion !== 1 ||
+    !manifest.images ||
+    typeof manifest.images !== "object" ||
+    Array.isArray(manifest.images)
+  )
+    fail("unsupported or malformed attestation manifest");
   const names = Object.keys(manifest.images ?? {});
   if (names.length === 0) fail("manifest attests no images");
   const unattested = fs
@@ -587,6 +594,11 @@ function check({ manifest: manifestPath, artifactDir }) {
     }
     checked += 1;
   }
+  const missingCore = REQUIRED_ATTESTED_IMAGES.filter(
+    (name) => !names.includes(name),
+  );
+  if (missingCore.length)
+    fail(`manifest omits required images: ${missingCore.join(", ")}`);
   info(
     `verified ${checked} image(s) against attestation from ${manifest.attestedAt}`,
   );
