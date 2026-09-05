@@ -14,7 +14,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir as systemTmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -60,8 +60,8 @@ import {
   closeAospBuildEnvironment,
   cuttlefishLaunchCommand,
   prepareAospBuildEnvironment,
-  revalidateAospBuildEnvironment,
   resolveCuttlefishGpuMode,
+  revalidateAospBuildEnvironment,
 } from "../../../../scripts/distro-android/build-aosp.mjs";
 import {
   GRAPHICS_PROBES,
@@ -138,6 +138,12 @@ async function createGitFixture(root: string, files: string[]) {
     cwd: root,
     encoding: "utf8",
   }).trim();
+}
+
+// Production intentionally rejects pathname aliases. macOS exposes its temp
+// directory through /var -> /private/var; fixtures must use canonical roots.
+function tmpdir() {
+  return fs.realpathSync(systemTmpdir());
 }
 
 describe("AOSP build contracts", () => {
@@ -338,8 +344,10 @@ describe("AOSP build contracts", () => {
   test("AOSP build preparation closes held descriptors after an fstat failure", () => {
     const root = fs.mkdtempSync(join(tmpdir(), "elizaos-aosp-fd-"));
     const originalFstat = fs.fstatSync;
+    const observedDescriptors = new Set<number>();
     let calls = 0;
     fs.fstatSync = (fd) => {
+      observedDescriptors.add(fd);
       calls += 1;
       if (calls === 4) throw new Error("injected fstat failure");
       return originalFstat(fd);
@@ -351,15 +359,19 @@ describe("AOSP build contracts", () => {
     } finally {
       fs.fstatSync = originalFstat;
     }
-    const leaked = fs.readdirSync("/proc/self/fd").filter((fd) => {
-      try {
-        return fs.readlinkSync(`/proc/self/fd/${fd}`).startsWith(root);
-      } catch {
-        return false;
+    try {
+      expect(calls).toBe(4);
+      expect(observedDescriptors.size).toBeGreaterThan(0);
+      // Check the actual descriptors, including held ancestors, without
+      // relying on Linux /proc or pathname aliases in readlink output.
+      for (const descriptor of observedDescriptors) {
+        expect(() => originalFstat(descriptor)).toThrow(
+          /bad file descriptor|EBADF/i,
+        );
       }
-    });
-    fs.rmSync(root, { recursive: true, force: true });
-    expect({ calls, leaked }).toEqual({ calls: 4, leaked: [] });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("agent smoke distinguishes a running service from a pending record", () => {
@@ -1000,7 +1012,9 @@ describe("AOSP build contracts", () => {
       expect(assertGeneratedVendorTree(root, fixtureLock)).toHaveLength(
         lock.generatedVendor.requiredFiles.length,
       );
-      const firmwareContract = lock.generatedVendor.requiredTextFiles[0];
+      const firmwareContract = lock.generatedVendor.requiredTextFiles.find(
+        (entry) => entry.path.endsWith("/firmware/android-info.txt"),
+      );
       await writeFile(join(root, firmwareContract.path), "wrong firmware\n");
       expect(() => assertGeneratedVendorTree(root, fixtureLock)).toThrow(
         /generated vendor contract mismatch/,
@@ -1664,9 +1678,7 @@ describe("AOSP build contracts", () => {
       lunchTarget: "eliza_cf_riscv64_phone-trunk_staging-userdebug",
       productName: "eliza_cf_riscv64_phone",
     };
-    expect(resolveCuttlefishGpuMode(riscvBrand, {})).toBe(
-      "guest_swiftshader",
-    );
+    expect(resolveCuttlefishGpuMode(riscvBrand, {})).toBe("guest_swiftshader");
     expect(
       resolveCuttlefishGpuMode(riscvBrand, {
         ELIZA_CUTTLEFISH_GPU_MODE: "none",
@@ -1798,6 +1810,7 @@ describe("AOSP build contracts", () => {
       "utf8",
     );
     expect(collector).toContain(
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: match literal build-script source
       'm -j${jobs} "$product_out/host_init_verifier_output.txt"',
     );
     expect(collector).not.toContain(

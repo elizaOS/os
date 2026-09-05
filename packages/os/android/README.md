@@ -155,13 +155,16 @@ and Google's [Pixel driver binaries](https://developers.google.com/android/drive
 
 ### Pixel 11 Pro (`grizzly`) generated device support
 
-Google has not published the traditional Pixel 11 device/kernel project set.
-`pixel11pro.lock.json` therefore pins a reproducible generated-device path:
+This repository does not yet have a verified, source-built Pixel 11 device
+kernel integration. `pixel11pro.lock.json` pins a generated-device path:
 Android 17 r1, GrapheneOS `adevtool`, GrapheneOS `vendor_state`, and Google's
-A9 factory image matching the lab phone for both generation and rollback. The
+A9 factory image for generation and the declared rollback archive. The
 first bring-up deliberately uses the stock `spacecraft` kernel, modules, DTB,
-and DTBO extracted by `adevtool`; it does not treat the missing public kernel
-source as reconstructed source.
+and DTBO extracted by `adevtool`. Reconfirm the phone's actual firmware and
+rollback constraints before flashing. See the
+[September 4 upstream audit](docs/pixel11-upstream-audit-2026-09-04.md) for new
+GrapheneOS kernel work, QPR2 Beta 4 controls and the corrected super-partition
+contract; these developments do not establish a booted elizaOS image.
 
 Use the dedicated Linux x86_64 builder specified in
 [`docs/grizzly-build-handoff.md`](docs/grizzly-build-handoff.md); the production

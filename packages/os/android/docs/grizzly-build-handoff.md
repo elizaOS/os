@@ -5,6 +5,14 @@ is not hardware qualification; keep the target at candidate tier until the
 physical-device matrix in `hardware-validation.md` is retained for the exact
 bundle digest.
 
+The [September 4 upstream audit](pixel11-upstream-audit-2026-09-04.md) updates
+the candidate adevtool pin and locks its generated 10 GiB BoardConfig. Before
+building, regenerate stale vendor output; after building, inspect stock and
+produced `super_empty.img` with `lpdump --json` and compare effective partition
+settings. Source-contract checks alone are not LP-metadata or OTA proof. This
+update retains A9 firmware and the stock kernel; QPR2 Beta 4 remains a separate
+diagnostic baseline, not an implicit firmware upgrade.
+
 ## Persistent builder
 
 Use a dedicated Linux x86_64 host with at least 32 physical cores, 128 GiB RAM,
