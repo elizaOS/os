@@ -2075,7 +2075,11 @@ describe("AOSP build contracts", () => {
         androidInfo: "require board=grizzly\n",
         fastbootInfo: validGrizzlyFastbootInfo,
       }),
-    ).toMatchObject({ rebootFastbootIndex: 8, updateSuperIndex: 9 });
+    ).toMatchObject({
+      rebootFastbootIndex: 8,
+      updateSuperIndex: 9,
+      terminalRebootAuthority: "fastboot-info",
+    });
     expect(() =>
       assertSafeFlashMetadata({
         androidInfo: "require board=grizzly\n",
@@ -2135,7 +2139,7 @@ describe("AOSP build contracts", () => {
           "version 1\nreboot\n",
         ),
       }),
-    ).toThrow("exactly one terminal reboot");
+    ).toThrow("at most one terminal reboot, at the end");
     expect(() =>
       assertSafeFlashMetadata({
         androidInfo: "require board=grizzly\n",
