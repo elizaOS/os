@@ -138,14 +138,18 @@ const allowedOsNamedAppPaths = new Set([
   "plugins/plugin-local-inference/src/services/imagegen/aosp-unavailable.ts",
   "plugins/plugin-local-inference/src/services/vision/aosp-unavailable.ts",
   "plugins/plugin-native-inference/__tests__/aosp-abi-riscv64.test.ts",
+  "plugins/plugin-native-inference/__tests__/aosp-audio-resample.test.ts",
   "plugins/plugin-native-inference/__tests__/aosp-fused-text-binding.test.ts",
   "plugins/plugin-native-inference/__tests__/aosp-kokoro-tts-handler.test.ts",
   "plugins/plugin-native-inference/__tests__/aosp-llama-streaming.test.ts",
   "plugins/plugin-native-inference/__tests__/aosp-local-inference-bootstrap.test.ts",
+  "plugins/plugin-native-inference/__tests__/aosp-model-download-paths.test.ts",
+  "plugins/plugin-native-inference/src/aosp-audio-resample.ts",
   "plugins/plugin-native-inference/src/aosp-debug-log.ts",
   "plugins/plugin-native-inference/src/aosp-llama-paths.ts",
   "plugins/plugin-native-inference/src/aosp-llama-streaming.ts",
   "plugins/plugin-native-inference/src/aosp-local-inference-bootstrap.ts",
+  "plugins/plugin-native-inference/src/aosp-model-paths.ts",
 ]);
 const osNamedPluginOrNativePaths = tracked.filter(
   (entry) =>
