@@ -23,7 +23,7 @@ Both forks consume the same code for everything above the OS layer:
 - **Native plugins** — the external `eliza` repository owns
   `packages/native/plugins/{qjl-cpu, polarquant-cpu,
   turboquant-cpu, silero-vad-cpp, wakeword-cpp, voice-classifier-cpp,
-  doctr-cpp, face-cpp, yolo-cpp, llama}`. One CMakeLists per plugin
+  doctr-cpp, face-cpp, llama}`. One CMakeLists per plugin
   with arch-conditional source-set selection (Wave 1 scalar + Wave 3
   RVV intrinsics). This repository owns OS cross-toolchain files at
   `packages/os/toolchains/cmake/toolchain-*`, covering

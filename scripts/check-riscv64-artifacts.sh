@@ -400,14 +400,6 @@ NATIVE_PLUGINS=(
     "wakeword-cpp         packages/native/plugins/wakeword-cpp/build/riscv64/wakeword_runtime_test"
     "wakeword-cpp         packages/native/plugins/wakeword-cpp/build/riscv64/wakeword_window_test"
 
-    "yolo-cpp             packages/native/plugins/yolo-cpp/build/riscv64/libyolo.a"
-    "yolo-cpp             packages/native/plugins/yolo-cpp/build/riscv64/libyolo.so"
-    "yolo-cpp             packages/native/plugins/yolo-cpp/build/riscv64/yolo_abi_smoke"
-    "yolo-cpp             packages/native/plugins/yolo-cpp/build/riscv64/yolo_classes_test"
-    "yolo-cpp             packages/native/plugins/yolo-cpp/build/riscv64/yolo_letterbox_test"
-    "yolo-cpp             packages/native/plugins/yolo-cpp/build/riscv64/yolo_nms_test"
-    "yolo-cpp             packages/native/plugins/yolo-cpp/build/riscv64/yolo_runtime_test"
-
     "face-cpp             packages/native/plugins/face-cpp/build/riscv64/libface.a"
     "face-cpp             packages/native/plugins/face-cpp/build/riscv64/libface.so"
     "face-cpp             packages/native/plugins/face-cpp/build/riscv64/face_abi_smoke"
@@ -433,7 +425,7 @@ LLAMA_FAMILY_BASENAMES=(
     libggml-base.so
     libggml-cpu.so
     libllama-common.so
-    libeliza-llama-shim.so
+    libelizainference.so
 )
 
 LLAMA_FAMILY_SEARCH_DIRS=(
