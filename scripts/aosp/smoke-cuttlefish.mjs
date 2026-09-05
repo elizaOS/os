@@ -105,7 +105,7 @@ const HOST_PORT = 31337;
 // short enough that a real failure still surfaces quickly.
 const HEALTH_TIMEOUT_MS = 600_000;
 const HEALTH_POLL_INTERVAL_MS = 2_000;
-// Cuttlefish x86_64 has no GPU; Eliza-1 decoding a 9k-token
+// CPU-only Cuttlefish configurations can be slow; decoding a 9k-token
 // planner prompt on CPU runs for several minutes per turn (planner +
 // action evaluator + reply). End-to-end chat lands at 25–45 min on
 // cvd's 4 emulated vCPUs (each model call is ~12 min wall-clock; a
@@ -202,11 +202,12 @@ async function waitForAgentServiceProcess({ adbImpl, serial, packageName }) {
   return state;
 }
 
-async function pollHealth(deadline, request) {
+async function pollHealth(deadline, request, token) {
   while (Date.now() < deadline) {
     try {
       const res = await request(`http://127.0.0.1:${HOST_PORT}/api/health`, {
         signal: AbortSignal.timeout(HEALTH_POLL_INTERVAL_MS),
+        headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -432,47 +433,8 @@ export async function runSmoke({
     detail: "service process running",
   });
 
-  // Step 4: wait for /api/health via adb forward.
-  logStep(4, `Waiting up to ${HEALTH_TIMEOUT_MS / 1000}s for /api/health`);
-  const forwardResult = adbImpl(
-    [
-      "forward",
-      `tcp:${HOST_PORT}`,
-      transport === "uds"
-        ? "localabstract:eliza_local_agent_v1"
-        : `tcp:${AGENT_PORT}`,
-    ],
-    { serial },
-  );
-  if (forwardResult.status !== 0) {
-    results.push({
-      step: 4,
-      label: "/api/health responds",
-      ok: false,
-      detail: `adb forward failed: ${forwardResult.stderr.trim()}`,
-    });
-    return results;
-  }
-  const deadline = Date.now() + HEALTH_TIMEOUT_MS;
-  const health = await pollHealth(deadline, request);
-  if (!health.ok) {
-    results.push({
-      step: 4,
-      label: "/api/health responds",
-      ok: false,
-      detail: `no 200 within ${HEALTH_TIMEOUT_MS / 1000}s. Check 'adb logcat -s ElizaAgent' for SIGSYS / spawn-failed signs.`,
-    });
-    return results;
-  }
-  results.push({
-    step: 4,
-    label: "/api/health responds",
-    ok: true,
-    detail: `agentState=${health.body.agentState ?? "?"} runtime=${health.body.runtime ?? "?"}`,
-  });
-
-  // ── Step 5: read the per-boot bearer token from app data dir ────────
-  logStep(5, "Reading per-boot bearer token (run-as → su 0 fallback)");
+  // ── Step 4: read the per-boot bearer token from app data dir ────────
+  logStep(4, "Reading per-boot bearer token (run-as → su 0 fallback)");
   // Release-built APKs from the AOSP image are NOT debuggable, so
   // `run-as <pkg>` fails with "package not debuggable". On a userdebug
   // cuttlefish, `adb root` switches adbd to root but `adb shell` still
@@ -503,7 +465,7 @@ export async function runSmoke({
   }
   if (!token || token.length < 16 || /[^0-9a-fA-F]/.test(token)) {
     results.push({
-      step: 5,
+      step: 4,
       label: "Bearer token readable",
       ok: false,
       detail: `Could not read ${tokenPath}: run-as / cat / su 0 cat all failed. Last stderr: ${tokenResult.stderr.trim().slice(0, 100) || "(empty)"}. Run \`adb root\` on userdebug; on non-userdebug, rebuild the APK with android:debuggable=true.`,
@@ -511,10 +473,49 @@ export async function runSmoke({
     return results;
   }
   results.push({
-    step: 5,
+    step: 4,
     label: "Bearer token readable",
     ok: true,
     detail: `${token.length} hex chars`,
+  });
+
+  // Step 5: wait for /api/health via adb forward.
+  logStep(5, `Waiting up to ${HEALTH_TIMEOUT_MS / 1000}s for /api/health`);
+  const forwardResult = adbImpl(
+    [
+      "forward",
+      `tcp:${HOST_PORT}`,
+      transport === "uds"
+        ? "localabstract:eliza_local_agent_v1"
+        : `tcp:${AGENT_PORT}`,
+    ],
+    { serial },
+  );
+  if (forwardResult.status !== 0) {
+    results.push({
+      step: 5,
+      label: "/api/health responds",
+      ok: false,
+      detail: `adb forward failed: ${forwardResult.stderr.trim()}`,
+    });
+    return results;
+  }
+  const deadline = Date.now() + HEALTH_TIMEOUT_MS;
+  const health = await pollHealth(deadline, request, token);
+  if (!health.ok) {
+    results.push({
+      step: 5,
+      label: "/api/health responds",
+      ok: false,
+      detail: `no 200 within ${HEALTH_TIMEOUT_MS / 1000}s. Check 'adb logcat -s ElizaAgent' for SIGSYS / spawn-failed signs.`,
+    });
+    return results;
+  }
+  results.push({
+    step: 5,
+    label: "/api/health responds",
+    ok: true,
+    detail: `agentState=${health.body.agentState ?? "?"} runtime=${health.body.runtime ?? "?"}`,
   });
 
   // Step 6: POST a chat message to /v1/chat/completions.
