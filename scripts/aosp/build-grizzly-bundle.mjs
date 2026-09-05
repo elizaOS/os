@@ -447,11 +447,16 @@ export function assertSafeFlashMetadata({ androidInfo, fastbootInfo }) {
   if (rebootFastbootIndexes.length !== 1 || updateSuperIndexes.length !== 1) {
     fail("fastboot-info must contain one reboot fastboot and one update-super");
   }
+  // The pinned fastboot flashall/update implementation adds its final reboot
+  // after the file's tasks. Generated plans may therefore omit this command.
+  // An explicit reboot must still be unique and last: an early reboot would
+  // interrupt the coherent flash before all partitions are installed.
   if (
-    terminalRebootIndexes.length !== 1 ||
-    terminalRebootIndexes[0] !== commands.length - 1
+    terminalRebootIndexes.length > 1 ||
+    (terminalRebootIndexes.length === 1 &&
+      terminalRebootIndexes[0] !== commands.length - 1)
   ) {
-    fail("fastboot-info must contain exactly one terminal reboot");
+    fail("fastboot-info may contain at most one terminal reboot, at the end");
   }
   const rebootFastbootIndex = rebootFastbootIndexes[0];
   const updateSuperIndex = updateSuperIndexes[0];
@@ -528,7 +533,13 @@ export function assertSafeFlashMetadata({ androidInfo, fastbootInfo }) {
       );
     }
   }
-  return { artifacts, rebootFastbootIndex, updateSuperIndex };
+  return {
+    artifacts,
+    rebootFastbootIndex,
+    updateSuperIndex,
+    terminalRebootAuthority:
+      terminalRebootIndexes.length === 1 ? "fastboot-info" : "fastboot-cli",
+  };
 }
 
 export function assertApkProvenanceEntries(entries) {
