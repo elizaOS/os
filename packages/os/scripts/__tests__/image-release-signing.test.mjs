@@ -134,28 +134,58 @@ async function waitForPath(filePath) {
   throw new Error(`timed out waiting for ${filePath}`);
 }
 
-async function verifyRelease(paths) {
-  return execFileAsync(
-    process.execPath,
-    [
-      "packages/os/scripts/verify-image-release.mjs",
-      "--manifest",
-      paths.manifest,
-      "--artifact-root",
-      paths.root,
-    ],
-    {
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64: paths.publicKey,
-        ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256:
-          paths.publicKeyFingerprint,
-        ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S:
-          paths.revokedKeyFingerprints ?? "",
-      },
+function verifyReleaseCommand(paths, overrides = {}) {
+  const args = [
+    "packages/os/scripts/verify-image-release.mjs",
+    "--manifest",
+    paths.manifest,
+    "--artifact-root",
+    paths.root,
+  ];
+  if (overrides.requirePrivateRoot !== false)
+    args.push("--require-private-root");
+  if (overrides.publishRoot) args.push("--publish-root", overrides.publishRoot);
+  return {
+    args,
+    env: {
+      ...process.env,
+      ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64: paths.publicKey,
+      ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256:
+        paths.publicKeyFingerprint,
+      ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S:
+        paths.revokedKeyFingerprints ?? "",
+      ...overrides.env,
     },
-  );
+  };
+}
+
+async function verifyRelease(paths, overrides = {}) {
+  const command = verifyReleaseCommand(paths, overrides);
+  return execFileAsync(process.execPath, command.args, {
+    cwd: repoRoot,
+    env: command.env,
+  });
+}
+
+function startVerifyRelease(paths, overrides = {}) {
+  const command = verifyReleaseCommand(paths, overrides);
+  const child = spawn(process.execPath, command.args, {
+    cwd: repoRoot,
+    env: command.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+  const completion = new Promise((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", (code, signal) => {
+      if (code === 0) resolve();
+      else reject(new Error(`verifier exited ${code ?? signal}: ${stderr}`));
+    });
+  });
+  return { child, completion };
 }
 
 function artifactSignaturePath(paths, architecture) {
@@ -198,9 +228,231 @@ test("canonical image release signs and independently verifies exact bytes", asy
   assert.match(summary.publicKeyFingerprint, /^[a-f0-9]{64}$/);
   await verifyRelease(paths);
 
+  await assert.rejects(
+    signRelease(paths),
+    /immutable release output already exists/,
+  );
+
+  const repeated = await fixture();
+  repeated.privateKey = paths.privateKey;
+  repeated.publicKey = paths.publicKey;
+  repeated.publicKeyFingerprint = paths.publicKeyFingerprint;
+  await signRelease(repeated);
+  assert.deepEqual(await readFile(repeated.manifest), manifestBytes);
+  assert.deepEqual(
+    await readFile(`${repeated.manifest}.sig`),
+    manifestSignature,
+  );
+});
+
+test("public verification remains compatible with an observable extracted tree", async () => {
+  const paths = await fixture();
   await signRelease(paths);
-  assert.deepEqual(await readFile(paths.manifest), manifestBytes);
-  assert.deepEqual(await readFile(`${paths.manifest}.sig`), manifestSignature);
+  await chmod(paths.root, 0o755);
+  await verifyRelease(paths, { requirePrivateRoot: false });
+});
+
+test("private verification publishes only the exact held signed bytes", async () => {
+  const paths = await fixture();
+  await signRelease(paths);
+  const parent = await mkdtemp(path.join(tmpRoot, "elizaos-publication-"));
+  const publishRoot = path.join(parent, "publish");
+  await verifyRelease(paths, { publishRoot });
+  assert.deepEqual(
+    await readFile(path.join(publishRoot, "metadata", "manifest.json")),
+    await readFile(paths.manifest),
+  );
+  assert.deepEqual(
+    await readFile(path.join(publishRoot, "metadata", "manifest.json.sig")),
+    await readFile(`${paths.manifest}.sig`),
+  );
+  for (const architecture of architectures) {
+    const basename = `elizaos-1.2.3-beta.4-${architecture}.raw.zst`;
+    assert.deepEqual(
+      await readFile(path.join(publishRoot, architecture, basename)),
+      await readFile(path.join(paths.root, basename)),
+    );
+    assert.deepEqual(
+      await readFile(path.join(publishRoot, architecture, `${basename}.sig`)),
+      await readFile(path.join(paths.root, `${basename}.sig`)),
+    );
+  }
+  await assert.rejects(verifyRelease(paths, { publishRoot }), /EEXIST/);
+});
+
+test("publication refuses a source pathname replacement after verification", async () => {
+  const paths = await fixture();
+  await signRelease(paths);
+  const parent = await mkdtemp(path.join(tmpRoot, "elizaos-publication-"));
+  const publishRoot = path.join(parent, "publish");
+  const hooks = await mkdtemp(path.join(tmpRoot, "elizaos-verify-hooks-"));
+  const verification = startVerifyRelease(paths, {
+    publishRoot,
+    env: {
+      NODE_ENV: "test",
+      ELIZAOS_RELEASE_TEST_HOOK_DIRECTORY: hooks,
+      ELIZAOS_RELEASE_TEST_CHECKPOINT: "before-publication-copy-0",
+    },
+  });
+  await waitForPath(path.join(hooks, "before-publication-copy-0.ready"));
+  await rename(paths.manifest, `${paths.manifest}.verified-original`);
+  await writeFile(paths.manifest, "replacement-after-verification\n");
+  await writeFile(
+    path.join(hooks, "before-publication-copy-0.resume"),
+    "resume\n",
+  );
+  await assert.rejects(
+    verification.completion,
+    /publication-input creation failed.*release file changed during verification/,
+  );
+  assert.equal(
+    await readFile(paths.manifest, "utf8"),
+    "replacement-after-verification\n",
+  );
+  await assert.rejects(
+    lstat(path.join(publishRoot, "metadata", "manifest.json")),
+    /ENOENT/,
+  );
+});
+
+test("publication rejects an unsafe destination parent before creating output", async () => {
+  const paths = await fixture();
+  await signRelease(paths);
+  const parent = await mkdtemp(path.join(tmpRoot, "elizaos-publication-"));
+  await chmod(parent, 0o777);
+  const publishRoot = path.join(parent, "publish");
+  await assert.rejects(
+    verifyRelease(paths, { publishRoot }),
+    /publication root parent must be a canonical signer-owned non-writable directory/,
+  );
+  await assert.rejects(lstat(publishRoot), /ENOENT/);
+});
+
+test("publication refuses a replaced destination parent before copying", async () => {
+  const paths = await fixture();
+  await signRelease(paths);
+  const parent = await mkdtemp(path.join(tmpRoot, "elizaos-publication-"));
+  const displacedParent = `${parent}-displaced`;
+  const publishRoot = path.join(parent, "publish");
+  const hooks = await mkdtemp(path.join(tmpRoot, "elizaos-verify-hooks-"));
+  const verification = startVerifyRelease(paths, {
+    publishRoot,
+    env: {
+      NODE_ENV: "test",
+      ELIZAOS_RELEASE_TEST_HOOK_DIRECTORY: hooks,
+      ELIZAOS_RELEASE_TEST_CHECKPOINT: "before-publication-copy-0",
+    },
+  });
+  await waitForPath(path.join(hooks, "before-publication-copy-0.ready"));
+  await rename(parent, displacedParent);
+  await mkdir(parent, { mode: 0o700 });
+  await writeFile(
+    path.join(hooks, "before-publication-copy-0.resume"),
+    "resume\n",
+  );
+  await assert.rejects(
+    verification.completion,
+    /publication-input creation failed.*publication directory changed/,
+  );
+  await assert.rejects(
+    lstat(path.join(displacedParent, "publish", "metadata", "manifest.json")),
+    /ENOENT/,
+  );
+});
+
+test("SIGKILL during publication leaves an exclusive stale root", {
+  timeout: 15_000,
+}, async () => {
+  const paths = await fixture();
+  await signRelease(paths);
+  const parent = await mkdtemp(path.join(tmpRoot, "elizaos-publication-"));
+  const publishRoot = path.join(parent, "publish");
+  const hooks = await mkdtemp(path.join(tmpRoot, "elizaos-verify-hooks-"));
+  const verification = startVerifyRelease(paths, {
+    publishRoot,
+    env: {
+      NODE_ENV: "test",
+      ELIZAOS_RELEASE_TEST_HOOK_DIRECTORY: hooks,
+      ELIZAOS_RELEASE_TEST_CHECKPOINT: "before-publication-copy-0",
+    },
+  });
+  await waitForPath(path.join(hooks, "before-publication-copy-0.ready"));
+  verification.child.kill("SIGKILL");
+  await assert.rejects(verification.completion, /SIGKILL/);
+  await lstat(publishRoot);
+  await assert.rejects(verifyRelease(paths, { publishRoot }), /EEXIST/);
+  await assert.rejects(
+    lstat(path.join(publishRoot, "metadata", "manifest.json")),
+    /ENOENT/,
+  );
+});
+
+test("SIGKILL after durable publication prerequisites leaves no manifest commit marker", {
+  timeout: 15_000,
+}, async () => {
+  const paths = await fixture();
+  await signRelease(paths);
+  const parent = await mkdtemp(path.join(tmpRoot, "elizaos-publication-"));
+  const publishRoot = path.join(parent, "publish");
+  const hooks = await mkdtemp(path.join(tmpRoot, "elizaos-verify-hooks-"));
+  const verification = startVerifyRelease(paths, {
+    publishRoot,
+    env: {
+      NODE_ENV: "test",
+      ELIZAOS_RELEASE_TEST_HOOK_DIRECTORY: hooks,
+      ELIZAOS_RELEASE_TEST_CHECKPOINT: "before-publication-manifest-commit",
+    },
+  });
+  await waitForPath(
+    path.join(hooks, "before-publication-manifest-commit.ready"),
+  );
+  verification.child.kill("SIGKILL");
+  await assert.rejects(verification.completion, /SIGKILL/);
+  for (const architecture of architectures) {
+    const basename = `elizaos-1.2.3-beta.4-${architecture}.raw.zst`;
+    await lstat(path.join(publishRoot, architecture, basename));
+    await lstat(path.join(publishRoot, architecture, `${basename}.sig`));
+  }
+  await lstat(path.join(publishRoot, "metadata", "manifest.json.sig"));
+  await assert.rejects(
+    lstat(path.join(publishRoot, "metadata", "manifest.json")),
+    /ENOENT/,
+  );
+  await assert.rejects(verifyRelease(paths, { publishRoot }), /EEXIST/);
+});
+
+test("source drift after publication manifest sync fails final verification", async () => {
+  const paths = await fixture();
+  await signRelease(paths);
+  const parent = await mkdtemp(path.join(tmpRoot, "elizaos-publication-"));
+  const publishRoot = path.join(parent, "publish");
+  const hooks = await mkdtemp(path.join(tmpRoot, "elizaos-verify-hooks-"));
+  const verification = startVerifyRelease(paths, {
+    publishRoot,
+    env: {
+      NODE_ENV: "test",
+      ELIZAOS_RELEASE_TEST_HOOK_DIRECTORY: hooks,
+      ELIZAOS_RELEASE_TEST_CHECKPOINT: "after-publication-manifest-sync",
+    },
+  });
+  await waitForPath(path.join(hooks, "after-publication-manifest-sync.ready"));
+  await writeFile(
+    path.join(paths.root, "elizaos-1.2.3-beta.4-arm64.raw.zst"),
+    "changed-after-publication-commit\n",
+  );
+  await writeFile(
+    path.join(hooks, "after-publication-manifest-sync.resume"),
+    "resume\n",
+  );
+  await assert.rejects(
+    verification.completion,
+    /publication-input creation failed.*release file changed during verification/,
+  );
+  await lstat(path.join(publishRoot, "metadata", "manifest.json"));
+  await assert.rejects(
+    verifyRelease(paths, { publishRoot }),
+    /wrong-sized|byte binding/,
+  );
 });
 
 test("canonical image verification rejects modified compressed bytes", async () => {
@@ -369,6 +621,26 @@ test("signing rejects a symlinked artifact root", async () => {
   await assertNoNewReleaseOutputs(paths);
 });
 
+test("signing rejects an observable artifact root", async () => {
+  const paths = await fixture();
+  await chmod(paths.root, 0o750);
+  await assert.rejects(
+    signRelease(paths),
+    /artifact-root must be an unpublished signer-owned mode-0700 directory/,
+  );
+  await assertNoNewReleaseOutputs(paths);
+});
+
+test("verification rejects a committed set made observable before promotion", async () => {
+  const paths = await fixture();
+  await signRelease(paths);
+  await chmod(paths.root, 0o750);
+  await assert.rejects(
+    verifyRelease(paths),
+    /artifact-root must remain an unpublished signer-owned mode-0700 directory/,
+  );
+});
+
 test("signing rejects an input path replaced after its handle is opened", async () => {
   const paths = await fixture();
   const hooks = await mkdtemp(path.join(tmpRoot, "elizaos-sign-hooks-"));
@@ -465,61 +737,67 @@ test("signing does not overwrite an output raced into the release set", async ()
   await assertNoNewReleaseOutputs(paths, new Set([paths.manifest]));
 });
 
-test("late promotion failure restores every preexisting output", async () => {
+test("active destination race preserves the raced file and cannot commit a manifest", async () => {
   const paths = await fixture();
-  await signRelease(paths);
-  const outputs = [
-    ...architectures.map((architecture) =>
-      artifactSignaturePath(paths, architecture),
-    ),
-    paths.manifest,
-    `${paths.manifest}.sig`,
-  ];
-  const originals = new Map(
-    await Promise.all(
-      outputs.map(async (filePath) => [filePath, await readFile(filePath)]),
-    ),
+  const hooks = await mkdtemp(path.join(tmpRoot, "elizaos-sign-hooks-"));
+  const signing = startSignRelease(paths, {
+    env: {
+      NODE_ENV: "test",
+      ELIZAOS_RELEASE_TEST_HOOK_DIRECTORY: hooks,
+      ELIZAOS_RELEASE_TEST_CHECKPOINT: "before-output-publish-0",
+    },
+  });
+  await waitForPath(path.join(hooks, "before-output-publish-0.ready"));
+  const raced = artifactSignaturePath(paths, architectures[0]);
+  await writeFile(raced, "concurrent-publisher-bytes\n", { flag: "wx" });
+  await writeFile(
+    path.join(hooks, "before-output-publish-0.resume"),
+    "resume\n",
   );
   await assert.rejects(
+    signing.completion,
+    /unpublished release-set commit failed.*EEXIST/,
+  );
+  assert.equal(await readFile(raced, "utf8"), "concurrent-publisher-bytes\n");
+  await assert.rejects(lstat(paths.manifest), /ENOENT/);
+  await assert.rejects(
+    verifyRelease(paths),
+    /verification refuses unfinished unpublished signing state/,
+  );
+});
+
+test("late commit failure leaves no manifest and requires private-root recovery", async () => {
+  const paths = await fixture();
+  await assert.rejects(
     signRelease(paths, {
-      sequence: "43",
       env: {
         NODE_ENV: "test",
         ELIZAOS_RELEASE_TEST_FAIL_PROMOTION_AFTER: "4",
       },
     }),
-    /injected release-set promotion failure/,
+    /unpublished release-set commit failed.*discard the private artifact root/,
   );
-  for (const filePath of outputs) {
-    assert.deepEqual(await readFile(filePath), originals.get(filePath));
-  }
-  assert.deepEqual(
+  await assert.rejects(lstat(paths.manifest), /ENOENT/);
+  await assert.rejects(
+    verifyRelease(paths),
+    /verification refuses unfinished unpublished signing state/,
+  );
+  assert.equal(
     (await readdir(paths.root)).filter((name) =>
       name.startsWith(".elizaos-release-stage-"),
-    ),
-    [],
+    ).length,
+    1,
   );
-  await verifyRelease(paths);
+  await assert.rejects(
+    signRelease(paths),
+    /unfinished unpublished signing state requires operator recovery.*discard the private artifact root/,
+  );
 });
 
-test("input drift after promotion rolls the entire preexisting set back", async () => {
+test("input drift before manifest commit leaves no verifier-visible release", async () => {
   const paths = await fixture();
-  await signRelease(paths);
-  const outputs = [
-    ...architectures.map((architecture) =>
-      artifactSignaturePath(paths, architecture),
-    ),
-    paths.manifest,
-    `${paths.manifest}.sig`,
-  ];
-  const originals = new Map(
-    await Promise.all(
-      outputs.map(async (filePath) => [filePath, await readFile(filePath)]),
-    ),
-  );
   const hooks = await mkdtemp(path.join(tmpRoot, "elizaos-sign-hooks-"));
   const signing = startSignRelease(paths, {
-    sequence: "43",
     env: {
       NODE_ENV: "test",
       ELIZAOS_RELEASE_TEST_HOOK_DIRECTORY: hooks,
@@ -532,15 +810,223 @@ test("input drift after promotion rolls the entire preexisting set back", async 
   inputBytes[0] ^= 0xff;
   await writeFile(input, inputBytes);
   await writeFile(path.join(hooks, "outputs-promoted.resume"), "resume\n");
-  await assert.rejects(signing.completion, /input changed/);
-  for (const filePath of outputs) {
-    assert.deepEqual(await readFile(filePath), originals.get(filePath));
-  }
-  assert.deepEqual(
-    (await readdir(paths.root)).filter((name) =>
-      name.startsWith(".elizaos-release-stage-"),
-    ),
-    [],
+  await assert.rejects(
+    signing.completion,
+    /unpublished release-set commit failed.*input changed/,
+  );
+  await assert.rejects(lstat(paths.manifest), /ENOENT/);
+  await assert.rejects(
+    verifyRelease(paths),
+    /verification refuses unfinished unpublished signing state/,
+  );
+});
+
+test("published signature drift before manifest commit cannot commit a release", async () => {
+  const paths = await fixture();
+  const hooks = await mkdtemp(path.join(tmpRoot, "elizaos-sign-hooks-"));
+  const signing = startSignRelease(paths, {
+    env: {
+      NODE_ENV: "test",
+      ELIZAOS_RELEASE_TEST_HOOK_DIRECTORY: hooks,
+      ELIZAOS_RELEASE_TEST_CHECKPOINT: "before-manifest-commit",
+    },
+  });
+  await waitForPath(path.join(hooks, "before-manifest-commit.ready"));
+  const signaturePath = artifactSignaturePath(paths, architectures[0]);
+  const signature = await readFile(signaturePath);
+  signature[0] ^= 0xff;
+  await chmod(signaturePath, 0o600);
+  await writeFile(signaturePath, signature);
+  await chmod(signaturePath, 0o400);
+  await writeFile(
+    path.join(hooks, "before-manifest-commit.resume"),
+    "resume\n",
+  );
+  await assert.rejects(
+    signing.completion,
+    /unpublished release-set commit failed.*published release output changed/,
+  );
+  await assert.rejects(lstat(paths.manifest), /ENOENT/);
+  await assert.rejects(
+    verifyRelease(paths),
+    /verification refuses unfinished unpublished signing state/,
+  );
+});
+
+test("input drift in the manifest commit gap leaves stale recovery state", async () => {
+  const paths = await fixture();
+  const hooks = await mkdtemp(path.join(tmpRoot, "elizaos-sign-hooks-"));
+  const signing = startSignRelease(paths, {
+    env: {
+      NODE_ENV: "test",
+      ELIZAOS_RELEASE_TEST_HOOK_DIRECTORY: hooks,
+      ELIZAOS_RELEASE_TEST_CHECKPOINT: "before-manifest-commit",
+    },
+  });
+  await waitForPath(path.join(hooks, "before-manifest-commit.ready"));
+  const input = path.join(paths.root, "elizaos-1.2.3-beta.4-arm64.raw.zst");
+  await writeFile(input, "changed-during-manifest-commit\n");
+  await writeFile(
+    path.join(hooks, "before-manifest-commit.resume"),
+    "resume\n",
+  );
+  await assert.rejects(
+    signing.completion,
+    /unpublished release-set commit failed.*input changed/,
+  );
+  await lstat(paths.manifest);
+  await assert.rejects(
+    verifyRelease(paths),
+    /verification refuses unfinished unpublished signing state/,
+  );
+  await assert.rejects(
+    signRelease(paths),
+    /unfinished unpublished signing state requires operator recovery/,
+  );
+});
+
+test("artifact-root drift after manifest sync prevents signer success", async () => {
+  const paths = await fixture();
+  const hooks = await mkdtemp(path.join(tmpRoot, "elizaos-sign-hooks-"));
+  const signing = startSignRelease(paths, {
+    env: {
+      NODE_ENV: "test",
+      ELIZAOS_RELEASE_TEST_HOOK_DIRECTORY: hooks,
+      ELIZAOS_RELEASE_TEST_CHECKPOINT: "after-manifest-root-sync",
+    },
+  });
+  await waitForPath(path.join(hooks, "after-manifest-root-sync.ready"));
+  await chmod(paths.root, 0o750);
+  await writeFile(
+    path.join(hooks, "after-manifest-root-sync.resume"),
+    "resume\n",
+  );
+  await assert.rejects(
+    signing.completion,
+    /unpublished release-set commit failed.*artifact root or its parent changed/,
+  );
+  await lstat(paths.manifest);
+  await chmod(paths.root, 0o700);
+  await assert.rejects(
+    verifyRelease(paths),
+    /verification refuses unfinished unpublished signing state/,
+  );
+  await assert.rejects(
+    signRelease(paths),
+    /unfinished unpublished signing state requires operator recovery/,
+  );
+});
+
+test("published-set drift after manifest sync prevents signer success", async () => {
+  const paths = await fixture();
+  const hooks = await mkdtemp(path.join(tmpRoot, "elizaos-sign-hooks-"));
+  const signing = startSignRelease(paths, {
+    env: {
+      NODE_ENV: "test",
+      ELIZAOS_RELEASE_TEST_HOOK_DIRECTORY: hooks,
+      ELIZAOS_RELEASE_TEST_CHECKPOINT: "after-manifest-root-sync",
+    },
+  });
+  await waitForPath(path.join(hooks, "after-manifest-root-sync.ready"));
+  const signaturePath = artifactSignaturePath(paths, architectures[0]);
+  const signature = await readFile(signaturePath);
+  signature[0] ^= 0xff;
+  await chmod(signaturePath, 0o600);
+  await writeFile(signaturePath, signature);
+  await chmod(signaturePath, 0o400);
+  await writeFile(
+    path.join(hooks, "after-manifest-root-sync.resume"),
+    "resume\n",
+  );
+  await assert.rejects(
+    signing.completion,
+    /unpublished release-set commit failed.*published release output changed/,
+  );
+  await lstat(paths.manifest);
+  await assert.rejects(
+    verifyRelease(paths),
+    /verification refuses unfinished unpublished signing state/,
+  );
+  await assert.rejects(
+    signRelease(paths),
+    /unfinished unpublished signing state requires operator recovery/,
+  );
+});
+
+test("SIGKILL before the manifest commit leaves explicit stale recovery state", {
+  timeout: 15_000,
+}, async () => {
+  const paths = await fixture();
+  const hooks = await mkdtemp(path.join(tmpRoot, "elizaos-sign-hooks-"));
+  const signing = startSignRelease(paths, {
+    env: {
+      NODE_ENV: "test",
+      ELIZAOS_RELEASE_TEST_HOOK_DIRECTORY: hooks,
+      ELIZAOS_RELEASE_TEST_CHECKPOINT: "before-manifest-commit",
+    },
+  });
+  await waitForPath(path.join(hooks, "before-manifest-commit.ready"));
+  signing.child.kill("SIGKILL");
+  await assert.rejects(signing.completion, /SIGKILL/);
+  await assert.rejects(lstat(paths.manifest), /ENOENT/);
+  await assert.rejects(
+    verifyRelease(paths),
+    /verification refuses unfinished unpublished signing state/,
+  );
+  await assert.rejects(
+    signRelease(paths),
+    /unfinished unpublished signing state requires operator recovery.*discard the private artifact root/,
+  );
+});
+
+test("SIGKILL after manifest creation is not accepted until staging cleanup", {
+  timeout: 15_000,
+}, async () => {
+  const paths = await fixture();
+  const hooks = await mkdtemp(path.join(tmpRoot, "elizaos-sign-hooks-"));
+  const signing = startSignRelease(paths, {
+    env: {
+      NODE_ENV: "test",
+      ELIZAOS_RELEASE_TEST_HOOK_DIRECTORY: hooks,
+      ELIZAOS_RELEASE_TEST_CHECKPOINT: "after-manifest-commit",
+    },
+  });
+  await waitForPath(path.join(hooks, "after-manifest-commit.ready"));
+  signing.child.kill("SIGKILL");
+  await assert.rejects(signing.completion, /SIGKILL/);
+  await lstat(paths.manifest);
+  await assert.rejects(
+    verifyRelease(paths),
+    /verification refuses unfinished unpublished signing state/,
+  );
+  await assert.rejects(
+    signRelease(paths),
+    /unfinished unpublished signing state requires operator recovery/,
+  );
+});
+
+test("input drift after manifest creation fails the signer's final validation", async () => {
+  const paths = await fixture();
+  const hooks = await mkdtemp(path.join(tmpRoot, "elizaos-sign-hooks-"));
+  const signing = startSignRelease(paths, {
+    env: {
+      NODE_ENV: "test",
+      ELIZAOS_RELEASE_TEST_HOOK_DIRECTORY: hooks,
+      ELIZAOS_RELEASE_TEST_CHECKPOINT: "after-manifest-commit",
+    },
+  });
+  await waitForPath(path.join(hooks, "after-manifest-commit.ready"));
+  const input = path.join(paths.root, "elizaos-1.2.3-beta.4-arm64.raw.zst");
+  await writeFile(input, "changed-after-manifest-creation\n");
+  await writeFile(path.join(hooks, "after-manifest-commit.resume"), "resume\n");
+  await assert.rejects(
+    signing.completion,
+    /unpublished release-set commit failed.*input changed/,
+  );
+  await lstat(paths.manifest);
+  await assert.rejects(
+    verifyRelease(paths),
+    /verification refuses unfinished unpublished signing state/,
   );
 });
 

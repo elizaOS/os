@@ -12,7 +12,7 @@ Both wrappers are exposed at the repo root as bun scripts:
 
 ```bash
 ELIZA_RISCV64_SMOKE=1 bun run build:riscv64-artifacts
-ELIZA_RISCV64_SMOKE=1 bun run check:riscv64-artifacts
+ELIZA_RISCV64_SMOKE=1 bun run check:riscv64-artifacts --require-complete
 ```
 
 With `ELIZA_RISCV64_SMOKE` unset they are intentional no-ops — that
@@ -39,14 +39,21 @@ The smoke harness writes a machine-readable report to
 
 - **Native plugins** (`$ELIZAOS_ELIZA_ROOT/packages/native/plugins/<pkg>/build/riscv64/`)
   for `qjl-cpu`, `polarquant-cpu`, `turboquant-cpu`, `silero-vad-cpp`,
-  `voice-classifier-cpp`, `wakeword-cpp`, `yolo-cpp`, `face-cpp`,
+  `voice-classifier-cpp`, `wakeword-cpp`, `face-cpp`,
   `doctr-cpp`. Each plugin contributes one `.a`, an optional `.so`,
   and a handful of GoogleTest-driven smoke executables.
 
-- **`libllama` + `libggml` family + `libeliza-llama-shim.so`** —
+  The pinned upstream removed the unused YOLO prototype in
+  `17f56c177c2c3c32585885db2bcc748530471163`; it is no longer a required
+  artifact. Missing sources or outputs for the remaining plugins still fail.
+
+- **`libllama` + `libggml` family + `libelizainference.so`** —
   MTP llama.cpp cross-build via
   `$ELIZAOS_ELIZA_ROOT/packages/app-core/scripts/aosp/compile-libllama.mjs
-  --target android-riscv64-cpu`.
+  --target android-riscv64-cpu`, followed by
+  `--target android-riscv64-cpu-fused` for the application runtime.
+  The fused build verifies its required exported symbols; the retired
+  struct-by-value llama shim is no longer consumed.
 
 - **`libsigsys-handler.so`** for riscv64 — the Bun seccomp shim,
   built by
@@ -91,9 +98,14 @@ alone:
 ELIZA_RISCV64_SMOKE=1 bun run check:riscv64-artifacts
 ```
 
-Missing artifacts are reported as `SKIP` records with a reason, not
-`FAIL` — so the harness is safe to re-run incrementally as each
-upstream build comes online.
+Without `--require-complete`, missing artifacts are reported as `SKIP` records
+with a reason so the harness is safe to re-run incrementally as each upstream
+build comes online. The CI workflow always passes `--require-complete`: every
+inventoried artifact must exist, and a missing QEMU executable or build output
+is a hard failure. Strict mode also requires `ELIZA_RISCV64_SMOKE=1` and rejects
+`--no-qemu`; those configurations produce a `FAIL` report and exit 1. A CI
+report therefore cannot be `PASS` merely because its required artifacts or
+execution boundary were absent.
 
 The QJL fork-parity executable requires `dlopen`. Zig's
 `riscv64-linux-musl` test executable is static, so `qemu-riscv64-static`
@@ -119,8 +131,8 @@ but does not run any executable.
 
 | code | meaning                                          |
 | ---- | ------------------------------------------------ |
-| 0    | every artifact PASSed or SKIPped with reason     |
-| 1    | at least one artifact FAILed                     |
+| 0    | every artifact PASSed or documented runtime-only SKIPped |
+| 1    | at least one artifact FAILed (including missing output in `--require-complete` mode) |
 | 2    | invalid CLI args / missing toolchain (build-only)|
 
 ## CI integration

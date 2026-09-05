@@ -231,7 +231,8 @@ export function resolveRenderEngineOverrides(env = process.env) {
   }
   // Stock keeps Graphite on; a backend override needs Graphite off to be
   // honored unless the probe explicitly asks for Graphite-on-Vulkan.
-  const graphite = graphiteRaw !== null ? graphiteRaw === "1" : !backend;
+  const graphite =
+    graphiteRaw !== null ? graphiteRaw === "1" : !backend;
   return { backend, graphite };
 }
 
@@ -328,14 +329,8 @@ export function generatedTreeHasBringupProbes(aospRoot) {
     if (!fs.existsSync(filePath)) return false;
     const contents = fs.readFileSync(filePath, "utf8");
     if (relativePath.endsWith("grizzly.mk")) {
-      // grizzly.mk legitimately contains no probe text by default; the probe
-      // copy-rule marks it, and so does the compatibility renderengine shim's
-      // system-side graphite append (normalizeGeneratedRenderEngine) — that
-      // line is otherwise invisible to vendor.prop-based checks and would
-      // silently survive into a "stock" build. Match the shim's distinctive
-      // comment, not "debug.renderengine." broadly: a stock adevtool makefile
-      // that legitimately mentioned the property would otherwise trip an
-      // expensive rm -rf + adevtool regeneration on every default prepare.
+      // grizzly.mk legitimately contains no probe text by default; only the
+      // probe copy-rule marks it.
       return (
         contents.includes("init.elizaos-debug.rc") ||
         contents.includes(
@@ -387,11 +382,9 @@ export function normalizeGeneratedBringupProbes(aospRoot) {
 }
 
 // DIAGNOSTIC-ONLY init experiment, opt-in via
-// ELIZAOS_GRIZZLY_KEYMASTER_NONBLOCKING=1. The stock Android 17 init script
-// waits synchronously for `vdc keymaster earlyBootEnded` during post-fs-data.
-// On the unpublished CD1A vendor branch that call is a plausible early-boot
-// wedge. Make the experiment explicit, reversible, and stamp-bound; never
-// silently ship it in the default product.
+// ELIZAOS_GRIZZLY_KEYMASTER_NONBLOCKING=1. Keep this explicit and
+// stamp-bound: it changes the stock post-fs-data keymaster notification from
+// a synchronous wait into a background notification for boot diagnostics.
 export function normalizeAospKeymasterInit(aospRoot, enabled = false) {
   const sourceInitPath = path.join(aospRoot, "system/core/rootdir/init.rc");
   const generatedRoot = path.join(aospRoot, "vendor/google_devices/grizzly");
@@ -409,10 +402,6 @@ export function normalizeAospKeymasterInit(aospRoot, enabled = false) {
   const background =
     "exec_background - system system -- /system/bin/vdc keymaster earlyBootEnded";
   const marker = "elizaOS: diagnostic non-blocking keymaster notification";
-  const markedBackground = new RegExp(
-    `^([\\t ]*)# ${marker}\\n\\1${background.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}\\n?`,
-    "m",
-  );
   if (!enabled) {
     fs.rmSync(overlayInitPath, { force: true });
     const makefile = fs.readFileSync(makefilePath, "utf8");
@@ -424,19 +413,12 @@ export function normalizeAospKeymasterInit(aospRoot, enabled = false) {
       fs.writeFileSync(makefilePath, withoutOverlay);
     return;
   }
-  const blockingPattern = new RegExp(
-    `^([\\t ]*)${blocking.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}$`,
-    "m",
-  );
+  const escapePattern = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const blockingPattern = new RegExp(`^([\\t ]*)${escapePattern(blocking)}$`, "m");
   if (!blockingPattern.test(contents)) {
-    if (
-      new RegExp(
-        `^([\\t ]*)${background.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}$`,
-        "m",
-      ).test(contents)
-    ) {
+    if (new RegExp(`^([\\t ]*)${escapePattern(background)}$`, "m").test(contents)) {
       fail(
-        `${sourceInitPath} already uses exec_background without the elizaOS marker; refusing to claim or alter an unowned init change`,
+        `${sourceInitPath} already uses exec_background without the elizaOS marker`,
       );
     }
     fail(
@@ -447,26 +429,20 @@ export function normalizeAospKeymasterInit(aospRoot, enabled = false) {
     blockingPattern,
     `$1# ${marker}\n$1${background}`,
   );
-  const existingOverlay = fs.existsSync(overlayInitPath)
-    ? fs.readFileSync(overlayInitPath, "utf8")
-    : "";
-  if (
-    markedBackground.test(existingOverlay) &&
-    existingOverlay === normalized
-  ) {
-    return;
-  }
   fs.mkdirSync(path.dirname(overlayInitPath), { recursive: true });
-  fs.writeFileSync(overlayInitPath, normalized);
+  if (
+    !fs.existsSync(overlayInitPath) ||
+    fs.readFileSync(overlayInitPath, "utf8") !== normalized
+  )
+    fs.writeFileSync(overlayInitPath, normalized);
   const makefile = fs.readFileSync(makefilePath, "utf8");
   const copyEntry =
     "    vendor/google_devices/grizzly/diagnostics/system/etc/init/hw/init.rc:$(TARGET_COPY_OUT_SYSTEM)/etc/init/hw/init.rc";
-  if (!makefile.includes(copyEntry)) {
+  if (!makefile.includes(copyEntry))
     fs.writeFileSync(
       makefilePath,
       `${makefile.trimEnd()}\n\n# elizaOS diagnostic keymaster init overlay\nPRODUCT_COPY_FILES += \\\n${copyEntry}\n`,
     );
-  }
 }
 
 export function generatedTreeHasKeymasterOverride(aospRoot) {
@@ -526,9 +502,7 @@ export function assertGeneratedGraphicsStack(aospRoot) {
   }
   // The EGL loader has no fallback when ANGLE is selected: every EGL client
   // (SurfaceFlinger included) aborts if persist.graphics.egl=angle and the
-  // ANGLE libraries are absent from the search path. ANGLE is an AOSP system
-  // component, not a vendor blob, so validate its source here and its staged
-  // output in verify-grizzly-artifacts after the image is built.
+  // ANGLE libraries are absent from the search path.
   const vendorProp = path.join(
     aospRoot,
     "vendor/google_devices/grizzly/sysprop/vendor.prop",

@@ -60,13 +60,14 @@ INFERENCE_TARGETS_arm64 := android-arm64-cpu-fused
 INFERENCE_TARGETS_riscv64 := android-arm64-cpu-fused android-riscv64-cpu-fused
 INFERENCE_TARGETS := $(INFERENCE_TARGETS_$(ARCH))
 
-.PHONY: help bootstrap bootstrap-grizzly prepare-grizzly evidence-grizzly attest-grizzly verify-grizzly provision-e1 build build-e1 build-grizzly bundle-grizzly native-inference native-inference-grizzly sim splash bootanimation check-arch
+.PHONY: help bootstrap bootstrap-grizzly prepare-grizzly preflight-grizzly evidence-grizzly attest-grizzly verify-grizzly provision-e1 build build-e1 build-grizzly bundle-grizzly native-inference native-inference-grizzly sim splash bootanimation check-arch
 
 help:
 	@echo "elizaOS Mobile (AOSP) targets:"
 	@echo "  make bootstrap                           # sync the pinned full AOSP checkout"
 	@echo "  make bootstrap-grizzly                  # sync the pinned Pixel 11 Pro AOSP checkout"
 	@echo "  make prepare-grizzly                    # generate grizzly vendor/device support from stock"
+	@echo "  make preflight-grizzly                  # enforce the dedicated Pixel builder floor"
 	@echo "  make build-grizzly                      # build the Pixel 11 Pro image (does not flash)"
 	@echo "  make bundle-grizzly                     # build the complete Pixel 11 Pro flash handoff"
 	@echo "  make evidence-grizzly                   # capture bootloader/adb/pstore boot evidence"
@@ -96,6 +97,9 @@ bootstrap-grizzly: provision-repo
 prepare-grizzly:
 	node $(DISTRO)/prepare-grizzly.mjs --lock "$(HERE)pixel11pro.lock.json" --aosp-root "$(AOSP_GRIZZLY_ROOT)"
 
+preflight-grizzly:
+	node $(REPO_ROOT)/scripts/aosp/build-grizzly-bundle.mjs --aosp-root "$(AOSP_GRIZZLY_ROOT)" --preflight-only
+
 provision-e1:
 	node $(DISTRO)/provision-cuttlefish-e1.mjs --lock "$(HERE)cuttlefish-e1.lock.json" --aosp-root "$(AOSP_ROOT)"
 
@@ -117,7 +121,7 @@ native-inference-grizzly:
 build-grizzly: prepare-grizzly native-inference-grizzly bootanimation
 	ELIZAOS_ELIZA_ROOT="$(ELIZAOS_ELIZA_ROOT)" ELIZA_BUN_RISCV64_OPTIONAL=1 node $(DISTRO)/build-aosp.mjs --brand-config $(DISTRO)/brand.eliza-grizzly.json --aosp-root "$(AOSP_GRIZZLY_ROOT)" --rebuild-privileged-apk $(ARGS)
 
-bundle-grizzly: prepare-grizzly native-inference-grizzly bootanimation
+bundle-grizzly: preflight-grizzly prepare-grizzly native-inference-grizzly bootanimation
 	@test -n "$(BUNDLE_DIR)" || (echo "ERROR: BUNDLE_DIR is required" >&2; exit 64)
 	@test -n "$$SOURCE_DATE_EPOCH" || (echo "ERROR: SOURCE_DATE_EPOCH is required" >&2; exit 64)
 	ELIZAOS_ELIZA_ROOT="$(ELIZAOS_ELIZA_ROOT)" ELIZA_BUN_RISCV64_OPTIONAL=1 node $(DISTRO)/build-aosp.mjs --brand-config $(DISTRO)/brand.eliza-grizzly.json --aosp-root "$(AOSP_GRIZZLY_ROOT)" --rebuild-privileged-apk --skip-build $(ARGS)

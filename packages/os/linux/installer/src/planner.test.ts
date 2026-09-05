@@ -485,7 +485,11 @@ describe("elizaOS internal-disk installer planner", () => {
     expect(() =>
       validateDiskInventory({
         ...disk(),
-        hardwareIdentity: { ...disk().hardwareIdentity, serial: "" },
+        hardwareIdentity: {
+          ...disk().hardwareIdentity,
+          serial: "",
+          wwn: undefined,
+        },
       }),
     ).toThrow("hardware identity");
     const missingMountState = partition(1);

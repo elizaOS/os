@@ -3,22 +3,36 @@
 import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import fs, { existsSync, readFileSync } from "node:fs";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir as systemTmpdir } from "node:os";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   assertApkProvenanceEntries,
+  assertBuilderCapacity,
+  assertBundleOutputLocation,
+  assertClosedAospSourceRoot,
   assertSafeFlashMetadata,
   collectGrizzlyArtifacts,
+  hashDirectoryTree,
   parseArgs as parseBundleArgs,
   parseFastbootInfoArtifacts,
   REQUIRED_APK_PROVENANCE,
   REQUIRED_GRIZZLY_ARTIFACTS,
+  requireResolvedManifestContract,
+  selectedManifestPath,
 } from "../../../../scripts/aosp/build-grizzly-bundle.mjs";
 import {
-  deriveProductOutDir,
   loadPhysicalTargetContract,
   parseArgs as parseDeployArgs,
   resolveBuiltPrivilegedApk,
@@ -43,6 +57,11 @@ import { loadBrandConfig } from "../../../../scripts/distro-android/brand-config
 import {
   aospBuildEnvironment,
   assertBuildHost,
+  closeAospBuildEnvironment,
+  cuttlefishLaunchCommand,
+  prepareAospBuildEnvironment,
+  resolveCuttlefishGpuMode,
+  revalidateAospBuildEnvironment,
 } from "../../../../scripts/distro-android/build-aosp.mjs";
 import {
   GRAPHICS_PROBES,
@@ -50,16 +69,7 @@ import {
   probeSucceeded,
 } from "../../../../scripts/distro-android/collect-grizzly-graphics.mjs";
 import {
-  assertPreparedTreeMatchesEnv,
-  currentPrepareStamp,
-  generatedTreeHasBringupProbes,
-  generatedTreeHasEglOverride,
-  generatedTreeHasF2fsFallback,
-  generatedTreeHasKeymasterOverride,
-  normalizeAospKeymasterInit,
   normalizeGeneratedBringupProbes,
-  normalizeGeneratedF2fsMountOptions,
-  normalizeGeneratedGraphicsProperties,
   normalizeGeneratedRenderEngine,
   parseArgs as parseGrizzlyArgs,
 } from "../../../../scripts/distro-android/prepare-grizzly.mjs";
@@ -67,6 +77,29 @@ import { loadCuttlefishE1Lock } from "../../../../scripts/distro-android/provisi
 import { withSisoCompatibility } from "../../../../scripts/distro-android/siso-env.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../../../..", import.meta.url));
+
+const validGrizzlyFastbootInfo = [
+  "version 1",
+  "flash boot",
+  "flash init_boot",
+  "flash dtbo",
+  "flash vendor_kernel_boot",
+  "flash pvmfw",
+  "flash vendor_boot",
+  "flash --apply-vbmeta vbmeta",
+  "reboot fastboot",
+  "update-super",
+  "flash system",
+  "flash system_dlkm",
+  "flash system_ext",
+  "flash product",
+  "flash vendor",
+  "flash vendor_dlkm",
+  "flash --slot-other system system_other.img",
+  "if-wipe erase userdata",
+  "reboot",
+  "",
+].join("\n");
 
 function activeProductCompositionLines(source: string): string[] {
   return source
@@ -107,8 +140,14 @@ async function createGitFixture(root: string, files: string[]) {
   }).trim();
 }
 
+// Production intentionally rejects pathname aliases. macOS exposes its temp
+// directory through /var -> /private/var; fixtures must use canonical roots.
+function tmpdir() {
+  return fs.realpathSync(systemTmpdir());
+}
+
 describe("AOSP build contracts", () => {
-  test("AOSP builds keep temporary artifacts on the checkout volume", () => {
+  test("AOSP builds keep temporary artifacts on the default output volume", () => {
     expect(
       aospBuildEnvironment("/srv/aosp", {
         SISO_EXPERIMENTS: "oom-score-adj",
@@ -120,6 +159,219 @@ describe("AOSP build contracts", () => {
       TMP: "/srv/aosp/out/.elizaos-tmp",
       TEMP: "/srv/aosp/out/.elizaos-tmp",
     });
+  });
+
+  test("AOSP build temporary artifacts follow absolute and relative OUT_DIR", async () => {
+    const root = await mkdtemp(join(tmpdir(), "elizaos-aosp-root-"));
+    const external = await mkdtemp(join(tmpdir(), "elizaos-aosp-out-"));
+    const prepared: ReturnType<typeof prepareAospBuildEnvironment>[] = [];
+    try {
+      const absolute = prepareAospBuildEnvironment(root, {
+        OUT_DIR: external,
+      });
+      prepared.push(absolute);
+      expect(absolute.env.TMPDIR).toBe(join(external, ".elizaos-tmp"));
+      expect(absolute.env.OUT_DIR).toBe(external);
+
+      const relative = prepareAospBuildEnvironment(root, {
+        OUT_DIR: "build-output",
+      });
+      prepared.push(relative);
+      expect(relative.env.TMPDIR).toBe(
+        join(root, "build-output", ".elizaos-tmp"),
+      );
+      expect(relative.env.OUT_DIR).toBe(join(root, "build-output"));
+      revalidateAospBuildEnvironment(absolute);
+      revalidateAospBuildEnvironment(relative);
+    } finally {
+      for (const build of prepared) closeAospBuildEnvironment(build);
+      await rm(root, { recursive: true, force: true });
+      await rm(external, { recursive: true, force: true });
+    }
+  });
+
+  test("AOSP build temporary artifacts accept a stable symlinked out directory", async () => {
+    const root = await mkdtemp(join(tmpdir(), "elizaos-aosp-root-"));
+    const external = await mkdtemp(join(tmpdir(), "elizaos-aosp-out-"));
+    let prepared: ReturnType<typeof prepareAospBuildEnvironment> | undefined;
+    try {
+      await symlink(external, join(root, "out"), "dir");
+      prepared = prepareAospBuildEnvironment(root, {});
+      expect(prepared.env.OUT_DIR).toBe(external);
+      expect(prepared.env.TMPDIR).toBe(join(external, ".elizaos-tmp"));
+      revalidateAospBuildEnvironment(prepared);
+    } finally {
+      if (prepared) closeAospBuildEnvironment(prepared);
+      await rm(root, { recursive: true, force: true });
+      await rm(external, { recursive: true, force: true });
+    }
+  });
+
+  test("AOSP build wrapper mirrors OUT_DIR_COMMON_BASE semantics", () => {
+    expect(
+      aospBuildEnvironment("/srv/aosp", {
+        OUT_DIR_COMMON_BASE: "/build/common",
+      }),
+    ).toMatchObject({
+      OUT_DIR: "/build/common/aosp",
+      OUT_DIR_COMMON_BASE: "/build/common",
+      TMPDIR: "/build/common/aosp/.elizaos-tmp",
+    });
+    expect(
+      aospBuildEnvironment("/srv/aosp", {
+        OUT_DIR_COMMON_BASE: "build/common",
+      }),
+    ).toMatchObject({
+      OUT_DIR: "/srv/aosp/build/common/aosp",
+      OUT_DIR_COMMON_BASE: "build/common",
+      TMPDIR: "/srv/aosp/build/common/aosp/.elizaos-tmp",
+    });
+  });
+
+  test("AOSP build wrapper rejects empty output variables", () => {
+    expect(() =>
+      aospBuildEnvironment("/srv/aosp", {
+        OUT_DIR: "   ",
+      }),
+    ).toThrow("OUT_DIR must be a non-empty path when set");
+    expect(() =>
+      aospBuildEnvironment("/srv/aosp", {
+        OUT_DIR_COMMON_BASE: "",
+      }),
+    ).toThrow("OUT_DIR_COMMON_BASE must be a non-empty path when set");
+  });
+
+  test("AOSP build wrapper gives a present OUT_DIR precedence", () => {
+    expect(
+      aospBuildEnvironment("/srv/aosp", {
+        OUT_DIR: "build-output",
+        OUT_DIR_COMMON_BASE: "/build/common",
+      }),
+    ).toMatchObject({
+      OUT_DIR: "/srv/aosp/build-output",
+      OUT_DIR_COMMON_BASE: "/build/common",
+      TMPDIR: "/srv/aosp/build-output/.elizaos-tmp",
+    });
+  });
+
+  test("AOSP builds reject a temporary-directory symlink outside the checkout", async () => {
+    const root = await mkdtemp(join(tmpdir(), "elizaos-aosp-root-"));
+    const external = await mkdtemp(join(tmpdir(), "elizaos-aosp-external-"));
+    try {
+      await mkdir(join(root, "out"), { recursive: true });
+      await symlink(external, join(root, "out", ".elizaos-tmp"), "dir");
+      expect(() => prepareAospBuildEnvironment(root, {})).toThrow(
+        "must be a real directory",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(external, { recursive: true, force: true });
+    }
+  });
+
+  test("AOSP builds prepare a private temporary directory inside the checkout", async () => {
+    const root = await mkdtemp(join(tmpdir(), "elizaos-aosp-root-"));
+    let prepared: ReturnType<typeof prepareAospBuildEnvironment> | undefined;
+    try {
+      await mkdir(join(root, "out", ".elizaos-tmp"), { recursive: true });
+      await chmod(join(root, "out", ".elizaos-tmp"), 0o777);
+      prepared = prepareAospBuildEnvironment(root, {});
+      const state = await lstat(prepared.env.TMPDIR);
+      expect(state.isDirectory()).toBe(true);
+      expect(state.isSymbolicLink()).toBe(false);
+      expect(state.mode & 0o777).toBe(0o700);
+      revalidateAospBuildEnvironment(prepared);
+    } finally {
+      if (prepared) closeAospBuildEnvironment(prepared);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("AOSP builds reject permissive output roots and replaced temp paths", async () => {
+    const permissiveRoot = await mkdtemp(join(tmpdir(), "elizaos-aosp-root-"));
+    const raceRoot = await mkdtemp(join(tmpdir(), "elizaos-aosp-root-"));
+    let prepared: ReturnType<typeof prepareAospBuildEnvironment> | undefined;
+    try {
+      await mkdir(join(permissiveRoot, "out"));
+      await chmod(join(permissiveRoot, "out"), 0o777);
+      expect(() => prepareAospBuildEnvironment(permissiveRoot, {})).toThrow(
+        "must not be group- or other-writable",
+      );
+
+      prepared = prepareAospBuildEnvironment(raceRoot, {});
+      const displaced = join(raceRoot, "out", ".elizaos-tmp-displaced");
+      await rename(prepared.canonicalTemp, displaced);
+      await mkdir(prepared.canonicalTemp, { mode: 0o700 });
+      expect(() => revalidateAospBuildEnvironment(prepared)).toThrow(
+        "temporary path identity changed",
+      );
+    } finally {
+      if (prepared) closeAospBuildEnvironment(prepared);
+      await rm(permissiveRoot, { recursive: true, force: true });
+      await rm(raceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("AOSP builds hold and revalidate every trusted output ancestor", async () => {
+    const unsafeParent = await mkdtemp(
+      join(tmpdir(), "elizaos-aosp-unsafe-parent-"),
+    );
+    const nestedRoot = join(unsafeParent, "checkout");
+    const raceRoot = await mkdtemp(join(tmpdir(), "elizaos-aosp-root-"));
+    let prepared: ReturnType<typeof prepareAospBuildEnvironment> | undefined;
+    try {
+      await mkdir(nestedRoot);
+      await chmod(unsafeParent, 0o777);
+      expect(() => prepareAospBuildEnvironment(nestedRoot, {})).toThrow(
+        "must not be group- or other-writable",
+      );
+
+      prepared = prepareAospBuildEnvironment(raceRoot, {});
+      expect(prepared.outputPathHandles.length).toBeGreaterThan(2);
+      await chmod(raceRoot, 0o777);
+      expect(() => revalidateAospBuildEnvironment(prepared)).toThrow(
+        "must not be group- or other-writable",
+      );
+    } finally {
+      if (prepared) closeAospBuildEnvironment(prepared);
+      await chmod(unsafeParent, 0o700);
+      await chmod(raceRoot, 0o700);
+      await rm(unsafeParent, { recursive: true, force: true });
+      await rm(raceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("AOSP build preparation closes held descriptors after an fstat failure", () => {
+    const root = fs.mkdtempSync(join(tmpdir(), "elizaos-aosp-fd-"));
+    const originalFstat = fs.fstatSync;
+    const observedDescriptors = new Set<number>();
+    let calls = 0;
+    fs.fstatSync = (fd) => {
+      observedDescriptors.add(fd);
+      calls += 1;
+      if (calls === 4) throw new Error("injected fstat failure");
+      return originalFstat(fd);
+    };
+    try {
+      expect(() => prepareAospBuildEnvironment(root, {})).toThrow(
+        "injected fstat failure",
+      );
+    } finally {
+      fs.fstatSync = originalFstat;
+    }
+    try {
+      expect(calls).toBe(4);
+      expect(observedDescriptors.size).toBeGreaterThan(0);
+      // Check the actual descriptors, including held ancestors, without
+      // relying on Linux /proc or pathname aliases in readlink output.
+      for (const descriptor of observedDescriptors) {
+        expect(() => originalFstat(descriptor)).toThrow(
+          /bad file descriptor|EBADF/i,
+        );
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("agent smoke distinguishes a running service from a pending record", () => {
@@ -760,7 +1012,9 @@ describe("AOSP build contracts", () => {
       expect(assertGeneratedVendorTree(root, fixtureLock)).toHaveLength(
         lock.generatedVendor.requiredFiles.length,
       );
-      const firmwareContract = lock.generatedVendor.requiredTextFiles[0];
+      const firmwareContract = lock.generatedVendor.requiredTextFiles.find(
+        (entry) => entry.path.endsWith("/firmware/android-info.txt"),
+      );
       await writeFile(join(root, firmwareContract.path), "wrong firmware\n");
       expect(() => assertGeneratedVendorTree(root, fixtureLock)).toThrow(
         /generated vendor contract mismatch/,
@@ -852,214 +1106,6 @@ describe("AOSP build contracts", () => {
       ).toHaveLength(1);
       expect(makefile).not.toContain("debug.renderengine.backend");
       expect(makefile).not.toContain("debug.renderengine.vulkan");
-      // Trees touched by either compatibility shim must read as contaminated
-      // so a default prepare regenerates them instead of shipping the edits.
-      expect(generatedTreeHasBringupProbes(root)).toBe(true);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test("Pixel renderer overrides are opt-in and control Graphite honestly", async () => {
-    const root = await mkdtemp(join(tmpdir(), "elizaos-grizzly-render-"));
-    const vendorProp = join(
-      root,
-      "vendor/google_devices/grizzly/sysprop/vendor.prop",
-    );
-    const previousBackend = process.env.ELIZAOS_GRIZZLY_RENDERENGINE_BACKEND;
-    const previousGraphite = process.env.ELIZAOS_GRIZZLY_RENDERENGINE_GRAPHITE;
-    try {
-      await mkdir(dirname(vendorProp), { recursive: true });
-      await writeFile(
-        vendorProp,
-        "persist.graphics.egl=angle\ndebug.renderengine.graphite=true\n",
-      );
-      delete process.env.ELIZAOS_GRIZZLY_RENDERENGINE_BACKEND;
-      delete process.env.ELIZAOS_GRIZZLY_RENDERENGINE_GRAPHITE;
-      normalizeGeneratedGraphicsProperties(root);
-      expect(readFileSync(vendorProp, "utf8")).not.toContain(
-        "debug.renderengine.backend=",
-      );
-
-      // A backend probe must switch Graphite off: while graphite=true, AOSP
-      // routes to GraphiteVkRenderEngine unconditionally and the GL/VK axis
-      // of debug.renderengine.backend is ignored.
-      process.env.ELIZAOS_GRIZZLY_RENDERENGINE_BACKEND = "skiavkthreaded";
-      normalizeGeneratedGraphicsProperties(root);
-      expect(readFileSync(vendorProp, "utf8")).toContain(
-        "debug.renderengine.backend=skiavkthreaded\ndebug.renderengine.graphite=false\n",
-      );
-
-      // Explicit Graphite-on-Vulkan stays possible; Graphite + GL is refused.
-      process.env.ELIZAOS_GRIZZLY_RENDERENGINE_GRAPHITE = "1";
-      normalizeGeneratedGraphicsProperties(root);
-      expect(readFileSync(vendorProp, "utf8")).toContain(
-        "debug.renderengine.backend=skiavkthreaded\ndebug.renderengine.graphite=true\n",
-      );
-      expect(() => {
-        process.env.ELIZAOS_GRIZZLY_RENDERENGINE_BACKEND = "skiaglthreaded";
-        normalizeGeneratedGraphicsProperties(root);
-      }).toThrow(/Vulkan-only/);
-      delete process.env.ELIZAOS_GRIZZLY_RENDERENGINE_GRAPHITE;
-      expect(() => {
-        process.env.ELIZAOS_GRIZZLY_RENDERENGINE_BACKEND = "invalid";
-        normalizeGeneratedGraphicsProperties(root);
-      }).toThrow(/must be one of/);
-
-      // Clearing the env restores the stock renderer selection in place.
-      delete process.env.ELIZAOS_GRIZZLY_RENDERENGINE_BACKEND;
-      normalizeGeneratedGraphicsProperties(root);
-      const restored = readFileSync(vendorProp, "utf8");
-      expect(restored).not.toContain("debug.renderengine.backend=");
-      expect(restored).toContain("debug.renderengine.graphite=true\n");
-    } finally {
-      if (previousBackend === undefined) {
-        delete process.env.ELIZAOS_GRIZZLY_RENDERENGINE_BACKEND;
-      } else {
-        process.env.ELIZAOS_GRIZZLY_RENDERENGINE_BACKEND = previousBackend;
-      }
-      if (previousGraphite === undefined) {
-        delete process.env.ELIZAOS_GRIZZLY_RENDERENGINE_GRAPHITE;
-      } else {
-        process.env.ELIZAOS_GRIZZLY_RENDERENGINE_GRAPHITE = previousGraphite;
-      }
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test("Pixel disposable-edit detection catches fstab and EGL edits", async () => {
-    const root = await mkdtemp(join(tmpdir(), "elizaos-grizzly-detect-"));
-    const usbInit = join(
-      root,
-      "vendor/google_devices/grizzly/proprietary/vendor/etc/init/hw/init.malibu.usb.rc",
-    );
-    const fstab = join(
-      root,
-      "vendor/google_devices/grizzly/proprietary/vendor/etc/fstab.malibu",
-    );
-    const vendorProp = join(
-      root,
-      "vendor/google_devices/grizzly/sysprop/vendor.prop",
-    );
-    try {
-      await mkdir(dirname(usbInit), { recursive: true });
-      await mkdir(dirname(vendorProp), { recursive: true });
-      await writeFile(
-        usbInit,
-        "on boot\n    # Use USB Gadget HAL\n    setprop sys.usb.configfs 2\n",
-      );
-      await writeFile(
-        fstab,
-        "/dev/block/platform/3c2d0000.ufs/by-name/userdata /data f2fs stock-flags latemount,wait,check,quota,fileencryption=::inlinecrypt_optimized,metadata_encryption=:wrappedkey_v0,keydirectory=/metadata/vold/metadata_encryption\n",
-      );
-      await writeFile(
-        vendorProp,
-        "# elizaOS: native PowerVR EGL override\ndebug.renderengine.graphite=true\nro.hardware.egl=powervr\n",
-      );
-      expect(generatedTreeHasBringupProbes(root)).toBe(false);
-      expect(generatedTreeHasF2fsFallback(root)).toBe(false);
-      expect(generatedTreeHasEglOverride(root)).toBe(true);
-
-      normalizeGeneratedF2fsMountOptions(root);
-      expect(generatedTreeHasF2fsFallback(root)).toBe(true);
-      const rewritten = readFileSync(fstab, "utf8");
-      expect(rewritten).not.toContain("fileencryption=");
-      // Applying twice must not duplicate the provenance header.
-      normalizeGeneratedF2fsMountOptions(root);
-      expect(
-        readFileSync(fstab, "utf8").match(/# elizaOS: use kernel-supported/g),
-      ).toHaveLength(1);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test("Pixel prepare stamp fails closed on renderer/probe env drift", async () => {
-    const root = await mkdtemp(join(tmpdir(), "elizaos-grizzly-stamp-"));
-    try {
-      await mkdir(join(root, "vendor/google_devices/grizzly"), {
-        recursive: true,
-      });
-      const stamp = currentPrepareStamp({});
-      expect(stamp).toEqual({
-        renderengineBackend: null,
-        renderengineGraphite: true,
-        eglSelection: null,
-        earlyBootProbes: false,
-        conservativeF2fs: false,
-        keymasterNonblocking: false,
-      });
-      expect(() =>
-        currentPrepareStamp({ ELIZAOS_GRIZZLY_EGL: "invalid" }),
-      ).toThrow(/angle or native/);
-      expect(() => assertPreparedTreeMatchesEnv(root, {})).toThrow(
-        /no prepare stamp/,
-      );
-      await writeFile(
-        join(root, "vendor/google_devices/grizzly/.elizaos-prepare-stamp.json"),
-        `${JSON.stringify(stamp, null, 2)}\n`,
-      );
-      expect(() => assertPreparedTreeMatchesEnv(root, {})).not.toThrow();
-      for (const env of [
-        { ELIZAOS_GRIZZLY_RENDERENGINE_BACKEND: "skiavkthreaded" },
-        { ELIZAOS_GRIZZLY_EARLY_BOOT_PROBES: "1" },
-        { ELIZAOS_GRIZZLY_CONSERVATIVE_F2FS: "1" },
-        { ELIZAOS_GRIZZLY_EGL: "native" },
-      ]) {
-        expect(() => assertPreparedTreeMatchesEnv(root, env)).toThrow(
-          /different environment/,
-        );
-      }
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test("Pixel keymaster diagnostic is opt-in and reversible", async () => {
-    const root = await mkdtemp(join(tmpdir(), "elizaos-grizzly-keymaster-"));
-    const initDir = join(root, "system/core/rootdir");
-    const initPath = join(initDir, "init.rc");
-    const generatedDir = join(root, "vendor/google_devices/grizzly");
-    await mkdir(initDir, { recursive: true });
-    await mkdir(generatedDir, { recursive: true });
-    await writeFile(
-      join(generatedDir, "grizzly.mk"),
-      "PRODUCT_NAME := grizzly\n",
-    );
-    await writeFile(
-      initPath,
-      "on post-fs-data\n    exec - system system -- /system/bin/vdc keymaster earlyBootEnded\n",
-    );
-    try {
-      normalizeAospKeymasterInit(root, true);
-      const diagnostic = readFileSync(
-        join(generatedDir, "diagnostics/system/etc/init/hw/init.rc"),
-        "utf8",
-      );
-      expect(diagnostic).toContain(
-        "diagnostic non-blocking keymaster notification",
-      );
-      expect(diagnostic).toContain(
-        "exec_background - system system -- /system/bin/vdc keymaster earlyBootEnded",
-      );
-      expect(readFileSync(initPath, "utf8")).toContain(
-        "exec - system system -- /system/bin/vdc keymaster earlyBootEnded",
-      );
-      normalizeAospKeymasterInit(root, false);
-      expect(
-        existsSync(
-          join(generatedDir, "diagnostics/system/etc/init/hw/init.rc"),
-        ),
-      ).toBe(false);
-      expect(readFileSync(initPath, "utf8")).toContain(
-        "exec - system system -- /system/bin/vdc keymaster earlyBootEnded",
-      );
-      expect(currentPrepareStamp({}).keymasterNonblocking).toBe(false);
-      expect(
-        currentPrepareStamp({ ELIZAOS_GRIZZLY_KEYMASTER_NONBLOCKING: "1" })
-          .keymasterNonblocking,
-      ).toBe(true);
-      expect(generatedTreeHasKeymasterOverride(root)).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -1183,32 +1229,6 @@ describe("AOSP build contracts", () => {
       "/build/aosp-out/target/product/eliza_cf_arm64_phone/system/priv-app/Eliza/Eliza.apk",
     );
 
-    // The build writes into out/target/product/<PRODUCT_DEVICE>, not
-    // <PRODUCT_NAME>: Cuttlefish products build into vsoc_* and the grizzly
-    // product into grizzly.
-    expect(
-      deriveProductOutDir({
-        productName: "eliza_cf_arm64_phone",
-        aospDeviceTreePaths: [
-          "device/google/cuttlefish/vsoc_arm64/phone/aosp_cf.mk",
-        ],
-      }),
-    ).toBe("vsoc_arm64");
-    expect(
-      deriveProductOutDir({
-        productName: "eliza_grizzly_phone",
-        aospDeviceTreePaths: ["vendor/google_devices/grizzly/grizzly.mk"],
-      }),
-    ).toBe("grizzly");
-    expect(
-      resolveBuiltPrivilegedApk({
-        aospRoot: "/aosp",
-        productName: "eliza_grizzly_phone",
-        deviceDir: "grizzly",
-        env: {},
-      }),
-    ).toBe("/aosp/out/target/product/grizzly/system/priv-app/Eliza/Eliza.apk");
-
     const deploySource = readFileSync(
       join(repositoryRoot, "scripts/aosp/deploy-pixel.mjs"),
       "utf8",
@@ -1269,14 +1289,255 @@ describe("AOSP build contracts", () => {
     );
     expect(checker).toContain('verify_artifact "$artifact" "$fork_ggml"');
     expect(checker).toContain(
-      'LD_LIBRARY_PATH="$(dirname "$fork_ggml")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"',
+      `LD_LIBRARY_PATH="$(dirname "$fork_ggml")\${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"`,
     );
     expect(checker).toContain('"$(basename "$exe")" = "qjl_fork_parity"');
     expect(checker).toContain("Dynamic loading not supported");
     expect(checker).toContain(
       "qemu fork parity unavailable (static musl has no dlopen)",
     );
+
+    const workflow = readFileSync(
+      join(repositoryRoot, ".github/workflows/riscv64-smoke.yml"),
+      "utf8",
+    );
+    expect(workflow).toContain(
+      "bun run check:riscv64-artifacts --require-complete",
+    );
+
+    const architecture = readFileSync(
+      join(repositoryRoot, "packages/os/docs/two-fork-architecture.md"),
+      "utf8",
+    );
+    expect(architecture).toContain(
+      "no physical riscv64 board is qualified yet",
+    );
+    expect(architecture).not.toContain("any UEFI x86_64 / riscv64 SBC");
   });
+
+  test("riscv64 strict smoke fails when required artifacts are absent", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eliza-riscv64-missing-"));
+    try {
+      const elizaRoot = join(root, "eliza");
+      const fakeBin = join(root, "bin");
+      const report = join(root, "report.json");
+      await Promise.all([
+        mkdir(join(elizaRoot, "packages/native"), { recursive: true }),
+        mkdir(fakeBin, { recursive: true }),
+      ]);
+      const fakeQemu = join(fakeBin, "qemu-riscv64-static");
+      await writeFile(fakeQemu, "#!/bin/sh\nexit 0\n");
+      await chmod(fakeQemu, 0o755);
+
+      const process = Bun.spawn(
+        [
+          "bash",
+          join(repositoryRoot, "scripts/check-riscv64-artifacts.sh"),
+          "--require-complete",
+          "--out",
+          report,
+        ],
+        {
+          cwd: repositoryRoot,
+          env: {
+            ...Bun.env,
+            ELIZAOS_ELIZA_ROOT: elizaRoot,
+            ELIZA_RISCV64_SMOKE: "1",
+            HOME: root,
+            PATH: `${fakeBin}:${Bun.env.PATH ?? ""}`,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      const exitCode = await process.exited;
+      expect(exitCode).toBe(1);
+      const parsed = JSON.parse(await Bun.file(report).text());
+      expect(parsed.require_complete).toBe(true);
+      expect(parsed.summary.fail).toBeGreaterThan(0);
+      expect(parsed.final_status).toBe("FAIL");
+      expect(
+        parsed.artifacts.some(
+          (artifact: { status: string }) => artifact.status === "FAIL",
+        ),
+      ).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  test("riscv64 strict smoke records a missing QEMU failure", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eliza-riscv64-no-qemu-"));
+    try {
+      const elizaRoot = join(root, "eliza");
+      const fakeBin = join(root, "bin");
+      const report = join(root, "report.json");
+      await Promise.all([
+        mkdir(join(elizaRoot, "packages/native"), { recursive: true }),
+        mkdir(fakeBin, { recursive: true }),
+      ]);
+      const resolveExecutable = (name: string): string => {
+        for (const directory of (Bun.env.PATH ?? "").split(delimiter)) {
+          const candidate = join(directory, name);
+          try {
+            fs.accessSync(candidate, fs.constants.X_OK);
+            return candidate;
+          } catch {}
+        }
+        throw new Error(`required test tool is missing: ${name}`);
+      };
+      for (const tool of [
+        "awk",
+        "cat",
+        "date",
+        "dirname",
+        "mkdir",
+        "mktemp",
+        "python3",
+        "rm",
+      ]) {
+        await symlink(resolveExecutable(tool), join(fakeBin, tool));
+      }
+
+      const process = Bun.spawn(
+        [
+          resolveExecutable("bash"),
+          join(repositoryRoot, "scripts/check-riscv64-artifacts.sh"),
+          "--require-complete",
+          "--out",
+          report,
+        ],
+        {
+          cwd: repositoryRoot,
+          env: {
+            ...Bun.env,
+            ELIZAOS_ELIZA_ROOT: elizaRoot,
+            ELIZA_RISCV64_SMOKE: "1",
+            HOME: root,
+            PATH: fakeBin,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      const exitCode = await process.exited;
+      expect(exitCode).toBe(1);
+      const parsed = JSON.parse(await Bun.file(report).text());
+      expect(parsed.require_complete).toBe(true);
+      expect(parsed.qemu_bin).toBe("");
+      expect(parsed.summary).toEqual({ pass: 0, fail: 1, skip: 0 });
+      expect(parsed.final_status).toBe("FAIL");
+      expect(parsed.pre_skip_reason).toBe("qemu-riscv64-static missing");
+      expect(parsed.artifacts).toEqual([
+        {
+          path: "qemu-riscv64-static",
+          kind: "tool",
+          status: "FAIL",
+          detail: "required QEMU executable is not installed or not on PATH",
+          duration_ms: 0,
+        },
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  test("riscv64 strict smoke rejects disabled QEMU with a failure report", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eliza-riscv64-no-exec-"));
+    try {
+      const elizaRoot = join(root, "eliza");
+      const report = join(root, "report.json");
+      await mkdir(join(elizaRoot, "packages/native"), { recursive: true });
+      const process = Bun.spawn(
+        [
+          "bash",
+          join(repositoryRoot, "scripts/check-riscv64-artifacts.sh"),
+          "--require-complete",
+          "--no-qemu",
+          "--out",
+          report,
+        ],
+        {
+          cwd: repositoryRoot,
+          env: {
+            ...Bun.env,
+            ELIZAOS_ELIZA_ROOT: elizaRoot,
+            ELIZA_RISCV64_SMOKE: "1",
+            HOME: root,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      expect(await process.exited).toBe(1);
+      const parsed = JSON.parse(await Bun.file(report).text());
+      expect(parsed.require_complete).toBe(true);
+      expect(parsed.qemu_run).toBe(false);
+      expect(parsed.summary).toEqual({ pass: 0, fail: 1, skip: 0 });
+      expect(parsed.final_status).toBe("FAIL");
+      expect(parsed.pre_skip_reason).toBe(
+        "strict smoke requires QEMU execution",
+      );
+      expect(parsed.artifacts).toEqual([
+        {
+          path: "qemu-riscv64-static",
+          kind: "tool",
+          status: "FAIL",
+          detail: "--require-complete cannot be combined with --no-qemu",
+          duration_ms: 0,
+        },
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  test("riscv64 strict smoke rejects a disabled smoke gate with a failure report", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eliza-riscv64-no-gate-"));
+    try {
+      const elizaRoot = join(root, "eliza");
+      const report = join(root, "report.json");
+      await mkdir(join(elizaRoot, "packages/native"), { recursive: true });
+      const process = Bun.spawn(
+        [
+          "bash",
+          join(repositoryRoot, "scripts/check-riscv64-artifacts.sh"),
+          "--require-complete",
+          "--out",
+          report,
+        ],
+        {
+          cwd: repositoryRoot,
+          env: {
+            ...Bun.env,
+            ELIZAOS_ELIZA_ROOT: elizaRoot,
+            ELIZA_RISCV64_SMOKE: "",
+            HOME: root,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      expect(await process.exited).toBe(1);
+      const parsed = JSON.parse(await Bun.file(report).text());
+      expect(parsed.require_complete).toBe(true);
+      expect(parsed.qemu_run).toBe(true);
+      expect(parsed.summary).toEqual({ pass: 0, fail: 1, skip: 0 });
+      expect(parsed.final_status).toBe("FAIL");
+      expect(parsed.pre_skip_reason).toBe("strict smoke gate is disabled");
+      expect(parsed.artifacts).toEqual([
+        {
+          path: "ELIZA_RISCV64_SMOKE",
+          kind: "configuration",
+          status: "FAIL",
+          detail: "--require-complete requires ELIZA_RISCV64_SMOKE=1",
+          duration_ms: 0,
+        },
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
 
   test("riscv64 QJL reports the static-musl dlopen boundary as unavailable", async () => {
     const root = await mkdtemp(join(tmpdir(), "eliza-riscv64-qjl-"));
@@ -1398,6 +1659,38 @@ describe("AOSP build contracts", () => {
     ).toThrow("Cuttlefish launch requires /dev/kvm");
   });
 
+  test("Cuttlefish launch pins accelerated graphics instead of auto mode", () => {
+    const brand = {
+      lunchTarget: "eliza_cf_x86_64_phone-trunk_staging-userdebug",
+      productName: "eliza_cf_x86_64_phone",
+    };
+    expect(resolveCuttlefishGpuMode(brand, {})).toBe("gfxstream");
+    const command = cuttlefishLaunchCommand(brand, {});
+    expect(command).toContain("cvd start --daemon --gpu_mode=gfxstream");
+    expect(command).toContain("launch_cvd --daemon --gpu_mode=gfxstream");
+    expect(command).toContain("if command -v cvd");
+    expect(command).not.toContain("gpu_mode=auto");
+    expect(command).not.toContain("2>/dev/null ||");
+  });
+
+  test("Cuttlefish GPU selection is explicit and rejects shell input", () => {
+    const riscvBrand = {
+      lunchTarget: "eliza_cf_riscv64_phone-trunk_staging-userdebug",
+      productName: "eliza_cf_riscv64_phone",
+    };
+    expect(resolveCuttlefishGpuMode(riscvBrand, {})).toBe("guest_swiftshader");
+    expect(
+      resolveCuttlefishGpuMode(riscvBrand, {
+        ELIZA_CUTTLEFISH_GPU_MODE: "none",
+      }),
+    ).toBe("none");
+    expect(() =>
+      resolveCuttlefishGpuMode(riscvBrand, {
+        ELIZA_CUTTLEFISH_GPU_MODE: "gfxstream; touch /tmp/unsafe",
+      }),
+    ).toThrow("ELIZA_CUTTLEFISH_GPU_MODE must be one of");
+  });
+
   test("the grizzly handoff requires and digest-binds every flash input", async () => {
     const root = await mkdtemp(join(tmpdir(), "eliza-grizzly-bundle-"));
     const productOut = join(root, "product");
@@ -1408,17 +1701,10 @@ describe("AOSP build contracts", () => {
         await writeFile(
           join(productOut, artifact),
           artifact === "fastboot-info.txt"
-            ? [
-                "version 1",
-                "flash boot",
-                "flash --apply-vbmeta vbmeta",
-                "flash vbmeta_system",
-                "flash --slot-other system system_other.img",
+            ? validGrizzlyFastbootInfo.replace(
                 "reboot fastboot",
-                "update-super",
-                "if-wipe erase userdata",
-                "",
-              ].join("\n")
+                "flash vbmeta_system\nreboot fastboot",
+              )
             : `${artifact}\n`,
         );
       }
@@ -1461,6 +1747,313 @@ describe("AOSP build contracts", () => {
     }
   });
 
+  test("the grizzly handoff enforces the documented dedicated builder floor", () => {
+    const threshold = {
+      platform: "linux",
+      architecture: "x64",
+      physicalCores: 32,
+      memoryBytes: 128 * 1024 ** 3,
+      totalBytes: 1_500_000_000_000,
+      freeBytes: 600 * 1024 ** 3,
+    };
+    expect(assertBuilderCapacity(threshold)).toMatchObject({
+      physicalCores: 32,
+      memoryBytes: threshold.memoryBytes,
+    });
+    expect(() =>
+      assertBuilderCapacity({ ...threshold, physicalCores: 31 }),
+    ).toThrow("require 32/128");
+    expect(() =>
+      assertBuilderCapacity({ ...threshold, freeBytes: 599 * 1024 ** 3 }),
+    ).toThrow("require 1500 GB/600 GiB");
+    expect(() =>
+      assertBuilderCapacity({ ...threshold, totalBytes: 1_499_999_999_999 }),
+    ).toThrow("require 1500 GB/600 GiB");
+    expect(() =>
+      assertBuilderCapacity({ ...threshold, architecture: "arm64" }),
+    ).toThrow("Linux x86_64");
+  });
+
+  test("the grizzly handoff cannot infer build gates from existing output", () => {
+    expect(() =>
+      parseBundleArgs([
+        "--aosp-root",
+        "/build/aosp-grizzly",
+        "--output-dir",
+        "/build/bundle",
+        "--skip-build",
+      ]),
+    ).toThrow("unknown argument: --skip-build");
+  });
+
+  test("the grizzly handoff fails closed without an authoritative resolved graph", () => {
+    const lock = loadAospLock(
+      join(repositoryRoot, "packages/os/android/pixel11pro.lock.json"),
+    );
+    // The repository lock now contains the required contract; exercise the
+    // fail-closed branch with an explicitly incomplete copy.
+    delete lock.resolvedManifest;
+    expect(() => requireResolvedManifestContract(lock)).toThrow(
+      "no authoritative resolved AOSP manifest contract",
+    );
+    expect(lock.avbVerification).toEqual([
+      {
+        image: "vbmeta.img",
+        keyPath: "external/avb/test/data/testkey_rsa4096.pem",
+        keySha256:
+          "6a224754880a57ab9cbd308267cd157d94cf05a1c8cb851aec4090e045d24121",
+        authorization: "public-aosp-userdebug-test-key",
+      },
+    ]);
+    const collector = readFileSync(
+      join(repositoryRoot, "scripts/aosp/build-grizzly-bundle.mjs"),
+      "utf8",
+    );
+    expect(collector).toContain(
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: match literal build-script source
+      'm -j${jobs} "$product_out/host_init_verifier_output.txt"',
+    );
+    expect(collector).not.toContain(
+      'host_init_verifier_check "$product_out/host_init_verifier_output.txt"',
+    );
+    expect(collector).not.toContain(".repo/repo/repo");
+  });
+
+  test("the grizzly handoff rejects loose files outside the resolved source graph", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eliza-grizzly-source-root-"));
+    try {
+      const makeProject = join(root, "build/make");
+      const soongProject = join(root, "build/soong");
+      await mkdir(join(makeProject, "core"), { recursive: true });
+      await mkdir(soongProject, { recursive: true });
+      await mkdir(join(root, ".repo"));
+      await mkdir(join(root, "out"));
+      await mkdir(join(root, "vendor/google_devices/grizzly"), {
+        recursive: true,
+      });
+      await mkdir(join(root, "vendor/eliza"), { recursive: true });
+      await writeFile(join(makeProject, "core/root.mk"), "root-make\n");
+      await writeFile(join(soongProject, "root.bp"), "root-blueprint\n");
+      await writeFile(join(root, "Makefile"), "root-make\n");
+      await symlink("build/soong/root.bp", join(root, "Android.bp"));
+      const sha256 = (value: string) =>
+        createHash("sha256").update(value).digest("hex");
+      const contract = {
+        aospRoot: root,
+        outRoot: join(root, "out"),
+        projectPaths: ["build/make", "build/soong"],
+        boundTreePaths: ["vendor/google_devices/grizzly", "vendor/eliza"],
+        rootEntries: [
+          {
+            path: "Makefile",
+            projectPath: "build/make",
+            sourcePath: "core/root.mk",
+            sourceType: "file",
+            mode: "copy",
+            sha256: sha256("root-make\n"),
+          },
+          {
+            path: "Android.bp",
+            projectPath: "build/soong",
+            sourcePath: "root.bp",
+            sourceType: "file",
+            mode: "link",
+            sha256: sha256("root-blueprint\n"),
+          },
+        ],
+      };
+      expect(assertClosedAospSourceRoot(contract)).toMatchObject({
+        projectCount: 2,
+      });
+
+      await writeFile(join(root, "buildspec.mk"), "ROGUE := true\n");
+      expect(() => assertClosedAospSourceRoot(contract)).toThrow(
+        "unlocked entry: buildspec.mk",
+      );
+      await rm(join(root, "buildspec.mk"));
+
+      await mkdir(join(root, "vendor/foo"));
+      await writeFile(join(root, "vendor/foo/Android.bp"), "rogue_module {}\n");
+      expect(() => assertClosedAospSourceRoot(contract)).toThrow(
+        "unlocked entry: vendor/foo",
+      );
+      await rm(join(root, "vendor/foo"), { recursive: true });
+
+      expect(() =>
+        assertClosedAospSourceRoot({
+          ...contract,
+          outRoot: join(root, ".repo/out"),
+        }),
+      ).toThrow("OUT_DIR overlaps source or repo metadata");
+      expect(() =>
+        assertClosedAospSourceRoot({ ...contract, outRoot: root }),
+      ).toThrow("OUT_DIR overlaps source or repo metadata");
+
+      expect(() =>
+        assertClosedAospSourceRoot({
+          ...contract,
+          projectPaths: [...contract.projectPaths, "build/make"],
+        }),
+      ).toThrow("duplicate paths");
+      expect(() =>
+        assertClosedAospSourceRoot({
+          ...contract,
+          projectPaths: [...contract.projectPaths, ".repo/projects/rogue"],
+        }),
+      ).toThrow("unsafe path: .repo/projects/rogue");
+      expect(() =>
+        assertClosedAospSourceRoot({
+          ...contract,
+          rootEntries: [
+            {
+              ...contract.rootEntries[0],
+              path: ".repo/manifest.xml",
+            },
+          ],
+        }),
+      ).toThrow("invalid root entry");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the grizzly handoff rejects vendor symlinks into repo metadata or output", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eliza-grizzly-source-links-"));
+    try {
+      const vendor = join(root, "vendor/eliza");
+      const repoMetadata = join(root, ".repo/project-objects");
+      const out = join(root, "out/target/product/grizzly");
+      await mkdir(vendor, { recursive: true });
+      await mkdir(repoMetadata, { recursive: true });
+      await mkdir(out, { recursive: true });
+      await writeFile(join(repoMetadata, "metadata.bp"), "metadata\n");
+      await writeFile(join(out, "generated.bp"), "generated\n");
+
+      await symlink(
+        join(repoMetadata, "metadata.bp"),
+        join(vendor, "metadata.bp"),
+      );
+      expect(() =>
+        hashDirectoryTree(vendor, root, [
+          join(root, ".repo"),
+          join(root, "out"),
+        ]),
+      ).toThrow("targets excluded AOSP metadata or output");
+
+      await rm(join(vendor, "metadata.bp"));
+      await symlink(join(out, "generated.bp"), join(vendor, "generated.bp"));
+      expect(() =>
+        hashDirectoryTree(vendor, root, [
+          join(root, ".repo"),
+          join(root, "out"),
+        ]),
+      ).toThrow("targets excluded AOSP metadata or output");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the grizzly handoff accepts repo's standard generated manifest selector", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "eliza-grizzly-manifest-selector-"),
+    );
+    try {
+      const manifests = join(root, ".repo/manifests");
+      await mkdir(manifests, { recursive: true });
+      await writeFile(join(manifests, "default.xml"), "<manifest />\n");
+      await writeFile(
+        join(root, ".repo/manifest.xml"),
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          "<!-- DO NOT EDIT: generated by repo -->",
+          "<manifest>",
+          '  <include name="default.xml" />',
+          "</manifest>",
+          "",
+        ].join("\n"),
+      );
+      expect(selectedManifestPath(root, manifests)).toEqual({
+        selectedManifest: join(manifests, "default.xml"),
+        manifestRelative: "default.xml",
+      });
+
+      await writeFile(
+        join(root, ".repo/manifest.xml"),
+        '<manifest><include name="default.xml"/><include name="other.xml"/></manifest>\n',
+      );
+      expect(() => selectedManifestPath(root, manifests)).toThrow(
+        "must contain one exact include",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the grizzly handoff rejects symlinked flash inputs", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eliza-grizzly-bundle-"));
+    const productOut = join(root, "product");
+    try {
+      await mkdir(productOut, { recursive: true });
+      for (const artifact of REQUIRED_GRIZZLY_ARTIFACTS) {
+        await writeFile(
+          join(productOut, artifact),
+          artifact === "fastboot-info.txt"
+            ? validGrizzlyFastbootInfo
+            : `${artifact}\n`,
+        );
+      }
+      await rm(join(productOut, "boot.img"));
+      await symlink(
+        join(productOut, "vbmeta.img"),
+        join(productOut, "boot.img"),
+      );
+      expect(() =>
+        collectGrizzlyArtifacts({
+          productOut,
+          bundleDir: join(root, "bundle"),
+        }),
+      ).toThrow("private non-empty regular file");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the grizzly handoff rejects source aliases and unsafe publication parents", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eliza-grizzly-output-"));
+    try {
+      const source = join(root, "source");
+      const outputParent = join(root, "bundles");
+      await mkdir(join(source, "nested"), { recursive: true, mode: 0o700 });
+      await mkdir(outputParent, { mode: 0o700 });
+      expect(() =>
+        assertBundleOutputLocation({
+          outputDir: join(source, "nested", "bundle"),
+          sourceRoots: [[source, "source"]],
+        }),
+      ).toThrow("outside the source checkout");
+
+      const aliasedParent = join(root, "bundle-alias");
+      await symlink(outputParent, aliasedParent);
+      expect(() =>
+        assertBundleOutputLocation({
+          outputDir: join(aliasedParent, "bundle"),
+          sourceRoots: [[source, "source"]],
+        }),
+      ).toThrow("canonical");
+
+      const existingOutput = join(outputParent, "existing");
+      await mkdir(existingOutput);
+      expect(() =>
+        assertBundleOutputLocation({
+          outputDir: existingOutput,
+          sourceRoots: [[source, "source"]],
+        }),
+      ).toThrow("must not already exist");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("the grizzly handoff requires both APK provenance records", () => {
     expect(assertApkProvenanceEntries([...REQUIRED_APK_PROVENANCE])).toEqual([
       ...REQUIRED_APK_PROVENANCE,
@@ -1468,30 +2061,94 @@ describe("AOSP build contracts", () => {
     expect(() =>
       assertApkProvenanceEntries(["META-INF/eliza/aosp-build-provenance.json"]),
     ).toThrow("assets/agent/android-agent-runtime-provenance.json");
+    expect(() =>
+      assertApkProvenanceEntries([
+        ...REQUIRED_APK_PROVENANCE,
+        REQUIRED_APK_PROVENANCE[0],
+      ]),
+    ).toThrow("exactly once");
   });
 
   test("the grizzly handoff requires a safe dynamic-super flash plan", () => {
     expect(
       assertSafeFlashMetadata({
         androidInfo: "require board=grizzly\n",
-        fastbootInfo:
-          "version 1\nflash boot\nreboot fastboot\nupdate-super\nflash system\n",
+        fastbootInfo: validGrizzlyFastbootInfo,
       }),
-    ).toEqual({ rebootFastbootIndex: 2, updateSuperIndex: 3 });
+    ).toMatchObject({
+      rebootFastbootIndex: 8,
+      updateSuperIndex: 9,
+      terminalRebootAuthority: "fastboot-info",
+    });
     expect(() =>
       assertSafeFlashMetadata({
         androidInfo: "require board=grizzly\n",
-        fastbootInfo:
-          "version 1\nflash system\nreboot fastboot\nupdate-super\n",
+        fastbootInfo: validGrizzlyFastbootInfo.replace(
+          "reboot fastboot\nupdate-super\nflash system",
+          "flash system\nreboot fastboot\nupdate-super",
+        ),
       }),
     ).toThrow("flash system before update-super");
     expect(() =>
       assertSafeFlashMetadata({
         androidInfo: "require board=grizzly\n",
-        fastbootInfo:
-          "version 1\nreboot fastboot\nupdate-super\nerase userdata\n",
+        fastbootInfo: validGrizzlyFastbootInfo.replace(
+          "if-wipe erase userdata",
+          "erase userdata",
+        ),
       }),
     ).toThrow("must not erase userdata or metadata");
+    expect(() =>
+      assertSafeFlashMetadata({
+        androidInfo: "require board=grizzly\n",
+        fastbootInfo: validGrizzlyFastbootInfo.replace(
+          "flash --slot-other system system_other.img\n",
+          "",
+        ),
+      }),
+    ).toThrow("does not reference required flash artifact system_other.img");
+    expect(() =>
+      assertSafeFlashMetadata({
+        androidInfo: "require board=grizzly\n",
+        fastbootInfo: validGrizzlyFastbootInfo.replace("flash pvmfw\n", ""),
+      }),
+    ).toThrow("does not reference required flash artifact pvmfw.img");
+    expect(() =>
+      assertSafeFlashMetadata({
+        androidInfo: "require board=grizzly\n",
+        fastbootInfo: validGrizzlyFastbootInfo.replace(
+          "flash --slot-other system system_other.img",
+          "flash --slot-other vendor system_other.img",
+        ),
+      }),
+    ).toThrow("unsupported --slot-other flash");
+    expect(() =>
+      assertSafeFlashMetadata({
+        androidInfo: "require board=grizzly\n",
+        fastbootInfo: validGrizzlyFastbootInfo.replace(
+          "flash boot",
+          "flash boot ../../host.img",
+        ),
+      }),
+    ).toThrow("unsafe image filename");
+    expect(() =>
+      assertSafeFlashMetadata({
+        androidInfo: "require board=grizzly\n",
+        fastbootInfo: validGrizzlyFastbootInfo.replace(
+          "version 1\n",
+          "version 1\nreboot\n",
+        ),
+      }),
+    ).toThrow("at most one terminal reboot, at the end");
+    expect(() =>
+      assertSafeFlashMetadata({
+        androidInfo: "require board=grizzly\n",
+        fastbootInfo: validGrizzlyFastbootInfo.replace(
+          "flash --apply-vbmeta vbmeta",
+          "flash vbmeta",
+        ),
+      }),
+    ).toThrow("unsafe flash mapping");
   });
 
   test("the grizzly handoff rejects an unsafe or unknown flash authority", () => {

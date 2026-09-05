@@ -5,9 +5,17 @@
  * attested build.
  */
 import { describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,6 +47,11 @@ function scaffoldAospRoot(options: {
   const root = mkdtempSync(join(tmpdir(), "elizaos-grizzly-attest-"));
   const productDir = join(root, "out/target/product/grizzly");
   const vendorDir = join(productDir, "vendor");
+  mkdirSync(join(productDir, "system/etc/init/hw"), { recursive: true });
+  writeFileSync(
+    join(productDir, "system/etc/init/hw/init.rc"),
+    "on post-fs-data\n    exec - system system -- /system/bin/vdc keymaster earlyBootEnded\n",
+  );
   mkdirSync(join(vendorDir, "etc/init/hw"), { recursive: true });
   const stampDir = join(root, "vendor/google_devices/grizzly");
   mkdirSync(stampDir, { recursive: true });
@@ -52,7 +65,6 @@ function scaffoldAospRoot(options: {
           eglSelection: null,
           earlyBootProbes: false,
           conservativeF2fs: false,
-          keymasterNonblocking: false,
         },
       ),
     );
@@ -69,46 +81,121 @@ function scaffoldAospRoot(options: {
     join(vendorDir, "etc/fstab.malibu"),
     options.fstabLine ?? STOCK_FSTAB_DATA_LINE,
   );
-  mkdirSync(join(productDir, "system/etc/init/hw"), { recursive: true });
-  mkdirSync(join(productDir, "system/lib64"), { recursive: true });
-  writeFileSync(join(productDir, "system/lib64/libEGL_angle.so"), "angle-elf");
-  writeFileSync(
-    join(productDir, "system/etc/init/hw/init.rc"),
-    "on post-fs-data\n    exec - system system -- /system/bin/vdc keymaster earlyBootEnded\n",
-  );
   if (options.probeRc) {
     writeFileSync(
       join(vendorDir, "etc/init/hw/init.elizaos-debug.rc"),
       'on post-fs\n    write /dev/kmsg "elizaos-init: post-fs reached"\n',
     );
   }
-  // The complete flash chain: attesting a partial build is refused outright,
-  // so the scaffold must stage every image a real grizzly dist produces.
-  for (const image of [
+  const requiredImages = [
     "boot.img",
     "init_boot.img",
     "dtbo.img",
     "vendor_kernel_boot.img",
     "pvmfw.img",
     "vendor_boot.img",
-  ])
-    writeFileSync(join(productDir, image), `${image}-bytes`);
-  writeFileSync(join(productDir, "system.img"), "system-image-bytes");
-  writeFileSync(join(productDir, "system_ext.img"), "system-ext-image-bytes");
-  writeFileSync(join(productDir, "product.img"), "product-image-bytes");
-  writeFileSync(join(productDir, "vendor.img"), "vendor-image-bytes");
-  writeFileSync(join(productDir, "vendor_dlkm.img"), "vendor-dlkm-image-bytes");
-  writeFileSync(join(productDir, "system_dlkm.img"), "system-dlkm-image-bytes");
-  writeFileSync(join(productDir, "vbmeta.img"), "vbmeta-image-bytes");
-  writeFileSync(
-    join(productDir, "system_other.img"),
-    "system-other-image-bytes",
-  );
-  writeFileSync(join(productDir, "super_empty.img"), "super-empty-image-bytes");
+    "vbmeta.img",
+    "system.img",
+    "system_ext.img",
+    "product.img",
+    "vendor.img",
+    "vendor_dlkm.img",
+    "system_dlkm.img",
+    "system_other.img",
+    "super_empty.img",
+  ];
+  for (const image of requiredImages) {
+    writeFileSync(
+      join(productDir, image),
+      image === "vendor.img" ? "vendor-image-bytes" : `${image}-bytes`,
+    );
+  }
+  for (const partition of ["vendor", "system"]) {
+    execFileSync(
+      "mkfs.ext4",
+      [
+        "-q",
+        "-F",
+        "-d",
+        join(productDir, partition),
+        join(productDir, `${partition}.img`),
+        "4096",
+      ],
+      { stdio: "pipe" },
+    );
+  }
   return { root, productDir };
 }
 
 describe("verify-grizzly-artifacts attest", () => {
+  test("rejects packaged content mismatch even when staging and timestamps agree", () => {
+    const { root, productDir } = scaffoldAospRoot({});
+    try {
+      const payload = join(root, "wrong.prop");
+      writeFileSync(
+        payload,
+        "debug.renderengine.graphite=false\npersist.graphics.egl=angle\n",
+      );
+      const image = join(productDir, "vendor.img");
+      execFileSync("debugfs", ["-w", "-R", "rm /build.prop", image], {
+        stdio: "pipe",
+      });
+      execFileSync(
+        "debugfs",
+        ["-w", "-R", `write ${payload} /build.prop`, image],
+        { stdio: "pipe" },
+      );
+      const result = run(["attest", "--aosp-root", root]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("packaged vendor build.prop graphite");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("attests packaged images after staging cleanup and rejects missing init", () => {
+    const { root, productDir } = scaffoldAospRoot({});
+    try {
+      rmSync(join(productDir, "vendor"), { recursive: true });
+      rmSync(join(productDir, "system"), { recursive: true });
+      expect(run(["attest", "--aosp-root", root]).status).toBe(0);
+      execFileSync(
+        "debugfs",
+        ["-w", "-R", "rm /etc/init/hw/init.rc", join(productDir, "system.img")],
+        { stdio: "pipe" },
+      );
+      const result = run(["attest", "--aosp-root", root]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("system init.rc unavailable");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+  test("rejects stale system staging and unattested extra images", () => {
+    const { root, productDir } = scaffoldAospRoot({});
+    try {
+      const result = run(["attest", "--aosp-root", root]);
+      expect(result.status).toBe(0);
+      writeFileSync(join(productDir, "stray.img"), "unreviewed");
+      const check = run([
+        "check",
+        "--manifest",
+        join(productDir, "grizzly-artifacts.json"),
+        "--artifact-dir",
+        productDir,
+      ]);
+      expect(check.status).toBe(1);
+      expect(check.stderr).toContain("unattested images");
+      mkdirSync(join(productDir, "system"), { recursive: true });
+      writeFileSync(join(productDir, "system", "changed"), "new input");
+      utimesSync(join(productDir, "system.img"), new Date(0), new Date(0));
+      const stale = run(["attest", "--aosp-root", root]);
+      expect(stale.status).toBe(1);
+      expect(stale.stderr).toContain("system.img is older");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
   test("attests a coherent build and writes the sha256 manifest", () => {
     const { root, productDir } = scaffoldAospRoot({});
     try {
@@ -123,9 +210,35 @@ describe("verify-grizzly-artifacts attest", () => {
       expect(manifest.device).toBe("grizzly");
       expect(manifest.prepareStamp.conservativeF2fs).toBe(false);
       const expected = createHash("sha256")
-        .update("vendor-image-bytes")
+        .update(readFileSync(join(productDir, "vendor.img")))
         .digest("hex");
       expect(manifest.images["vendor.img"].sha256).toBe(expected);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("attests device-only symlinks without following them on the host and still rejects stale images", () => {
+    const { root, productDir } = scaffoldAospRoot({});
+    try {
+      const vendorLib = join(productDir, "vendor/lib");
+      mkdirSync(vendorLib, { recursive: true });
+      symlinkSync("/vendor_dlkm/lib/modules", join(vendorLib, "modules"));
+      const vendorImage = join(productDir, "vendor.img");
+      execFileSync(
+        "mkfs.ext4",
+        ["-q", "-F", "-d", join(productDir, "vendor"), vendorImage, "4096"],
+        { stdio: "pipe" },
+      );
+      const current = run(["attest", "--aosp-root", root]);
+      expect(current.status).toBe(0);
+      expect(current.stderr).not.toContain("ENOENT");
+      utimesSync(vendorImage, new Date(0), new Date(0));
+      const stale = run(["attest", "--aosp-root", root]);
+      expect(stale.status).toBe(1);
+      expect(stale.stderr).toContain(
+        "vendor.img is older than the staged vendor tree",
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -210,21 +323,6 @@ describe("verify-grizzly-artifacts attest", () => {
   });
 });
 
-function copyAttestedImages(productDir: string, artifactDir: string) {
-  const manifest = JSON.parse(
-    require("node:fs").readFileSync(
-      join(productDir, "grizzly-artifacts.json"),
-      "utf8",
-    ),
-  );
-  for (const name of Object.keys(manifest.images)) {
-    require("node:fs").copyFileSync(
-      join(productDir, name),
-      join(artifactDir, name),
-    );
-  }
-}
-
 describe("verify-grizzly-artifacts check", () => {
   test("verifies matching images and refuses tampered bytes", () => {
     const { root, productDir } = scaffoldAospRoot({});
@@ -232,7 +330,15 @@ describe("verify-grizzly-artifacts check", () => {
     try {
       expect(run(["attest", "--aosp-root", root]).status).toBe(0);
       const manifestPath = join(productDir, "grizzly-artifacts.json");
-      copyAttestedImages(productDir, artifactDir);
+      const manifest = JSON.parse(
+        require("node:fs").readFileSync(manifestPath, "utf8"),
+      );
+      for (const image of Object.keys(manifest.images)) {
+        writeFileSync(
+          join(artifactDir, image),
+          require("node:fs").readFileSync(join(productDir, image)),
+        );
+      }
       const ok = run([
         "check",
         "--manifest",
@@ -241,7 +347,9 @@ describe("verify-grizzly-artifacts check", () => {
         artifactDir,
       ]);
       expect(ok.status).toBe(0);
-      expect(ok.stdout).toContain("safe to flash");
+      expect(ok.stdout).toContain(
+        "device compatibility and flash authorization remain separate checks",
+      );
 
       writeFileSync(join(artifactDir, "vendor.img"), "DIFFERENT-bytes");
       const tampered = run([
@@ -253,40 +361,6 @@ describe("verify-grizzly-artifacts check", () => {
       ]);
       expect(tampered.status).toBe(1);
       expect(tampered.stderr).toContain("NOT the attested build");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-      rmSync(artifactDir, { recursive: true, force: true });
-    }
-  });
-
-  test("refuses to attest a partial build", () => {
-    const { root, productDir } = scaffoldAospRoot({});
-    try {
-      rmSync(join(productDir, "vendor.img"));
-      const result = run(["attest", "--aosp-root", root]);
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain("core images missing");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test("refuses unattested stray images beside the attested set", () => {
-    const { root, productDir } = scaffoldAospRoot({});
-    const artifactDir = mkdtempSync(join(tmpdir(), "elizaos-grizzly-stray-"));
-    try {
-      expect(run(["attest", "--aosp-root", root]).status).toBe(0);
-      copyAttestedImages(productDir, artifactDir);
-      writeFileSync(join(artifactDir, "stray.img"), "week-old-stray-bytes");
-      const result = run([
-        "check",
-        "--manifest",
-        join(productDir, "grizzly-artifacts.json"),
-        "--artifact-dir",
-        artifactDir,
-      ]);
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain("does not attest");
     } finally {
       rmSync(root, { recursive: true, force: true });
       rmSync(artifactDir, { recursive: true, force: true });

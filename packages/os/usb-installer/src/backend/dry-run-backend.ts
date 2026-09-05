@@ -3,7 +3,6 @@ import type {
   ElizaOsImage,
   InstallerStep,
   RemovableDrive,
-  RestoreCapability,
   UsbInstallerBackend,
   WritePlan,
   WriteRequest,
@@ -208,15 +207,6 @@ export class DryRunUsbInstallerBackend implements UsbInstallerBackend {
     private readonly images: ElizaOsImage[] = DEFAULT_ELIZAOS_IMAGES,
   ) {
     assertValidImageManifest(images);
-  }
-
-  async getRestoreCapability(): Promise<RestoreCapability> {
-    return {
-      supported: false,
-      platform: "unknown",
-      filesystem: null,
-      reason: "Restore USB is disabled in review/demo mode.",
-    };
   }
 
   async listRemovableDrives(): Promise<RemovableDrive[]> {

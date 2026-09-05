@@ -54,6 +54,7 @@ import {
   DEFAULT_BRAND_CONFIG,
   loadBrandConfig,
 } from "../distro-android/brand-config.mjs";
+import { isMainModule } from "../distro-android/is-main.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const osRepoRoot = path.resolve(here, "../..");
@@ -623,7 +624,7 @@ async function main(argv = process.argv.slice(2)) {
   process.exit(ok ? 0 : 1);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta)) {
   main().catch((err) => {
     console.error(err?.stack || String(err));
     process.exit(1);

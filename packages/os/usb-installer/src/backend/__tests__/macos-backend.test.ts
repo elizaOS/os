@@ -7,20 +7,9 @@ import { InvalidDevicePathError, InvalidImagePathError } from "../errors";
 import {
   appleScriptStringEscape,
   deriveRawDisk,
-  MacOsUsbInstallerBackend,
   shellSingleQuote,
   validateImagePath,
 } from "../macos-backend";
-
-it("explicitly reports Restore USB as unsupported on macOS", async () => {
-  await expect(
-    MacOsUsbInstallerBackend.prototype.getRestoreCapability(),
-  ).resolves.toMatchObject({
-    supported: false,
-    platform: "darwin",
-    filesystem: null,
-  });
-});
 
 describe("macos-backend path validation", () => {
   describe("deriveRawDisk", () => {

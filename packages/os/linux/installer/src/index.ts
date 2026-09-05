@@ -33,6 +33,10 @@ export {
   probeLinuxNtfsFilesystem,
   probeLinuxPartitionFilesystems,
 } from "./linux-inventory";
+export type { LogindCommandRunner } from "./linux-logind";
+export { SystemdLogindSessionResolver } from "./linux-logind";
+export type { LinuxPeerCredentialNativeBinding } from "./linux-native-peer";
+export { NativeLinuxUnixPeerCredentialProvider } from "./linux-native-peer";
 export {
   createDiskConfirmationToken,
   createDiskExecutionIdentity,
@@ -56,3 +60,24 @@ export {
   parseLocalInstallExecutionFrame,
 } from "./root-service";
 export type * from "./types";
+export type {
+  KernelBoundPeerProcessHandle,
+  KernelUnixPeerCredentials,
+  LinuxUnixPeerCredentialProvider,
+  LogindSessionResolver,
+  UnixInstallServerOptions,
+  UnixInstallService,
+} from "./unix-transport";
+export {
+  createUnixInstallServer,
+  DEFAULT_EXECUTION_TIMEOUT_MILLISECONDS,
+  DEFAULT_FRAME_TIMEOUT_MILLISECONDS,
+  InstallerRequestGate,
+  LinuxLogindActiveOwnerSessionProvider,
+  listenUnixInstallServer,
+  MAX_EXECUTION_TIMEOUT_MILLISECONDS,
+  MAX_UNIX_INSTALL_FRAME_BYTES,
+  MIN_EXECUTION_TIMEOUT_MILLISECONDS,
+  parseUnixInstallWireFrame,
+  rejectOverloadedUnixSocket,
+} from "./unix-transport";

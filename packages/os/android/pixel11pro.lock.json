@@ -4,6 +4,10 @@
   "manifestRevision": "android-17.0.0_r1",
   "manifestTagObject": "7a9e46ba6ed424f922a3457f4964e67e0b966201",
   "manifestCommit": "5bc9a7ce1cd78dd53613bbfd0ebf506e1e4adb0f",
+  "resolvedManifest": {
+    "path": "packages/os/android/pixel11pro-resolved-manifest.json",
+    "sha256": "01bac1fa7a01e0555e759b41b4ce5160376b630cf7ea5933db9c81e73c5bc9ca"
+  },
   "device": {
     "targetId": "pixel11pro-grizzly",
     "codename": "grizzly",
@@ -13,12 +17,20 @@
     "productName": "eliza_grizzly_phone",
     "expectedFingerprintPrefix": "elizaOS/eliza_grizzly_phone/grizzly:"
   },
+  "avbVerification": [
+    {
+      "image": "vbmeta.img",
+      "keyPath": "external/avb/test/data/testkey_rsa4096.pem",
+      "keySha256": "6a224754880a57ab9cbd308267cd157d94cf05a1c8cb851aec4090e045d24121",
+      "authorization": "public-aosp-userdebug-test-key"
+    }
+  ],
   "externalProjects": [
     {
       "path": "vendor/adevtool",
       "url": "https://github.com/GrapheneOS/adevtool.git",
       "ref": "refs/heads/17",
-      "commit": "b396d9430743905fa56e5ee3e72c161614835cc0",
+      "commit": "144f004cc484d7e7234cdd167cee48e5f240288f",
       "sparsePaths": [
         "assets",
         "bin",
@@ -192,6 +204,16 @@
     ],
     "requiredTextFiles": [
       {
+        "path": "vendor/google_devices/grizzly/BoardConfig.mk",
+        "includes": [
+          "BOARD_SUPER_PARTITION_SIZE := 10737418240",
+          "BOARD_SUPER_PARTITION_ERROR_LIMIT := 10213130240",
+          "BOARD_SUPER_PARTITION_GROUPS := google_dynamic_partitions",
+          "BOARD_GOOGLE_DYNAMIC_PARTITIONS_SIZE := 10733223936",
+          "BOARD_GOOGLE_DYNAMIC_PARTITIONS_PARTITION_LIST := system system_dlkm system_ext product vendor vendor_dlkm"
+        ]
+      },
+      {
         "path": "vendor/google_devices/grizzly/firmware/android-info.txt",
         "includes": [
           "require board=grizzly",
@@ -209,6 +231,11 @@
       }
     ],
     "requiredArtifacts": [
+      {
+        "path": "vendor/google_devices/grizzly/BoardConfig.mk",
+        "sizeBytes": 3622,
+        "sha256": "533bf35c78f073958e82b3138eec378ae7f6f5c25545aa23de1173aa03d1545e"
+      },
       {
         "path": "vendor/google_devices/grizzly/stock-kernel/Image.lz4",
         "sizeBytes": 20230712,

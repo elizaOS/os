@@ -155,21 +155,26 @@ and Google's [Pixel driver binaries](https://developers.google.com/android/drive
 
 ### Pixel 11 Pro (`grizzly`) generated device support
 
-Google has not published the traditional Pixel 11 device/kernel project set.
-`pixel11pro.lock.json` therefore pins a reproducible generated-device path:
+This repository does not yet have a verified, source-built Pixel 11 device
+kernel integration. `pixel11pro.lock.json` pins a generated-device path:
 Android 17 r1, GrapheneOS `adevtool`, GrapheneOS `vendor_state`, and Google's
-A9 factory image matching the lab phone for both generation and rollback. The
+A9 factory image for generation and the declared rollback archive. The
 first bring-up deliberately uses the stock `spacecraft` kernel, modules, DTB,
-and DTBO extracted by `adevtool`; it does not treat the missing public kernel
-source as reconstructed source.
+and DTBO extracted by `adevtool`. Reconfirm the phone's actual firmware and
+rollback constraints before flashing. See the
+[September 4 upstream audit](docs/pixel11-upstream-audit-2026-09-04.md) for new
+GrapheneOS kernel work, QPR2 Beta 4 controls and the corrected super-partition
+contract; these developments do not establish a booted elizaOS image.
 
 Use the dedicated Linux x86_64 builder specified in
 [`docs/grizzly-build-handoff.md`](docs/grizzly-build-handoff.md); the production
-lane requires at least 32 physical cores, 128 GB RAM, and 1.5 TB fast local
-storage:
+lane requires at least 32 physical cores, 128 GiB RAM, 1.5 TB fast local
+storage, and 600 GiB free at bundle start:
 
 ```bash
 make -C packages/os/android bootstrap-grizzly \
+  AOSP_GRIZZLY_ROOT=/build/aosp-grizzly
+make -C packages/os/android preflight-grizzly \
   AOSP_GRIZZLY_ROOT=/build/aosp-grizzly
 make -C packages/os/android prepare-grizzly \
   AOSP_GRIZZLY_ROOT=/build/aosp-grizzly
@@ -187,10 +192,21 @@ Preparation uses sparse exact-commit Git checkouts for the generation inputs,
 runs `adevtool generate-all -d grizzly`, verifies the required output, and
 retains and verifies both factory images. Downloads are governed by Google's
 Pixel factory-image terms, which `adevtool` displays before download. The
-bundle target completes the full `dist` build while also building the pinned
-`host_init_verifier` and `checkvintf` host tools, verifies `vbmeta.img` with the
-built `avbtool`, refuses dirty source trees or a missing flash input or
-privileged APK, and emits exact source identities, SHA-256 values, and sizes.
+bundle target completes explicit `droidcore`, `dist`,
+host init verifier, and `check-vintf-all` gates, retains their command
+and product-output receipts, and verifies every referenced vbmeta image with
+the built `avbtool` against a lock-authorized key.
+It validates the generated dynamic-super flash plan, binds the privileged APK
+and its embedded runtime provenance to the Eliza commit and checked-out AOSP
+platform certificate, and compares pre/post AOSP-project and vendor source
+snapshots without executing the mutable `repo` implementation. The collector
+requires an authoritative resolved-project manifest digest in the source lock
+and rejects local manifests; it fails closed while that reviewed artifact is
+absent. It rejects any
+unstable or missing input, publishes only a complete recursively synced bundle
+from private staging without replacing an existing path, and emits exact
+source identities, retained gate receipts, builder facts, SHA-256 values, and
+sizes.
 `SOURCE_DATE_EPOCH` is mandatory so the handoff metadata is reproducible. Sign
 `SHA256SUMS` only with the separately provisioned offline release key; this
 command never generates or accepts private signing material. The generated

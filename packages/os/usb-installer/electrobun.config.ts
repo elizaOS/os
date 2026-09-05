@@ -3,6 +3,10 @@ import type { ElectrobunConfig } from "electrobun/bun";
 
 const releasePublicKey =
   process.env.ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64;
+const releasePublicKeyFingerprint =
+  process.env.ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256;
+const revokedReleaseKeyFingerprints =
+  process.env.ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S ?? "";
 
 export default {
   app: {
@@ -15,12 +19,17 @@ export default {
     bun: {
       // Electrobun's launcher loads Resources/app/bun/index.js.
       entrypoint: "electrobun/index.ts",
-      define: releasePublicKey
-        ? {
-            __ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64__:
-              JSON.stringify(releasePublicKey),
-          }
-        : {},
+      define:
+        releasePublicKey && releasePublicKeyFingerprint
+          ? {
+              __ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64__:
+                JSON.stringify(releasePublicKey),
+              __ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256__:
+                JSON.stringify(releasePublicKeyFingerprint),
+              __ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S__:
+                JSON.stringify(revokedReleaseKeyFingerprints),
+            }
+          : {},
     },
     bunVersion: "1.3.14",
     views: {},

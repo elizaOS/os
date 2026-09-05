@@ -85,7 +85,8 @@ export function validateDiskInventory(disk: DiskInventory): void {
     throw new Error("Kernel device identity must be non-empty when present.");
   }
   if (
-    !disk.hardwareIdentity.serial.trim() ||
+    (!disk.hardwareIdentity.serial.trim() &&
+      !disk.hardwareIdentity.wwn?.trim()) ||
     !disk.hardwareIdentity.firmwarePath.trim() ||
     (disk.hardwareIdentity.wwn !== undefined &&
       !disk.hardwareIdentity.wwn.trim()) ||
@@ -95,7 +96,7 @@ export function validateDiskInventory(disk: DiskInventory): void {
       ))
   ) {
     throw new Error(
-      "Disk serial, firmware path, optional WWN, and optional GPT GUID must be exact hardware identity values.",
+      "Disk durable WWN/serial, firmware path, and optional GPT GUID must be exact hardware identity values.",
     );
   }
   assertSafeInteger("disk.sizeBytes", disk.sizeBytes);
@@ -319,14 +320,16 @@ export function createDiskConfirmationToken(disk: DiskInventory): string {
  */
 export function createDiskExecutionIdentity(disk: DiskInventory): string {
   validateDiskInventory(disk);
+  const serial = disk.hardwareIdentity.serial.trim().toLowerCase();
+  if (!serial) {
+    throw new Error(
+      "Privileged disk execution requires a durable serial hardware identity.",
+    );
+  }
   return sha256(
     JSON.stringify({
-      schemaVersion: 1,
-      serial: disk.hardwareIdentity.serial,
-      wwn: disk.hardwareIdentity.wwn ?? null,
-      firmwarePath: disk.hardwareIdentity.firmwarePath,
-      sizeBytes: disk.sizeBytes,
-      logicalSectorBytes: disk.logicalSectorBytes,
+      schemaVersion: 2,
+      durableIdentity: { kind: "serial", value: serial },
     }),
   );
 }

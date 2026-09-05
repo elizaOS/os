@@ -6,6 +6,8 @@ from __future__ import annotations
 from pathlib import Path
 import hashlib
 import json
+import re
+import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -98,6 +100,55 @@ ARCH_RUNTIME_EVIDENCE_REQUIREMENTS = {
         "terminal TUI smoke marker reported",
     ),
 }
+MATRIX_RUNTIME_EVIDENCE_SCHEMA = "eliza.os.linux.multiarch_boot_evidence.v1"
+MATRIX_RUNTIME_CLAIM_BOUNDARY = (
+    "qemu_boot_transcript_static_verification_only_no_physical_hardware_or_silicon_claim"
+)
+MATRIX_RUNTIME_EVIDENCE_FIELDS = frozenset(
+    {
+        "schema", "claim_boundary", "arch", "os_commit", "source_commit",
+        "runtime_version", "iso_path", "iso_sha256", "qemu_executable",
+        "qemu_version", "firmware_identity", "firmware_version", "firmware_path",
+        "firmware_sha256", "transcript_path", "transcript_sha256", "transcript_size",
+        "tool_inputs_sha256", "boot_completed", "markers_found", "markers_missing",
+        "forbidden_markers_present",
+    }
+)
+MATRIX_RUNTIME_MARKERS = (
+    "Linux version",
+    "elizaos-firstboot-ready",
+    "elizaos-curl-health-ready",
+    "elizaos-agent-ready",
+    "elizaos-terminal-tui-ready",
+)
+MATRIX_RUNTIME_ARCH_MARKERS = {
+    "amd64": MATRIX_RUNTIME_MARKERS,
+    "arm64": MATRIX_RUNTIME_MARKERS,
+    "riscv64": (*MATRIX_RUNTIME_MARKERS, "GNU GRUB"),
+}
+MATRIX_FORBIDDEN_TRANSCRIPT_MARKERS = (
+    "Kernel panic",
+    "Entering emergency mode",
+    "Illegal instruction",
+    "unhandled signal 4",
+)
+MATRIX_QEMU_EXECUTABLES = {
+    "amd64": "qemu-system-x86_64",
+    "arm64": "qemu-system-aarch64",
+    "riscv64": "qemu-system-riscv64",
+}
+MATRIX_FIRMWARE_IDENTITIES = {
+    "amd64": "OVMF",
+    "arm64": "AAVMF",
+    "riscv64": "RISCV_VIRT",
+}
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+VERSION_PATTERN = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$")
+QEMU_VERSION_PATTERN = re.compile(
+    r"^QEMU emulator version [0-9]+\.[0-9]+(?:\.[0-9]+)?"
+    r"(?:[-+~.][0-9A-Za-z.+~-]+)?(?: \([^\r\n]+\))?$"
+)
 BLOCKING_GAP_PATTERNS = (
     "fallback agent",
     "missing-current-iso-evidence",
@@ -163,6 +214,342 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _repo_path(value: str) -> Path | None:
+    """Resolve a recorded repo path without permitting traversal or symlinks."""
+    if not isinstance(value, str) or not value:
+        return None
+    relative = Path(value)
+    if relative.is_absolute() or ".." in relative.parts:
+        return None
+    candidate = ROOT.resolve()
+    for part in relative.parts:
+        if part in ("", "."):
+            continue
+        candidate /= part
+        try:
+            if candidate.is_symlink():
+                return None
+        except OSError:
+            return None
+    return candidate
+
+
+def _current_os_commit() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError("cannot resolve current repository HEAD") from exc
+    commit = result.stdout.strip()
+    if COMMIT_PATTERN.fullmatch(commit) is None:
+        raise RuntimeError("current repository HEAD is not a clean 40-hex commit")
+    try:
+        status = subprocess.run(
+            [
+                "git", "-C", str(ROOT), "status", "--porcelain=v1",
+                "--untracked-files=all",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError("cannot verify repository cleanliness at current HEAD") from exc
+    if status.stdout:
+        raise RuntimeError(
+            "repository must have no staged, unstaged, or non-ignored untracked changes at current HEAD"
+        )
+    return commit
+
+
+def _locked_source_commit() -> str:
+    relative = "app-source.lock.json"
+    lock_path = _repo_path(relative)
+    if lock_path is None or not lock_path.is_file():
+        raise RuntimeError("app-source.lock.json is missing or unsafe")
+    try:
+        subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "--error-unmatch", relative],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(ROOT), "diff", "--quiet", "HEAD", "--", relative],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError(
+            "app-source.lock.json must be tracked and clean at current HEAD"
+        ) from exc
+    try:
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("cannot read app-source.lock.json") from exc
+    expected_fields = {"schema", "repository", "commit", "buildInfoPath"}
+    if not isinstance(lock, dict) or set(lock) != expected_fields:
+        raise RuntimeError("app-source.lock.json fields do not match the established schema")
+    if lock["schema"] != "eliza.os.linux.app-source-lock.v1":
+        raise RuntimeError("app-source.lock.json schema identity is invalid")
+    if lock["repository"] != "https://github.com/elizaOS/eliza":
+        raise RuntimeError("app-source.lock.json repository identity is invalid")
+    if lock["buildInfoPath"] != "Resources/app/eliza-dist/build-info.json":
+        raise RuntimeError("app-source.lock.json buildInfoPath identity is invalid")
+    commit = lock["commit"]
+    if not isinstance(commit, str) or COMMIT_PATTERN.fullmatch(commit) is None:
+        raise RuntimeError("app-source.lock.json commit is not a clean 40-hex commit")
+    return commit
+
+
+def _authorized_runtime_input_hashes(errors: list[str], arch: str) -> set[str] | None:
+    relative = "config/multiarch-runtime-tool-inputs.lock.json"
+    path = _repo_path(relative)
+    if path is None or not path.is_file():
+        errors.append(f"multiarch runtime tool-input authorization is missing or unsafe: {relative}")
+        return None
+    try:
+        subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "--error-unmatch", relative],
+            check=True, capture_output=True, text=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(ROOT), "diff", "--quiet", "HEAD", "--", relative],
+            check=True, capture_output=True, text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        errors.append(
+            "multiarch runtime tool-input authorization must be tracked and clean at current HEAD"
+        )
+        return None
+    try:
+        policy = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        errors.append(f"multiarch runtime tool-input authorization is invalid JSON: {exc}")
+        return None
+    if not isinstance(policy, dict) or set(policy) != {"schema", "authorized_sha256"}:
+        errors.append("multiarch runtime tool-input authorization fields mismatch")
+        return None
+    if policy["schema"] != "eliza.os.linux.runtime_tool_input_authorization.v1":
+        errors.append("multiarch runtime tool-input authorization schema mismatch")
+        return None
+    profiles = policy["authorized_sha256"]
+    if not isinstance(profiles, dict) or set(profiles) != set(MATRIX_RUNTIME_ARCH_MARKERS):
+        errors.append("multiarch runtime tool-input authorization architecture set mismatch")
+        return None
+    hashes = profiles[arch]
+    if (
+        not isinstance(hashes, list)
+        or any(not isinstance(value, str) or SHA256_PATTERN.fullmatch(value) is None for value in hashes)
+        or len(hashes) != len(set(hashes))
+    ):
+        errors.append(f"multiarch runtime tool-input authorization {arch} hashes are invalid")
+        return None
+    return set(hashes)
+
+
+def _runtime_input_lock(errors: list[str], arch: str, evidence_path: Path, expected_sha: object) -> dict | None:
+    lock_path = evidence_path.with_suffix(".tool-inputs.json")
+    relative_lock = lock_path.relative_to(ROOT.resolve()).as_posix()
+    safe_lock = _repo_path(relative_lock)
+    if safe_lock is None or not safe_lock.is_file():
+        errors.append(
+            f"multiarch boot matrix {arch} runtime tool-input lock missing or unsafe: {relative_lock}"
+        )
+        return None
+    try:
+        lock_bytes = safe_lock.read_bytes()
+        lock = json.loads(lock_bytes.decode("utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        errors.append(f"multiarch boot matrix {arch} runtime tool-input lock is invalid JSON: {exc}")
+        return None
+    actual_sha = hashlib.sha256(lock_bytes).hexdigest()
+    require(errors, isinstance(expected_sha, str) and SHA256_PATTERN.fullmatch(expected_sha) is not None,
+            f"multiarch boot matrix {arch} evidence tool_inputs_sha256 is invalid")
+    require(errors, expected_sha == actual_sha,
+            f"multiarch boot matrix {arch} runtime tool-input lock sha256 mismatch")
+    authorized = _authorized_runtime_input_hashes(errors, arch)
+    if authorized is not None:
+        require(errors, actual_sha in authorized,
+                f"multiarch boot matrix {arch} runtime tool-input lock is not authorized by current HEAD")
+    expected_fields = {
+        "schema", "arch", "runtime_version", "qemu_executable", "qemu_version",
+        "firmware_identity", "firmware_version", "firmware_path", "firmware_sha256",
+    }
+    if not isinstance(lock, dict) or set(lock) != expected_fields:
+        errors.append(f"multiarch boot matrix {arch} runtime tool-input lock fields mismatch")
+        return None
+    require(errors, lock["schema"] == "eliza.os.linux.runtime_tool_inputs.v1",
+            f"multiarch boot matrix {arch} runtime tool-input lock schema mismatch")
+    require(errors, lock["arch"] == arch,
+            f"multiarch boot matrix {arch} runtime tool-input lock arch mismatch")
+    return lock
+
+
+def _transcript_has_marker(transcript: str, marker: str) -> bool:
+    """Require a concrete console line, not prose which happens to name a marker."""
+    escaped = re.escape(marker)
+    if marker == "Linux version":
+        pattern = rf"^(?:\[[^\]\n]+\]\s*)?{escaped}\b"
+    elif marker == "GNU GRUB":
+        pattern = rf"^\s*{escaped}(?:\s+version\b|\s*$)"
+    else:
+        pattern = rf"^\s*{escaped}\s*$"
+    return re.search(pattern, transcript, flags=re.MULTILINE) is not None
+
+
+def validate_runtime_evidence(errors: list[str], arch: str, row: dict) -> None:
+    """Statically verify retained QEMU evidence; this does not claim a new boot."""
+    evidence_value = row.get("evidence")
+    if not isinstance(evidence_value, str) or not evidence_value:
+        return
+    evidence_path = _repo_path(evidence_value)
+    if evidence_path is None:
+        errors.append(f"multiarch boot matrix {arch} evidence path is outside the repository")
+        return
+    if not evidence_path.is_file() or evidence_path.is_symlink():
+        errors.append(
+            f"multiarch boot matrix {arch} evidence artifact missing or unsafe: {evidence_value}"
+        )
+        return
+    try:
+        document = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        errors.append(f"multiarch boot matrix {arch} evidence is invalid JSON: {exc}")
+        return
+    if not isinstance(document, dict):
+        errors.append(f"multiarch boot matrix {arch} evidence must be a JSON object")
+        return
+    missing = sorted(MATRIX_RUNTIME_EVIDENCE_FIELDS - set(document))
+    unexpected = sorted(set(document) - MATRIX_RUNTIME_EVIDENCE_FIELDS)
+    require(errors, not missing, f"multiarch boot matrix {arch} evidence missing fields: {missing}")
+    require(errors, not unexpected,
+            f"multiarch boot matrix {arch} evidence has unexpected fields: {unexpected}")
+    if missing or unexpected:
+        return
+
+    require(errors, document["schema"] == MATRIX_RUNTIME_EVIDENCE_SCHEMA,
+            f"multiarch boot matrix {arch} evidence schema mismatch")
+    require(errors, document["claim_boundary"] == MATRIX_RUNTIME_CLAIM_BOUNDARY,
+            f"multiarch boot matrix {arch} evidence claim_boundary mismatch")
+    require(errors, document["arch"] == arch,
+            f"multiarch boot matrix {arch} evidence arch mismatch")
+
+    for field in ("os_commit", "source_commit"):
+        value = document[field]
+        require(errors, isinstance(value, str) and COMMIT_PATTERN.fullmatch(value) is not None,
+                f"multiarch boot matrix {arch} evidence {field} must be a clean 40-hex commit")
+        require(errors, value == row.get(field),
+                f"multiarch boot matrix {arch} evidence {field} does not match matrix row")
+    try:
+        current_commit = _current_os_commit()
+    except RuntimeError as exc:
+        errors.append(f"multiarch boot matrix {arch} evidence cannot bind os_commit: {exc}")
+    else:
+        require(errors, document["os_commit"] == current_commit,
+                f"multiarch boot matrix {arch} evidence os_commit is not current repository HEAD")
+    try:
+        locked_source_commit = _locked_source_commit()
+    except RuntimeError as exc:
+        errors.append(f"multiarch boot matrix {arch} evidence cannot bind source_commit: {exc}")
+    else:
+        require(errors, document["source_commit"] == locked_source_commit,
+                f"multiarch boot matrix {arch} evidence source_commit does not match app-source.lock.json")
+
+    tool_lock = _runtime_input_lock(errors, arch, evidence_path, document["tool_inputs_sha256"])
+
+    runtime_version = document["runtime_version"]
+    require(errors, isinstance(runtime_version, str)
+            and VERSION_PATTERN.fullmatch(runtime_version) is not None,
+            f"multiarch boot matrix {arch} evidence runtime_version is invalid")
+    require(errors, runtime_version == row.get("runtime_version"),
+            f"multiarch boot matrix {arch} evidence runtime_version does not match matrix row")
+    if tool_lock is not None:
+        for field in (
+            "runtime_version", "qemu_executable", "qemu_version", "firmware_identity",
+            "firmware_version", "firmware_path", "firmware_sha256",
+        ):
+            require(errors, document[field] == tool_lock[field],
+                    f"multiarch boot matrix {arch} evidence {field} does not match runtime tool-input lock")
+
+    iso_path = _repo_path(document["iso_path"])
+    require(errors, document["iso_path"] == row.get("iso"),
+            f"multiarch boot matrix {arch} evidence iso_path does not match matrix row")
+    require(errors, isinstance(document["iso_sha256"], str)
+            and SHA256_PATTERN.fullmatch(document["iso_sha256"]) is not None
+            and document["iso_sha256"] == row.get("sha256"),
+            f"multiarch boot matrix {arch} evidence ISO sha256 does not match matrix row")
+    if iso_path is None or not iso_path.is_file() or iso_path.is_symlink():
+        errors.append(f"multiarch boot matrix {arch} evidence ISO path is missing or unsafe")
+    elif document["iso_sha256"] != sha256_file(iso_path):
+        errors.append(f"multiarch boot matrix {arch} evidence ISO sha256 does not match ISO bytes")
+
+    require(errors, document["qemu_executable"] == MATRIX_QEMU_EXECUTABLES[arch],
+            f"multiarch boot matrix {arch} evidence qemu_executable mismatch")
+    require(errors, isinstance(document["qemu_version"], str)
+            and QEMU_VERSION_PATTERN.fullmatch(document["qemu_version"]) is not None,
+            f"multiarch boot matrix {arch} evidence qemu_version is invalid")
+    require(errors, document["firmware_identity"] == MATRIX_FIRMWARE_IDENTITIES[arch],
+            f"multiarch boot matrix {arch} evidence firmware_identity mismatch")
+    require(errors, isinstance(document["firmware_version"], str)
+            and VERSION_PATTERN.fullmatch(document["firmware_version"]) is not None,
+            f"multiarch boot matrix {arch} evidence firmware_version is invalid")
+    firmware_path = _repo_path(document["firmware_path"])
+    firmware_sha = document["firmware_sha256"]
+    require(errors, isinstance(firmware_sha, str) and SHA256_PATTERN.fullmatch(firmware_sha) is not None,
+            f"multiarch boot matrix {arch} evidence firmware_sha256 is invalid")
+    if firmware_path is None or not firmware_path.is_file() or firmware_path.is_symlink():
+        errors.append(f"multiarch boot matrix {arch} evidence firmware path is missing or unsafe")
+    elif firmware_sha != sha256_file(firmware_path):
+        errors.append(f"multiarch boot matrix {arch} evidence firmware sha256 mismatch")
+
+    transcript_path = _repo_path(document["transcript_path"])
+    transcript_sha = document["transcript_sha256"]
+    transcript_size = document["transcript_size"]
+    require(errors, isinstance(transcript_sha, str)
+            and SHA256_PATTERN.fullmatch(transcript_sha) is not None,
+            f"multiarch boot matrix {arch} evidence transcript_sha256 is invalid")
+    require(errors, isinstance(transcript_size, int) and not isinstance(transcript_size, bool)
+            and transcript_size > 0,
+            f"multiarch boot matrix {arch} evidence transcript_size must be a positive integer")
+    transcript_text = ""
+    if transcript_path is None or not transcript_path.is_file() or transcript_path.is_symlink():
+        errors.append(f"multiarch boot matrix {arch} evidence transcript path is missing or unsafe")
+    else:
+        transcript_bytes = transcript_path.read_bytes()
+        require(errors, transcript_sha == hashlib.sha256(transcript_bytes).hexdigest(),
+                f"multiarch boot matrix {arch} evidence transcript sha256 mismatch")
+        require(errors, transcript_size == len(transcript_bytes),
+                f"multiarch boot matrix {arch} evidence transcript size mismatch")
+        transcript_text = transcript_bytes.decode("utf-8", errors="replace")
+
+    require(errors, document["boot_completed"] is True,
+            f"multiarch boot matrix {arch} evidence boot_completed must be true")
+    found = document["markers_found"]
+    require(errors, isinstance(found, list) and all(isinstance(marker, str) for marker in found),
+            f"multiarch boot matrix {arch} evidence markers_found must be a string array")
+    require(errors, document["markers_missing"] == [],
+            f"multiarch boot matrix {arch} evidence markers_missing must be empty")
+    require(errors, document["forbidden_markers_present"] == [],
+            f"multiarch boot matrix {arch} evidence forbidden_markers_present must be empty")
+    if isinstance(found, list):
+        require(errors, len(found) == len(set(found)),
+                f"multiarch boot matrix {arch} evidence markers_found contains duplicates")
+        for marker in MATRIX_RUNTIME_ARCH_MARKERS[arch]:
+            require(errors, marker in found,
+                    f"multiarch boot matrix {arch} evidence missing marker: {marker}")
+            require(errors, _transcript_has_marker(transcript_text, marker),
+                    f"multiarch boot matrix {arch} transcript missing marker: {marker}")
+    for marker in MATRIX_FORBIDDEN_TRANSCRIPT_MARKERS:
+        require(errors, marker not in transcript_text,
+                f"multiarch boot matrix {arch} transcript contains forbidden marker: {marker}")
 
 
 def validate_runtime_artifacts(errors: list[str], matrix: dict) -> None:
@@ -333,7 +720,8 @@ def validate_runtime_matrix(errors: list[str], matrix: dict) -> None:
         )
         require(
             errors,
-            isinstance(row.get("sha256"), str) and len(row["sha256"]) == 64,
+            isinstance(row.get("sha256"), str)
+            and SHA256_PATTERN.fullmatch(row["sha256"]) is not None,
             f"multiarch boot matrix {arch} must record a 64-hex-character ISO sha256",
         )
         require(
@@ -341,6 +729,15 @@ def validate_runtime_matrix(errors: list[str], matrix: dict) -> None:
             isinstance(row.get("evidence"), str) and bool(row["evidence"]),
             f"multiarch boot matrix {arch} must record boot evidence",
         )
+        require(errors, isinstance(row.get("os_commit"), str)
+                and COMMIT_PATTERN.fullmatch(row["os_commit"]) is not None,
+                f"multiarch boot matrix {arch} must record a clean 40-hex os_commit")
+        require(errors, isinstance(row.get("source_commit"), str)
+                and COMMIT_PATTERN.fullmatch(row["source_commit"]) is not None,
+                f"multiarch boot matrix {arch} must record a clean 40-hex source_commit")
+        require(errors, isinstance(row.get("runtime_version"), str)
+                and VERSION_PATTERN.fullmatch(row["runtime_version"]) is not None,
+                f"multiarch boot matrix {arch} must record a runtime_version")
         iso = row.get("iso")
         expected_iso_sha = row.get("sha256")
         evidence = row.get("evidence")
@@ -348,27 +745,22 @@ def validate_runtime_matrix(errors: list[str], matrix: dict) -> None:
             isinstance(iso, str)
             and iso
             and isinstance(expected_iso_sha, str)
-            and len(expected_iso_sha) == 64
+            and SHA256_PATTERN.fullmatch(expected_iso_sha) is not None
         ):
-            iso_path = ROOT / iso
+            iso_path = _repo_path(iso)
             require(
                 errors,
-                iso_path.is_file(),
-                f"multiarch boot matrix {arch} ISO artifact missing: {iso}",
+                iso_path is not None and iso_path.is_file(),
+                f"multiarch boot matrix {arch} ISO artifact missing or unsafe: {iso}",
             )
-            if iso_path.is_file():
+            if iso_path is not None and iso_path.is_file():
                 actual_iso_sha = sha256_file(iso_path)
                 require(
                     errors,
                     actual_iso_sha == expected_iso_sha,
                     f"multiarch boot matrix {arch} ISO sha256 mismatch: {actual_iso_sha}",
                 )
-        if isinstance(evidence, str) and evidence:
-            require(
-                errors,
-                (ROOT / evidence).is_file(),
-                f"multiarch boot matrix {arch} evidence artifact missing: {evidence}",
-            )
+        validate_runtime_evidence(errors, arch, row)
         proves = set(row.get("proves", [])) if isinstance(row.get("proves"), list) else set()
         for proof in required_proofs:
             require(

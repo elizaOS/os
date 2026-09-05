@@ -13,7 +13,7 @@ format, and boot chain.
 | Sandboxing | SELinux `untrusted_app` + seccomp | systemd unit + namespaces |
 | Distribution | OTA / sideload | USB installer / OTA |
 | Supported arches | arm64-v8a, x86_64, riscv64 | x86_64, arm64, riscv64 build targets of the same Debian fork |
-| Real-device targets | Pixel (oriole/panther/shiba/caiman/tegu), e1 SoC | any UEFI x86_64 / riscv64 SBC |
+| Real-device targets | Pixel (oriole/panther/shiba/caiman/tegu), e1 SoC | individually qualified x86_64 systems; no physical riscv64 board is qualified yet |
 | Virtual targets | Cuttlefish (`vsoc_x86_64_only`, `vsoc_riscv64_only`) | QEMU virt + UEFI |
 
 ## What is shared
@@ -23,7 +23,7 @@ Both forks consume the same code for everything above the OS layer:
 - **Native plugins** — the external `eliza` repository owns
   `packages/native/plugins/{qjl-cpu, polarquant-cpu,
   turboquant-cpu, silero-vad-cpp, wakeword-cpp, voice-classifier-cpp,
-  doctr-cpp, face-cpp, yolo-cpp, llama}`. One CMakeLists per plugin
+  doctr-cpp, face-cpp, llama}`. One CMakeLists per plugin
   with arch-conditional source-set selection (Wave 1 scalar + Wave 3
   RVV intrinsics). This repository owns OS cross-toolchain files at
   `packages/os/toolchains/cmake/toolchain-*`, covering

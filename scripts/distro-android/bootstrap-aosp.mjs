@@ -183,6 +183,34 @@ export function loadAospLock(filePath = aospLockPath) {
       fail(`invalid ${field} in ${filePath}`);
     }
   }
+  if (lock.avbVerification !== undefined) {
+    const entries = lock.avbVerification;
+    if (
+      !Array.isArray(entries) ||
+      entries.length === 0 ||
+      entries.some(
+        (entry) =>
+          typeof entry?.image !== "string" ||
+          path.basename(entry.image) !== entry.image ||
+          !/^vbmeta(?:_[A-Za-z0-9._+-]+)?\.img$/.test(entry.image) ||
+          !safeRelativePath(entry?.keyPath) ||
+          !/^[0-9a-f]{64}$/.test(entry?.keySha256 ?? "") ||
+          entry.keySha256 === "0".repeat(64) ||
+          entry.authorization !== "public-aosp-userdebug-test-key",
+      ) ||
+      new Set(entries.map((entry) => entry.image)).size !== entries.length
+    ) {
+      fail(`invalid avbVerification in ${filePath}`);
+    }
+  }
+  if (
+    lock.resolvedManifest !== undefined &&
+    (!safeRelativePath(lock.resolvedManifest?.path) ||
+      !/^[0-9a-f]{64}$/.test(lock.resolvedManifest?.sha256 ?? "") ||
+      lock.resolvedManifest.sha256 === "0".repeat(64))
+  ) {
+    fail(`invalid resolvedManifest in ${filePath}`);
+  }
   if (lock.generatedVendor !== undefined) {
     const generated = lock.generatedVendor;
     if (

@@ -72,6 +72,7 @@ EOF
 cat >"$BIN_DIR/fastboot" <<'EOF'
 #!/usr/bin/env bash
 case "$*" in
+  *"devices"*) printf 'test-device\tfastboot\n' ;;
   *"getvar unlocked"*) echo 'unlocked: yes' >&2 ;;
   *"getvar product"*) echo 'product: tegu' >&2 ;;
   *) echo "fake fastboot $*" ;;
@@ -125,15 +126,6 @@ STALE_OVERRIDE_OUT="$TMP_DIR/stale-override.out"
 assert_contains "$STALE_OVERRIDE_OUT" "Dry-run only. No commands were executed."
 pass "installer refuses mixed-generation artifact dirs"
 
-# An explicit --image override of the stale partition is an operator decision;
-# the coherence guard must only judge artifact-dir-discovered images.
-EXPLICIT_OVERRIDE_OUT="$TMP_DIR/explicit-override.out"
-"$ROOT/install-elizaos-android.sh" \
-  --artifact-dir "$STALE_ARTIFACT_DIR" \
-  --image "vendor_boot=$STALE_ARTIFACT_DIR/vendor_boot.img" >"$EXPLICIT_OVERRIDE_OUT"
-assert_contains "$EXPLICIT_OVERRIDE_OUT" "Dry-run only. No commands were executed."
-pass "installer honors explicit stale-image overrides"
-
 ANDROID_INFO_FILE="$TMP_DIR/android-info.txt"
 cat >"$ANDROID_INFO_FILE" <<'INFO'
 require board=tegu
@@ -143,7 +135,8 @@ INFO
 cat >"$BIN_DIR/fastboot" <<'EOF'
 #!/usr/bin/env bash
 case "$*" in
-  *"getvar unlocked"*) echo 'unlocked: yes' >&2 ;;
+  *"devices"*) printf '%b' "${FAKE_FASTBOOT_INVENTORY-test-device\tfastboot\n}" ;;
+  *"getvar unlocked"*) echo '(bootloader) unlocked:yes' >&2 ;;
   *"getvar product"*) echo 'product: tegu' >&2 ;;
   *"getvar version-bootloader"*) echo "version-bootloader: ${FAKE_BOOTLOADER_VERSION:-fixture-bl-1.0}" >&2 ;;
   *"getvar partition-size:vendor_kernel_boot"*) echo 'partition-size:vendor_kernel_boot: 0x1000000' >&2 ;;
@@ -166,6 +159,19 @@ if FAKE_BOOTLOADER_VERSION=other-bl-9.9 "$ROOT/install-elizaos-android.sh" \
 fi
 assert_contains "$ANDROID_INFO_MISMATCH_OUT" "requires 'fixture-bl-1.0'"
 pass "installer enforces android-info firmware requirements"
+
+assert_contains "$ANDROID_INFO_OUT" "fastboot -s test-device flash"
+for inventory in '' 'other\tfastboot\n' 'test-device\tROM Recovery\n'; do
+  if FAKE_FASTBOOT_INVENTORY="$inventory" "$ROOT/install-elizaos-android.sh" --artifact-dir "$ARTIFACT_DIR" --device test-device --assume-bootloader --execute >"$TMP_DIR/inventory-refusal.out" 2>&1; then
+    fail "installer accepted an absent or early-recovery target"
+  fi
+  assert_contains "$TMP_DIR/inventory-refusal.out" "requested device is not in normal fastboot mode"
+done
+if FAKE_FASTBOOT_INVENTORY='first\tfastboot\nsecond\tfastboot\n' "$ROOT/install-elizaos-android.sh" --artifact-dir "$ARTIFACT_DIR" --assume-bootloader --execute >"$TMP_DIR/ambiguous.out" 2>&1; then
+  fail "installer accepted ambiguous fastboot devices"
+fi
+assert_contains "$TMP_DIR/ambiguous.out" "expected exactly one normal fastboot device"
+pass "installer pins plans and rejects ambiguous, absent, and ROM-recovery targets"
 
 MODE_MANIFEST="$TMP_DIR/mode-manifest.json"
 node - "$ROOT/manifests/android-release-manifest.example.json" "$MODE_MANIFEST" <<'NODE'

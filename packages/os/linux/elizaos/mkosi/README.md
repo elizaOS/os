@@ -304,6 +304,26 @@ qualification, stage them beside their `.raw.zst` forms using the canonical
 then creates deterministic detached signatures and the byte-exact discovery
 manifest consumed by the USB Installer:
 
+The artifact root is a fresh, signer-owned mode-`0700` offline staging tree,
+not a publication directory. The protected runner must be isolated from every
+other process running as the signing UID; mode bits cannot protect one process
+from another process with the same credentials. No process may copy, upload,
+or otherwise observe it as a release source while the signer is running. The
+signer writes outputs from the already-verified staged file handles, durably
+stores every detached signature, and creates the manifest last as the
+release-set commit marker.
+The independent verifier opens every input without following a final symlink,
+verifies and retains those descriptors, and exclusively creates its fresh
+publication-input tree from those same held bytes. That new tree's canonical
+parent must be signer-owned and not writable by group or world; the verifier
+holds and validates the parent and durably syncs the exclusive directory entry.
+The workflow never reopens
+the private signed paths for copying. The signer never replaces
+an existing committed set. If it fails, is killed, or reports unfinished
+`.elizaos-release-stage-*` state, discard the entire private artifact root and
+restart from the reviewed pre-signing artifacts; do not delete individual
+files or retry in place.
+
 ```sh
 SOURCE_DATE_EPOCH=<reviewed-commit-epoch> \
 ELIZAOS_RELEASE_ED25519_PRIVATE_KEY_PKCS8_BASE64=<protected-secret> \
@@ -321,9 +341,16 @@ node ../../../scripts/sign-image-release.mjs \
 ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_BASE64=<reviewed-public-key> \
 ELIZAOS_RELEASE_ED25519_PUBLIC_KEY_SPKI_SHA256=<independently-pinned-lowercase-sha256> \
 node ../../../scripts/verify-image-release.mjs \
+  --require-private-root \
   --artifact-root /release/images \
-  --manifest /release/images/manifest.json
+  --manifest /release/images/manifest.json \
+  --publish-root /release/publication-input
 ```
+
+Omit `--require-private-root` and `--publish-root` when independently verifying
+an already published or extracted release tree. Public verification retains the
+previous permission-neutral behavior; publication creation is available only
+inside the isolated private-root ceremony.
 
 For emergency revocation, set
 `ELIZAOS_RELEASE_REVOKED_ED25519_PUBLIC_KEY_SPKI_SHA256S` to a sorted, unique,

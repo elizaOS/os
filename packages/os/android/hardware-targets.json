@@ -27,11 +27,11 @@
       "marketingName": "Pixel 11 Pro",
       "manufacturer": "Google",
       "codenames": ["grizzly"],
-      "reviewedAt": "2026-08-24",
+      "reviewedAt": "2026-09-04",
       "authoritativeReferences": [
         "https://developers.google.com/android/images",
         "https://source.android.com/docs/setup/build/building-pixel-kernels",
-        "https://github.com/GrapheneOS/adevtool/commit/b396d9430743905fa56e5ee3e72c161614835cc0",
+        "https://github.com/GrapheneOS/adevtool/commit/144f004cc484d7e7234cdd167cee48e5f240288f",
         "https://github.com/GrapheneOS/vendor_state/commit/afd6a0c9f6ca13d395f00e98227a0866cc14de07"
       ],
       "productName": "eliza_grizzly_phone",
@@ -41,7 +41,7 @@
       "sourceStatus": "pinned-generated",
       "installerEligible": false,
       "blockedReasons": [
-        "The public spacecraft Pixel kernel source has not been published; initial bring-up intentionally uses the stock kernel extracted from the pinned factory image.",
+        "A complete reproducible device-kernel and vendor-module integration is not yet verified; initial bring-up intentionally uses the stock kernel extracted from the pinned factory image.",
         "The generated vendor module has not yet completed an exact-source build and physical Pixel 11 Pro boot validation.",
         "No retained Pixel 11 Pro rollback, flash, post-boot hardware, launcher, local inference, or voice evidence bundle exists yet."
       ]

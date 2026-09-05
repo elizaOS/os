@@ -127,7 +127,6 @@ build_native_plugin() {
         silero-vad-cpp) sentinel_a="$builddir/libsilero_vad.a";;
         voice-classifier-cpp) sentinel_a="$builddir/libvoice_classifier.a";;
         wakeword-cpp) sentinel_a="$builddir/libwakeword.a";;
-        yolo-cpp) sentinel_a="$builddir/libyolo.a";;
         face-cpp) sentinel_a="$builddir/libface.a";;
         doctr-cpp) sentinel_a="$builddir/libdoctr.a";;
         polarquant-cpu) sentinel_a="$builddir/libpolarquant.a";;
@@ -187,7 +186,6 @@ build_native_plugin turboquant-cpu       "$TBQ_RVV"
 build_native_plugin silero-vad-cpp       ""
 build_native_plugin voice-classifier-cpp ""
 build_native_plugin wakeword-cpp         ""
-build_native_plugin yolo-cpp             ""
 build_native_plugin face-cpp             ""
 build_native_plugin doctr-cpp            ""
 
@@ -199,7 +197,8 @@ if [ ! -f "$COMPILE_LIBLLAMA" ]; then
     echo "  ✗ compile-libllama.mjs missing at $COMPILE_LIBLLAMA"
     FAIL_N=$((FAIL_N+1))
 else
-    # compile-libllama.mjs exposes exactly one riscv64 target: android-riscv64-cpu.
+    # Build the shared dependency family, then the current fused runtime.
+    # Both android-riscv64-cpu and android-riscv64-cpu-fused use Linux/musl.
     # Despite the name it produces a Linux/musl shared object — zig
     # `riscv64-linux-musl` driver, -DCMAKE_SYSTEM_NAME=Linux, no Android NDK in
     # the compile, strip via `zig objcopy` (NDK llvm-strip is only a non-fatal
@@ -228,6 +227,22 @@ else
             echo "  ✓ libllama riscv64"
         else
             echo "  ✗ libllama riscv64 (see build/libllama-riscv64.log)"
+            FAIL_N=$((FAIL_N+1))
+        fi
+    fi
+    # The retired struct-by-value llama shim is not the application runtime.
+    # Build the fused inference library explicitly even when libllama is cached.
+    fused_sentinel="$libllama_assets_dir/riscv64/libelizainference.so"
+    if should_build "$fused_sentinel"; then
+        echo "→ Building fused inference runtime (riscv64, zig/musl) …"
+        mkdir -p "$repo_root/build"
+        if "$NODE_BIN" "$COMPILE_LIBLLAMA" --target android-riscv64-cpu-fused \
+            --assets-dir "$libllama_assets_dir" \
+            "${libllama_src_args[@]}" \
+            >"$repo_root/build/libelizainference-riscv64.log" 2>&1; then
+            echo "  ✓ fused inference riscv64"
+        else
+            echo "  ✗ fused inference riscv64 (see build/libelizainference-riscv64.log)"
             FAIL_N=$((FAIL_N+1))
         fi
     fi

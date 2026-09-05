@@ -5,10 +5,6 @@ import type {
   ElizaOsImage,
   InstallerStepId,
   RemovableDrive,
-  RestoreCapability,
-  RestorePlan,
-  RestoreReceipt,
-  RestoreStepId,
   UsbInstallerBackend,
   WritePlan,
 } from "../backend/types";
@@ -82,15 +78,6 @@ function completionCopy(platform: RemovableDrive["platform"] | undefined) {
   return "Safely eject the drive before unplugging, then boot from the drive.";
 }
 
-const RESTORE_STEP_LABELS: Record<RestoreStepId, string> = {
-  unmount: "Unmount existing volumes",
-  wipe: "Remove installer signatures",
-  partition: "Create one GPT data partition",
-  format: "Format as exFAT",
-  verify: "Verify identity and filesystem",
-  complete: "Restore complete",
-};
-
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -102,11 +89,7 @@ type AppStep =
   | "confirming"
   | "writing"
   | "complete"
-  | "error"
-  | "restore-confirming"
-  | "restoring"
-  | "restore-complete"
-  | "restore-error";
+  | "error";
 
 interface SpecItem {
   key: string;
@@ -203,18 +186,6 @@ export function InstallerApp({ backend }: InstallerAppProps) {
   >({});
   const [writeError, setWriteError] = useState<string | null>(null);
   const [cancellingWrite, setCancellingWrite] = useState(false);
-  const [restoreCapability, setRestoreCapability] =
-    useState<RestoreCapability | null>(null);
-  const [restoreAcknowledge, setRestoreAcknowledge] = useState(false);
-  const [restoreConfirmTarget, setRestoreConfirmTarget] = useState("");
-  const [restorePlan, setRestorePlan] = useState<RestorePlan | null>(null);
-  const [restoreReceipt, setRestoreReceipt] = useState<RestoreReceipt | null>(
-    null,
-  );
-  const [restoreProgress, setRestoreProgress] = useState<
-    Partial<Record<RestoreStepId, number>>
-  >({});
-  const [restoreError, setRestoreError] = useState<string | null>(null);
 
   const cancelledRef = useRef(false);
 
@@ -227,33 +198,13 @@ export function InstallerApp({ backend }: InstallerAppProps) {
       if (isRefresh) setRefreshing(true);
       cancelledRef.current = false;
       try {
-        const [nextDrives, nextImages, nextRestoreCapability] =
-          await Promise.all([
-            backend.listRemovableDrives(),
-            backend.listImages(),
-            backend.getRestoreCapability
-              ? backend.getRestoreCapability().catch(
-                  (error): RestoreCapability => ({
-                    supported: false,
-                    platform: "unknown",
-                    filesystem: null,
-                    reason:
-                      "Restore capability unavailable: " +
-                      (error instanceof Error ? error.message : String(error)),
-                  }),
-                )
-              : Promise.resolve<RestoreCapability>({
-                  supported: false,
-                  platform: "unknown",
-                  filesystem: null,
-                  reason:
-                    "Restore USB is not implemented by this platform backend.",
-                }),
-          ]);
+        const [nextDrives, nextImages] = await Promise.all([
+          backend.listRemovableDrives(),
+          backend.listImages(),
+        ]);
         if (cancelledRef.current) return;
         setDrives(nextDrives);
         setImages(nextImages);
-        setRestoreCapability(nextRestoreCapability);
         if (!isRefresh) {
           // Auto-select first safe drive and first image
           setSelectedDriveId(
@@ -428,59 +379,6 @@ export function InstallerApp({ backend }: InstallerAppProps) {
     }
   }
 
-  function beginRestore() {
-    setRestoreAcknowledge(false);
-    setRestoreConfirmTarget("");
-    setRestorePlan(null);
-    setRestoreReceipt(null);
-    setRestoreProgress({});
-    setRestoreError(null);
-    setAppStep("restore-confirming");
-  }
-
-  async function handleRestore() {
-    const drive = writePlan?.drive ?? selectedDrive;
-    if (
-      !drive?.stableId ||
-      !restoreAcknowledge ||
-      restoreConfirmTarget.trim() !== drive.devicePath ||
-      !backend.createRestorePlan ||
-      !backend.executeRestorePlan
-    ) {
-      return;
-    }
-    setRestoreError(null);
-    setRestoreProgress({});
-    setAppStep("restoring");
-    try {
-      const plan = await backend.createRestorePlan({
-        driveId: drive.id,
-        acknowledgeDataLoss: true,
-        expectedDrive: {
-          devicePath: drive.devicePath,
-          sizeBytes: drive.sizeBytes,
-          name: drive.name,
-          stableId: drive.stableId,
-        },
-      });
-      setRestorePlan(plan);
-      const receipt = await backend.executeRestorePlan(
-        plan,
-        (step, progress) => {
-          setRestoreProgress((previous) => ({
-            ...previous,
-            [step]: progress,
-          }));
-        },
-      );
-      setRestoreReceipt(receipt);
-      setAppStep("restore-complete");
-    } catch (error) {
-      setRestoreError(error instanceof Error ? error.message : String(error));
-      setAppStep("restore-error");
-    }
-  }
-
   // ---------------------------------------------------------------------------
   // Render helpers
   // ---------------------------------------------------------------------------
@@ -491,21 +389,6 @@ export function InstallerApp({ backend }: InstallerAppProps) {
   const confirmationText = selectedDrive?.devicePath ?? "";
   const targetConfirmed =
     acknowledgeDataLoss && confirmTarget.trim() === confirmationText;
-  const restoreDrive = writePlan?.drive ?? selectedDrive;
-  const restoreAvailable =
-    restoreCapability?.supported === true &&
-    restoreDrive?.safety === "safe-removable" &&
-    Boolean(restoreDrive.stableId) &&
-    Boolean(backend.createRestorePlan && backend.executeRestorePlan);
-  const restoreUnavailableReason = !restoreCapability?.supported
-    ? (restoreCapability?.reason ?? "Restore capability is still loading.")
-    : !backend.createRestorePlan || !backend.executeRestorePlan
-      ? "Restore USB is not implemented by this platform backend."
-      : !restoreDrive?.stableId
-        ? "Restore USB is blocked because this drive has no stable serial or WWN identity."
-        : restoreDrive.safety !== "safe-removable"
-          ? "Restore USB is blocked because this is not safe removable media."
-          : null;
 
   const overallProgress =
     writePlan && Object.keys(stepProgress).length > 0
@@ -1125,34 +1008,20 @@ export function InstallerApp({ backend }: InstallerAppProps) {
               device from the firmware boot menu. On Intel Macs, hold{" "}
               <kbd>Option</kbd> at startup.
             </p>
-            {restoreUnavailableReason && (
-              <p className="muted">{restoreUnavailableReason}</p>
-            )}
-            <div className="panel-actions">
-              <button
-                type="button"
-                onClick={() => {
-                  setAppStep("selecting-drive");
-                  setWritePlan(null);
-                  setStepProgress({});
-                  setCancellingWrite(false);
-                  setAcknowledgeDataLoss(false);
-                  setConfirmTarget("");
-                  void loadData(true);
-                }}
-              >
-                Write Another Drive
-              </button>
-              {restoreAvailable && (
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={beginRestore}
-                >
-                  Restore USB for normal storage
-                </button>
-              )}
-            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setAppStep("selecting-drive");
+                setWritePlan(null);
+                setStepProgress({});
+                setCancellingWrite(false);
+                setAcknowledgeDataLoss(false);
+                setConfirmTarget("");
+                void loadData(true);
+              }}
+            >
+              Write Another Drive
+            </button>
           </div>
         </section>
       )}
@@ -1167,9 +1036,6 @@ export function InstallerApp({ backend }: InstallerAppProps) {
               The drive may contain a partial write. Do not use it until the
               write succeeds.
             </p>
-            {restoreUnavailableReason && (
-              <p className="muted">{restoreUnavailableReason}</p>
-            )}
             <div className="panel-actions">
               <button
                 type="button"
@@ -1191,170 +1057,7 @@ export function InstallerApp({ backend }: InstallerAppProps) {
               >
                 Start Over
               </button>
-              {restoreAvailable && (
-                <button
-                  type="button"
-                  className="btn-danger"
-                  onClick={beginRestore}
-                >
-                  Restore USB
-                </button>
-              )}
             </div>
-          </div>
-        </section>
-      )}
-
-      {/* Restore confirmation                                                */}
-      {appStep === "restore-confirming" && restoreDrive && (
-        <section className="workspace-single">
-          <div className="panel confirm-panel">
-            <h2>Restore USB for Normal Storage</h2>
-            <div className="erase-warning">
-              <p>
-                This will erase <strong>{restoreDrive.name}</strong> (
-                <code>{restoreDrive.devicePath}</code>) again and replace the
-                installer layout with one GPT/exFAT volume named{" "}
-                <strong>ELIZAOS-USB</strong>.
-              </p>
-              <p className="muted">
-                Restore does not recover files. It only makes the entire USB
-                capacity usable as ordinary storage.
-              </p>
-            </div>
-            <label className="ack-row">
-              <input
-                type="checkbox"
-                checked={restoreAcknowledge}
-                onChange={(event) =>
-                  setRestoreAcknowledge(event.target.checked)
-                }
-              />
-              <span>I understand all data on this USB will be erased.</span>
-            </label>
-            <label className="confirm-target-row">
-              <span>
-                Type <code>{restoreDrive.devicePath}</code> to confirm this
-                exact target.
-              </span>
-              <input
-                type="text"
-                value={restoreConfirmTarget}
-                onChange={(event) =>
-                  setRestoreConfirmTarget(event.target.value)
-                }
-                spellCheck={false}
-              />
-            </label>
-            <div className="panel-actions">
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => setAppStep(writeError ? "error" : "complete")}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn-danger"
-                disabled={
-                  !restoreAcknowledge ||
-                  restoreConfirmTarget.trim() !== restoreDrive.devicePath
-                }
-                onClick={() => void handleRestore()}
-              >
-                Erase and Restore USB
-              </button>
-            </div>
-          </div>
-        </section>
-      )}
-
-      {/* Restore progress                                                    */}
-      {appStep === "restoring" && restoreDrive && (
-        <section className="workspace-single">
-          <div className="panel writing-panel">
-            <h2>Restoring USB</h2>
-            <p className="muted">
-              Do not unplug <strong>{restoreDrive.name}</strong>. Authorization
-              is single-use; after any failure you must rescan and confirm the
-              target again.
-            </p>
-            <ol className="step-list writing-steps">
-              {(restorePlan?.steps ?? Object.keys(RESTORE_STEP_LABELS)).map(
-                (step) => {
-                  const id = step as RestoreStepId;
-                  const progress = restoreProgress[id];
-                  return (
-                    <li
-                      key={id}
-                      className={
-                        progress === 1
-                          ? "complete"
-                          : progress !== undefined
-                            ? "running"
-                            : "pending"
-                      }
-                    >
-                      <span className="step-icon">
-                        {progress === 1
-                          ? "✅"
-                          : progress !== undefined
-                            ? "🔄"
-                            : "⬜"}
-                      </span>
-                      <strong>{RESTORE_STEP_LABELS[id]}</strong>
-                    </li>
-                  );
-                },
-              )}
-            </ol>
-          </div>
-        </section>
-      )}
-
-      {appStep === "restore-complete" && restoreReceipt && (
-        <section className="workspace-single">
-          <div className="panel complete-panel">
-            <h2>USB Restore Complete ✅</h2>
-            <p>
-              <code>{restoreReceipt.devicePath}</code> was durably rebuilt and
-              verified as one <strong>{restoreReceipt.filesystem}</strong>{" "}
-              volume named <strong>{restoreReceipt.label}</strong>.
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                setAppStep("selecting-drive");
-                setWritePlan(null);
-                void loadData(true);
-              }}
-            >
-              Return to Drive List
-            </button>
-          </div>
-        </section>
-      )}
-
-      {appStep === "restore-error" && (
-        <section className="workspace-single">
-          <div className="panel error-panel">
-            <h2>USB Restore Failed ❌</h2>
-            {restoreError && <p className="error">{restoreError}</p>}
-            <p className="muted">
-              The authorization has been consumed. Rescan the USB and verify its
-              identity before creating another restore plan.
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                setAppStep("selecting-drive");
-                setWritePlan(null);
-                void loadData(true);
-              }}
-            >
-              Rescan Drives
-            </button>
           </div>
         </section>
       )}

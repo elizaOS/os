@@ -88,17 +88,11 @@ export const GRAPHICS_PROBES = [
   { name: "properties", args: ["shell", "getprop"] },
   {
     name: "graphics-properties",
-    args: [
-      "shell",
-      "getprop | grep -Ei '(^|\\[)(ro\\.hardware\\.(egl|vulkan)|ro\\.board\\.platform|debug\\.renderengine|ro\\.surface_flinger|ro\\.gfx|graphics|gralloc|composer|vulkan|egl)' || true",
-    ],
+    args: ["shell", "getprop"],
   },
   {
     name: "graphics-libraries",
-    args: [
-      "shell",
-      "find /vendor/lib64 /system/lib64 -maxdepth 3 -type f 2>/dev/null | grep -Ei '/(egl|hw)/|vulkan|gralloc|mapper|composer' | sort; true",
-    ],
+    args: ["shell", "find /vendor/lib64 /system/lib64 -maxdepth 3 -type f"],
   },
   {
     name: "graphics-library-contexts",
@@ -122,32 +116,22 @@ export const GRAPHICS_PROBES = [
   { name: "vulkan-json", args: ["shell", "cmd gpu vkjson"] },
   {
     name: "vendor-vintf",
-    // Per-fragment failures must be visible without masking the probe: an
-    // unreadable fragment prints READ-FAILED, an unexpanded glob prints
-    // ABSENT, and the loop always exits 0 so partial evidence is recorded
-    // rather than declared incomplete.
+    // Record absent optional fragments but retain failures reading existing ones.
     args: [
       "shell",
-      'for f in /vendor/etc/vintf/manifest.xml /vendor/etc/vintf/manifest/*.xml; do if [ -e "$f" ]; then echo "===$f"; cat "$f" || echo "READ-FAILED $f"; else echo "ABSENT $f"; fi; done; true',
+      'status=0; for f in /vendor/etc/vintf/manifest.xml /vendor/etc/vintf/manifest/*.xml; do if [ -e "$f" ]; then echo "===$f"; cat "$f" || status=1; else echo "ABSENT $f"; fi; done; exit "$status"',
     ],
   },
   {
     name: "graphics-processes",
-    // grep exits 1 on no match; an empty match set is recorded evidence, not
-    // a collection failure.
-    args: [
-      "shell",
-      "ps -AZ | grep -Ei 'surfaceflinger|composer|allocator|mapper|gpu' || true",
-    ],
+    // Capture the raw inventory; filtering must not mask collection failures.
+    args: ["shell", "ps -AZ"],
   },
   {
     name: "kernel-graphics",
     // dmesg is root-only on a booted userdebug device; the denial lands in
-    // stderr as evidence and must not abort the collection as incomplete.
-    args: [
-      "shell",
-      "dmesg | grep -Ei 'drm|gpu|vulkan|mali|gralloc|display' || true",
-    ],
+    // stderr as evidence and must remain a failed probe.
+    args: ["shell", "dmesg"],
   },
   {
     name: "logcat-all",
