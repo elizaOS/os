@@ -141,7 +141,7 @@
         {
           "path": "vendor/adevtool",
           "name": "GrapheneOS/adevtool",
-          "commit": "b396d9430743905fa56e5ee3e72c161614835cc0"
+          "commit": "144f004cc484d7e7234cdd167cee48e5f240288f"
         },
         {
           "path": "vendor/state",
