@@ -132,7 +132,9 @@ function newestMtimeUnder(dir, filterRegex = null) {
       const full = path.join(current, entry.name);
       if (entry.isDirectory()) stack.push(full);
       else if (!filterRegex || filterRegex.test(full)) {
-        const mtime = fs.statSync(full).mtimeMs;
+        // Image symlinks can target device-only absolute paths. Their own
+        // metadata is packaged; following them would inspect the build host.
+        const mtime = fs.lstatSync(full).mtimeMs;
         if (mtime > newest) newest = mtime;
       }
     }
