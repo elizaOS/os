@@ -7,7 +7,14 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -115,6 +122,28 @@ describe("verify-grizzly-artifacts attest", () => {
         .update("vendor-image-bytes")
         .digest("hex");
       expect(manifest.images["vendor.img"].sha256).toBe(expected);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("attests device-only symlinks without following them on the host and still rejects stale images", () => {
+    const { root, productDir } = scaffoldAospRoot({});
+    try {
+      const vendorLib = join(productDir, "vendor/lib");
+      mkdirSync(vendorLib, { recursive: true });
+      symlinkSync("/vendor_dlkm/lib/modules", join(vendorLib, "modules"));
+      const vendorImage = join(productDir, "vendor.img");
+      writeFileSync(vendorImage, "vendor-image-bytes");
+      const current = run(["attest", "--aosp-root", root]);
+      expect(current.status).toBe(0);
+      expect(current.stderr).not.toContain("ENOENT");
+      utimesSync(vendorImage, new Date(0), new Date(0));
+      const stale = run(["attest", "--aosp-root", root]);
+      expect(stale.status).toBe(1);
+      expect(stale.stderr).toContain(
+        "vendor.img is older than the staged vendor tree",
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
