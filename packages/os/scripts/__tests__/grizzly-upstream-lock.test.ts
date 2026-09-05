@@ -8,6 +8,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { loadProfile } from "../../../../scripts/aosp/verify-source-lock.mjs";
 import { assertGeneratedVendorTree } from "../../../../scripts/distro-android/bootstrap-aosp.mjs";
 
 const lock = JSON.parse(
@@ -17,6 +18,27 @@ const lock = JSON.parse(
   ),
 );
 const boardPath = "vendor/google_devices/grizzly/BoardConfig.mk";
+
+test("grizzly source-verification profile agrees with the build lock", () => {
+  const profile = loadProfile("pixel11pro");
+  expect(profile.manifest).toEqual({
+    url: lock.manifestUrl,
+    tag: lock.manifestRevision,
+    tagObject: lock.manifestTagObject,
+    commit: lock.manifestCommit,
+  });
+  expect(profile.projects).toEqual(
+    lock.externalProjects.map(
+      (project: { path: string; url: string; commit: string }) => ({
+        path: project.path,
+        name: project.url
+          .replace("https://github.com/", "")
+          .replace(/\.git$/, ""),
+        commit: project.commit,
+      }),
+    ),
+  );
+});
 
 test("grizzly pins the audited extractor and its exact corrected board output", () => {
   expect(
