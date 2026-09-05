@@ -363,6 +363,22 @@ describe("OS release workflow authority", () => {
     expect(source).not.toContain(
       "bun run --cwd packages/os/usb-installer lint\n",
     );
+    const usbValidation = namedJobStep(
+      workflow,
+      "validate-os-release",
+      "Validate USB installer",
+    );
+    // The root has no Playwright dependency. bunx there can download a newer
+    // CLI/browser revision than the locked workspace test runner requires.
+    const browserInstall =
+      "bun packages/os/usb-installer/node_modules/@playwright/test/cli.js install --with-deps chromium";
+    expect(usbValidation.run).toContain(browserInstall);
+    expect(usbValidation.run).not.toContain("bunx playwright");
+    expect(usbValidation.run.indexOf(browserInstall)).toBeLessThan(
+      usbValidation.run.indexOf(
+        "bun run --cwd packages/os/usb-installer test:e2e",
+      ),
+    );
     expect(source).toContain("bun run --cwd packages/os/setup test");
     expect(source).toContain(
       "cd packages/os/homepage && bunx playwright install --with-deps chromium",
