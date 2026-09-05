@@ -41,6 +41,7 @@ export const REQUIRED_GRIZZLY_ARTIFACTS = Object.freeze([
 ]);
 
 const REQUIRED_BUILD_RECEIPTS = Object.freeze([
+  "build_fingerprint-eliza_grizzly_phone.txt",
   "host_init_verifier_output.txt",
   "obj/PACKAGING/check_vintf_all_intermediates/check_vintf_compatible.log",
   "obj/PACKAGING/check_vintf_all_intermediates/check_vintf_system.log",
@@ -928,6 +929,23 @@ export function apkSignerSha256(receipt) {
     fail("apksigner must report exactly one signing certificate");
   }
   return match[1].toLowerCase();
+}
+
+export function parseGrizzlyBuildFingerprint(contents, expectedPrefix) {
+  const fingerprint = contents.replace(/\r?\n$/, "");
+  if (
+    typeof expectedPrefix !== "string" ||
+    expectedPrefix.length === 0 ||
+    !fingerprint.startsWith(expectedPrefix) ||
+    !/^[A-Za-z0-9._+-]+\/[A-Za-z0-9._+-]+\/[A-Za-z0-9._+-]+:[A-Za-z0-9._+-]+\/[A-Za-z0-9._+-]+\/[A-Za-z0-9._+-]+:userdebug\/test-keys$/.test(
+      fingerprint,
+    )
+  ) {
+    fail(
+      "built fingerprint does not match the locked grizzly userdebug identity",
+    );
+  }
+  return fingerprint;
 }
 
 function artifactSourceSnapshot(productOut, filenames) {
@@ -2224,16 +2242,17 @@ export function main(argv = process.argv.slice(2)) {
       );
     }
 
-    const buildFingerprintPath = path.join(productOut, "system/build.prop");
-    assertRegularFile(buildFingerprintPath, "built system properties");
-    const buildFingerprint = readStableFile(buildFingerprintPath)
-      .toString("utf8")
-      .split("\n")
-      .find((line) => line.startsWith("ro.build.fingerprint="))
-      ?.slice("ro.build.fingerprint=".length);
-    if (!buildFingerprint?.startsWith(lock.device.expectedFingerprintPrefix)) {
-      fail("built fingerprint does not match the locked grizzly prefix");
-    }
+    // build/make/core/config.mk emits this canonical product fingerprint and
+    // gen_build_prop.py consumes it. system/build.prop instead identifies the
+    // generic system partition; init derives the overall property at boot.
+    const buildFingerprintFilename =
+      "build_fingerprint-eliza_grizzly_phone.txt";
+    const buildFingerprint = parseGrizzlyBuildFingerprint(
+      readStableFile(path.join(evidenceDir, buildFingerprintFilename)).toString(
+        "utf8",
+      ),
+      lock.device.expectedFingerprintPrefix,
+    );
     const manifest = {
       schemaVersion: 1,
       generatedAt,
@@ -2243,6 +2262,7 @@ export function main(argv = process.argv.slice(2)) {
         productName: lock.device.productName,
         stockBuildId: lock.device.buildId,
         buildFingerprint,
+        buildFingerprintSource: `host-validation/${buildFingerprintFilename}`,
       },
       builderEnvironment,
       sources: {
