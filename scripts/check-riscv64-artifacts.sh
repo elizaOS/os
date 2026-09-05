@@ -425,7 +425,7 @@ LLAMA_FAMILY_BASENAMES=(
     libggml-base.so
     libggml-cpu.so
     libllama-common.so
-    libeliza-llama-shim.so
+    libelizainference.so
 )
 
 LLAMA_FAMILY_SEARCH_DIRS=(

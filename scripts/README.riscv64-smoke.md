@@ -47,10 +47,13 @@ The smoke harness writes a machine-readable report to
   `17f56c177c2c3c32585885db2bcc748530471163`; it is no longer a required
   artifact. Missing sources or outputs for the remaining plugins still fail.
 
-- **`libllama` + `libggml` family + `libeliza-llama-shim.so`** —
+- **`libllama` + `libggml` family + `libelizainference.so`** —
   MTP llama.cpp cross-build via
   `$ELIZAOS_ELIZA_ROOT/packages/app-core/scripts/aosp/compile-libllama.mjs
-  --target android-riscv64-cpu`.
+  --target android-riscv64-cpu`, followed by
+  `--target android-riscv64-cpu-fused` for the application runtime.
+  The fused build verifies its required exported symbols; the retired
+  struct-by-value llama shim is no longer consumed.
 
 - **`libsigsys-handler.so`** for riscv64 — the Bun seccomp shim,
   built by

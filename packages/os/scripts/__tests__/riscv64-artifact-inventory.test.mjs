@@ -5,6 +5,20 @@ import { test } from "node:test";
 const root = new URL("../../../../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, root), "utf8");
 
+test("RISC-V builds and requires the current fused inference runtime", () => {
+  const builder = read("scripts/build-riscv64-artifacts.sh");
+  const checker = read("scripts/check-riscv64-artifacts.sh");
+  assert.match(builder, /--target android-riscv64-cpu-fused/);
+  assert.match(builder, /if should_build "\$fused_sentinel"; then/);
+  assert.match(
+    builder,
+    /fused_sentinel="\$libllama_assets_dir\/riscv64\/libelizainference.so"/,
+  );
+  assert.match(checker, /^    libelizainference\.so$/m);
+  assert.match(checker, /^    libllama\.so$/m);
+  assert.doesNotMatch(checker, /libeliza-llama-shim\.so/);
+});
+
 test("RISC-V builder and checker require the same maintained native plugins", () => {
   const builder = read("scripts/build-riscv64-artifacts.sh");
   const checker = read("scripts/check-riscv64-artifacts.sh");
