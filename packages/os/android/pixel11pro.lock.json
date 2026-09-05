@@ -30,7 +30,7 @@
       "path": "vendor/adevtool",
       "url": "https://github.com/GrapheneOS/adevtool.git",
       "ref": "refs/heads/17",
-      "commit": "b396d9430743905fa56e5ee3e72c161614835cc0",
+      "commit": "144f004cc484d7e7234cdd167cee48e5f240288f",
       "sparsePaths": [
         "assets",
         "bin",
@@ -204,6 +204,16 @@
     ],
     "requiredTextFiles": [
       {
+        "path": "vendor/google_devices/grizzly/BoardConfig.mk",
+        "includes": [
+          "BOARD_SUPER_PARTITION_SIZE := 10737418240",
+          "BOARD_SUPER_PARTITION_ERROR_LIMIT := 10213130240",
+          "BOARD_SUPER_PARTITION_GROUPS := google_dynamic_partitions",
+          "BOARD_GOOGLE_DYNAMIC_PARTITIONS_SIZE := 10733223936",
+          "BOARD_GOOGLE_DYNAMIC_PARTITIONS_PARTITION_LIST := system system_dlkm system_ext product vendor vendor_dlkm"
+        ]
+      },
+      {
         "path": "vendor/google_devices/grizzly/firmware/android-info.txt",
         "includes": [
           "require board=grizzly",
@@ -221,6 +231,11 @@
       }
     ],
     "requiredArtifacts": [
+      {
+        "path": "vendor/google_devices/grizzly/BoardConfig.mk",
+        "sizeBytes": 3622,
+        "sha256": "533bf35c78f073958e82b3138eec378ae7f6f5c25545aa23de1173aa03d1545e"
+      },
       {
         "path": "vendor/google_devices/grizzly/stock-kernel/Image.lz4",
         "sizeBytes": 20230712,

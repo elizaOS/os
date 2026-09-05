@@ -2,11 +2,11 @@
 /**
  * grizzly-evidence.mjs — capture boot evidence from a Pixel 11 Pro in any state.
  *
- * A device stuck on the G logo produces no adb; the recoverable evidence lives
- * in the bootloader (getvar), pstore (console/pmsg ramoops from the previous
- * boot, readable from recovery after a forced reboot), and — once any shell
- * exists — logcat, dmesg, and the graphics service states. This script
- * captures whichever surfaces respond into one dated directory so every flash
+ * A device stuck on the G logo may have no adb. Possible evidence surfaces are
+ * bootloader getvar/OEM diagnostics, pstore, and — once a shell exists —
+ * logcat, dmesg, init and graphics service states. Firmware support, privileges
+ * and retention across resets vary; empty pstore is not proof init never ran.
+ * This script captures responding surfaces into one dated directory so every flash
  * attempt leaves an attributable record (active slot included, because the
  * bootloader silently falls back to the other slot after repeated failures).
  *
@@ -67,15 +67,45 @@ function capture(outDir, name, command, args, { timeoutMs = 30_000 } = {}) {
   return { succeeded, stdout: result.stdout ?? "" };
 }
 
-function adbArgs(device, rest) {
-  return device ? ["-s", device, ...rest] : rest;
+export function selectEvidenceTransports({
+  device = "",
+  adbOutput = "",
+  fastbootOutput = "",
+} = {}) {
+  const rows = (output, states) =>
+    output.split(/\r?\n/).flatMap((line) => {
+      const [serial, state] = line.trim().split(/\s+/);
+      return serial && states.includes(state) ? [{ serial, state }] : [];
+    });
+  const adb = rows(adbOutput, [
+    "device",
+    "recovery",
+    "sideload",
+    "offline",
+    "unauthorized",
+  ]);
+  const fastboot = rows(fastbootOutput, ["fastboot"]);
+  const serials = [...new Set([...adb, ...fastboot].map((row) => row.serial))];
+  if (!device && serials.length > 1) {
+    throw new Error(
+      "[grizzly-evidence] multiple devices detected; specify --device SERIAL",
+    );
+  }
+  const selected = device || serials[0] || null;
+  return {
+    device: selected,
+    adb: adb.some(
+      (row) =>
+        row.serial === selected && ["device", "recovery"].includes(row.state),
+    ),
+    fastboot: fastboot.some((row) => row.serial === selected),
+  };
 }
 
-function fastbootArgs(device, rest) {
-  return device ? ["-s", device, ...rest] : rest;
-}
-
-export function captureEvidence({ device = "", outRoot = "" } = {}) {
+export function captureEvidence(
+  { device = "", outRoot = "" } = {},
+  captureCommand = capture,
+) {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const outDir = path.resolve(
     outRoot || path.join(repoRoot, "reports", "grizzly-evidence"),
@@ -85,20 +115,36 @@ export function captureEvidence({ device = "", outRoot = "" } = {}) {
   console.log(`[grizzly-evidence] writing to ${outDir}`);
 
   // Bootloader surface: slot state, unlock state, firmware versions.
-  const fastbootDevices = capture(outDir, "fastboot-devices", "fastboot", [
+  const fastbootDevices = captureCommand(
+    outDir,
+    "fastboot-devices",
+    "fastboot",
+    ["devices"],
+  );
+  const adbDevices = captureCommand(outDir, "adb-devices", "adb", [
     "devices",
+    "-l",
   ]);
-  if (fastbootDevices.stdout.trim()) {
-    capture(
+  const selected = selectEvidenceTransports({
+    device,
+    adbOutput: adbDevices.succeeded ? adbDevices.stdout : "",
+    fastbootOutput: fastbootDevices.succeeded ? fastbootDevices.stdout : "",
+  });
+  fs.writeFileSync(
+    path.join(outDir, "device-selection.json"),
+    `${JSON.stringify(selected, null, 2)}\n`,
+  );
+  const targetArgs = (rest) => ["-s", selected.device, ...rest];
+  if (selected.fastboot) {
+    captureCommand(
       outDir,
       "fastboot-getvar-all",
       "fastboot",
-      fastbootArgs(device, ["getvar", "all"]),
+      targetArgs(["getvar", "all"]),
     );
     // Tensor abl exposes read-only OEM debug commands; enumerate what this
-    // bootloader offers, then pull the previous boot's kernel console.
-    // `oem last_dmesg` after force-rebooting out of a G-logo hang is the
-    // cheapest possible evidence — no serial cable, no recovery needed.
+    // bootloader offers. Some firmware can expose a previous kernel console;
+    // do not assume a forced reset preserves it or that all OEM commands exist.
     // Unsupported commands just record their failure; that too is evidence.
     const oemCaptures = [
       ["fastboot-oem-cmds", ["oem", "list-oem-cmds"]],
@@ -107,19 +153,15 @@ export function captureEvidence({ device = "", outRoot = "" } = {}) {
       ["fastboot-oem-uart-status", ["oem", "uart", "status"]],
     ];
     for (const [name, rest] of oemCaptures) {
-      capture(outDir, name, "fastboot", fastbootArgs(device, rest));
+      captureCommand(outDir, name, "fastboot", targetArgs(rest));
     }
   }
 
-  // ADB surface: normal boot, recovery, or sideload all answer here.
-  const adbDevices = capture(outDir, "adb-devices", "adb", ["devices", "-l"]);
-  const hasAdb = /\b(device|recovery)\b/.test(
-    adbDevices.stdout.split("\n").slice(1).join("\n"),
-  );
-  if (!hasAdb) {
+  // Sideload, unauthorized and offline transports do not provide a shell.
+  if (!selected.adb) {
     console.log(
-      "[grizzly-evidence] no adb surface; bootloader evidence only. " +
-        "For a hung boot: force-reboot to recovery (Power ~30s, then Vol-Down+Power) and rerun to pull pstore.",
+      "[grizzly-evidence] selected device has no adb shell surface; available inventory/bootloader evidence retained. " +
+        "Recovery may expose pstore, but rebooting can discard logs; this tool does not reboot the device.",
     );
     return outDir;
   }
@@ -131,11 +173,22 @@ export function captureEvidence({ device = "", outRoot = "" } = {}) {
     // future QPR 16 KiB migration cannot silently invalidate that premise.
     ["page-size", ["shell", "getconf", "PAGE_SIZE"]],
     ["getprop", ["shell", "getprop"]],
+    // Read-only MTE diagnostics. Advertised CPU features do not establish
+    // functional MTE or acceptable performance. Never toggle OEM MTE here.
+    ["kernel-cmdline", ["shell", "cat", "/proc/cmdline"]],
+    ["kernel-bootconfig", ["shell", "cat", "/proc/bootconfig"]],
+    ["cpuinfo", ["shell", "cat", "/proc/cpuinfo"]],
+    [
+      "super-size",
+      ["shell", "blockdev", "--getsize64", "/dev/block/by-name/super"],
+    ],
+    ["logical-partitions", ["shell", "lpdump", "--json"]],
+    ["apex-list", ["shell", "ls", "-l", "/apex"]],
+    ["service-list", ["shell", "service", "list"]],
     ["dmesg", ["shell", "dmesg"]],
     ["logcat", ["shell", "logcat", "-b", "all", "-d"]],
     ["pstore-list", ["shell", "ls", "-l", "/sys/fs/pstore/"]],
-    // Kernel/init console of the PREVIOUS boot — the single most valuable
-    // artifact for a G-logo hang (includes our elizaos-init kmsg markers).
+    // These may contain prior-boot markers if the kernel/firmware retained them.
     [
       "pstore-console-ramoops",
       ["shell", "cat", "/sys/fs/pstore/console-ramoops*"],
@@ -168,7 +221,7 @@ export function captureEvidence({ device = "", outRoot = "" } = {}) {
     ["metadata-markers", ["shell", "ls", "-l", "/metadata/"]],
   ];
   for (const [name, rest] of shellCaptures) {
-    capture(outDir, name, "adb", adbArgs(device, rest));
+    captureCommand(outDir, name, "adb", targetArgs(rest));
   }
   return outDir;
 }

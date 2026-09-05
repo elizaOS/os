@@ -88,7 +88,7 @@ jobs:
           bun run --cwd packages/os/usb-installer typecheck
           bun run --cwd packages/os/usb-installer test
           bun run --cwd packages/os/usb-installer build
-          bunx playwright install --with-deps chromium
+          bun packages/os/usb-installer/node_modules/@playwright/test/cli.js install --with-deps chromium
           bun run --cwd packages/os/usb-installer test:e2e
           if ! modinfo scsi_debug >/dev/null 2>&1; then
             sudo apt-get update -qq
