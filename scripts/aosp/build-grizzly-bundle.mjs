@@ -896,16 +896,27 @@ function certificateSha256(pemPath) {
     .toLowerCase();
 }
 
-function apkSignerSha256(receipt) {
-  const matches = [
-    ...receipt.matchAll(
-      /Signer #\d+ certificate SHA-256 digest:\s*([a-fA-F0-9]{64})/g,
-    ),
-  ];
-  if (matches.length !== 1) {
+export function apkSignerSha256(receipt) {
+  const lines = receipt.split(/\r?\n/);
+  const counts = lines.filter((line) => line.startsWith("Number of signers:"));
+  // New apksigner versions name the verified scheme instead of numbering a
+  // single signer. Do not accept rotation/hybrid receipts or silently ignore
+  // extra, malformed or unknown certificate records.
+  const certificates = lines.filter((line) =>
+    line.includes("certificate SHA-256 digest:"),
+  );
+  const match = certificates[0]?.match(
+    /^(?:Signer #1|(?:V1 |V2 |V3\.0 )?Signer:) certificate SHA-256 digest: ([a-fA-F0-9]{64})$/,
+  );
+  if (
+    counts.length !== 1 ||
+    counts[0] !== "Number of signers: 1" ||
+    certificates.length !== 1 ||
+    !match
+  ) {
     fail("apksigner must report exactly one signing certificate");
   }
-  return matches[0][1].toLowerCase();
+  return match[1].toLowerCase();
 }
 
 function artifactSourceSnapshot(productOut, filenames) {
