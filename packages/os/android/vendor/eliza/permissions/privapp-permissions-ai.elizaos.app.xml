@@ -19,6 +19,8 @@
 <permissions>
     <privapp-permissions package="ai.elizaos.app">
         <permission name="android.permission.PACKAGE_USAGE_STATS" />
+        <!-- Android 17 enforces this privileged grant for local notification alarms. -->
+        <permission name="android.permission.SCHEDULE_EXACT_ALARM" />
         <!--
           Required by ElizaBootReceiver to flip the GET_USAGE_STATS
           appop to ALLOWED via reflection on AppOpsManager#setMode at

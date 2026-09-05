@@ -19,10 +19,9 @@
 #     ANDROID_NDK; or place the NDK under $HOME/Android/Sdk/ndk).
 #   - `adb` on PATH (or set ADB).
 #
-# Vulkan-on-cvd is SwiftShader (software ICD) — per the fail-closed
-# software-ICD rule, the SwiftShader fixture pass is DIAGNOSTIC-ONLY and
-# NOT recordable runtime-ready evidence. Real Android x86_64 Vulkan graph
-# dispatch needs real ChromeOS GPU silicon.
+# Vulkan-on-cvd can use gfxstream hardware forwarding or a software ICD.
+# The verifier reports the selected device; a software fixture pass is
+# diagnostic-only and must not be recorded as hardware runtime readiness.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -98,7 +97,7 @@ log "compiling gen_fixture (x86_64-linux-android${ANDROID_API})..."
   -lm -static -o "$OUT_DIR/gen_fixture_android_x86_64"
 
 if [[ "$SKIP_VULKAN_DIAG" != "1" ]]; then
-  log "compiling vulkan_verify (diagnostic-only, SwiftShader)..."
+  log "compiling vulkan_verify (fixture diagnostics)..."
   "$CXX" -O2 -Wall -Wextra -std=c++17 -I../reference -I. \
     vulkan_verify.cpp "$OUT_DIR/turbo_kernels.o" "$OUT_DIR/qjl_polar_ref.o" \
     -static-libstdc++ -lvulkan -lm -o "$OUT_DIR/vulkan_verify"
@@ -128,7 +127,7 @@ fi
 log "running gen_fixture --self-test on cvd..."
 SELFTEST_OUT="$("${ADB_S[@]}" shell "cd '${REMOTE_DIR}' && ./gen_fixture_android_x86_64 --self-test" | tr -d '\r')"
 echo "$SELFTEST_OUT"
-echo "$SELFTEST_OUT" | grep -q "all finite; fused-attn + tbq V-cache parity OK" || \
+echo "$SELFTEST_OUT" | grep -Eq "all finite; fused-attn \+ tbq V-cache( \+ split-K online-softmax merge)? parity OK" || \
   fail "gen_fixture --self-test on cvd did not produce the expected success line"
 
 # Host baseline for parity check.
@@ -137,16 +136,22 @@ HOST_OUT="$(./gen_fixture --self-test | tr -d '\r')"
   fail "cvd self-test output does not match host bit-for-bit (host: $HOST_OUT vs cvd: $SELFTEST_OUT)"
 log "PASS — cvd self-test bit-identical to host."
 
-# 6. Diagnostic-only Vulkan-on-cvd SwiftShader smoke (NOT recordable evidence).
+# 6. Vulkan fixture diagnostics. The verifier reports the actual guest GPU.
+# Software rendering remains diagnostic-only, but a requested check must pass.
 if [[ "$SKIP_VULKAN_DIAG" != "1" ]]; then
-  log "running vulkan_verify under cvd SwiftShader (DIAGNOSTIC-ONLY)..."
+  log "running vulkan_verify on cvd (fixture diagnostics)..."
+  vulkan_failures=0
   for c in "turbo3 turbo3" "turbo4 turbo4" "turbo3_tcq turbo3_tcq" "qjl qjl" "polar polar" "polar polar_qjl" "polar_preht polar" "polar_preht polar_qjl"; do
     set -- $c
     shader=$1; fixture=$2
-    "${ADB_S[@]}" shell "cd '${REMOTE_DIR}' && ELIZA_ALLOW_SOFTWARE_VULKAN=1 ./vulkan_verify '${shader}.spv' 'fixtures/${fixture}.json'" >/dev/null \
-      && log "  DIAGNOSTIC PASS ${shader} ${fixture}.json" \
-      || log "  DIAGNOSTIC FAIL ${shader} ${fixture}.json (NOT a recordable failure)"
+    if "${ADB_S[@]}" shell "cd '${REMOTE_DIR}' && ELIZA_ALLOW_SOFTWARE_VULKAN=1 ./vulkan_verify '${shader}.spv' 'fixtures/${fixture}.json'"; then
+      log "  DIAGNOSTIC PASS ${shader} ${fixture}.json"
+    else
+      log "  DIAGNOSTIC FAIL ${shader} ${fixture}.json"
+      vulkan_failures=$((vulkan_failures + 1))
+    fi
   done
+  [[ "$vulkan_failures" -eq 0 ]] || fail "CPU parity passed, but $vulkan_failures Vulkan fixture checks failed."
 fi
 
 # 7. Bookkeeping. Verify the evidence file points at this run.

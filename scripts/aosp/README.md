@@ -57,3 +57,21 @@ Each script accepts `--app-config <PATH>` to override
   out `elizaOS/eliza` revision.
 - Cuttlefish runtime: cuttlefish host package (`cvd`), `/dev/kvm`.
 - Boot validation: `adb` on PATH or under `$ANDROID_HOME/platform-tools/`.
+
+For headless gfxstream on Intel ARL, select `EGL_PLATFORM=surfaceless` and the
+Intel Vulkan ICD. The validated memory configuration is:
+
+```sh
+export ELIZA_CUTTLEFISH_GPU_RENDERER_FEATURES='VulkanAllocateHostMemory:enabled;VulkanDisableCoherentMemoryAndEmulate:enabled'
+```
+
+Use this with `build-aosp.mjs --launch`, or pass the same quoted value through
+`launch_cvd --gpu_renderer_features`. Host allocation requires
+`VK_EXT_external_memory_host` support. Coherent-memory emulation flushes mapped
+buffer ranges before submissions; without it, repeated compute dispatches on
+this host returned stale results even when a one-shot fixture passed.
+
+Verify the actual renderer, repeated operations with changed inputs, and full
+model generation against a CPU baseline. Software rendering and successful
+model loading alone do not prove hardware Vulkan correctness. Keep these host
+settings separate from Android image policy.

@@ -29,6 +29,7 @@
 // is only populated when a local libllama-backed model is loaded.
 
 import { spawnSync } from "node:child_process";
+import { androidSocketFetch } from "./lib/android-socket-fetch.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -201,10 +202,10 @@ async function waitForAgentServiceProcess({ adbImpl, serial, packageName }) {
   return state;
 }
 
-async function pollHealth(deadline) {
+async function pollHealth(deadline, request) {
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(`http://127.0.0.1:${HOST_PORT}/api/health`, {
+      const res = await request(`http://127.0.0.1:${HOST_PORT}/api/health`, {
         signal: AbortSignal.timeout(HEALTH_POLL_INTERVAL_MS),
       });
       if (res.ok) {
@@ -230,12 +231,16 @@ export async function runSmoke({
   packageName,
   appName = null,
   expectedAbi = null,
+  transport = process.env.ELIZA_SMOKE_TRANSPORT ?? "uds",
 } = {}) {
   if (!packageName) {
     throw new Error(
       "[smoke-cuttlefish] runSmoke requires `packageName` (resolve from app.config.ts > aosp.packageName).",
     );
   }
+  if (!["uds", "tcp"].includes(transport))
+    throw new Error("Unsupported smoke transport");
+  const request = transport === "uds" ? androidSocketFetch : fetch;
   const SERVICE_FQN = `${packageName}/${packageName}.ElizaAgentService`;
   const apkLabel = appName ? `${appName}.apk` : "the APK";
   const results = [];
@@ -248,7 +253,8 @@ export async function runSmoke({
   // ELIZA_CHAT_GENERATION_TIMEOUT_MS budget or the client gives up
   // mid-decode. Fail-soft: if undici isn't available we run with
   // default fetch and the operator sees `fetch failed` on long runs.
-  const undiciOk = await configureUndiciIfAvailable(CHAT_TIMEOUT_MS);
+  const undiciOk =
+    transport === "uds" || (await configureUndiciIfAvailable(CHAT_TIMEOUT_MS));
   if (!undiciOk) {
     console.warn(
       "[smoke-cuttlefish] WARN: undici not available; fetch() will use default 5-minute bodyTimeout. Long chats will fail.",
@@ -429,7 +435,13 @@ export async function runSmoke({
   // Step 4: wait for /api/health via adb forward.
   logStep(4, `Waiting up to ${HEALTH_TIMEOUT_MS / 1000}s for /api/health`);
   const forwardResult = adbImpl(
-    ["forward", `tcp:${HOST_PORT}`, `tcp:${AGENT_PORT}`],
+    [
+      "forward",
+      `tcp:${HOST_PORT}`,
+      transport === "uds"
+        ? "localabstract:eliza_local_agent_v1"
+        : `tcp:${AGENT_PORT}`,
+    ],
     { serial },
   );
   if (forwardResult.status !== 0) {
@@ -442,7 +454,7 @@ export async function runSmoke({
     return results;
   }
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;
-  const health = await pollHealth(deadline);
+  const health = await pollHealth(deadline, request);
   if (!health.ok) {
     results.push({
       step: 4,
@@ -544,7 +556,7 @@ export async function runSmoke({
   let lastFetchError = null;
   try {
     // @duplicate-component-audit-allow: smoke test exercises the local chat endpoint; runtime owns model logging.
-    chatResp = await fetch(
+    chatResp = await request(
       `http://127.0.0.1:${HOST_PORT}/v1/chat/completions`,
       {
         method: "POST",
