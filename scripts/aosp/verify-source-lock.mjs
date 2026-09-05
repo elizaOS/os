@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isMainModule } from "../distro-android/is-main.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
 export const defaultLockPath = join(
@@ -158,4 +159,4 @@ export function main(argv = process.argv.slice(2)) {
   return result;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) main();
+if (isMainModule(import.meta)) main();

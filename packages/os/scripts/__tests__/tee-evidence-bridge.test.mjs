@@ -24,9 +24,7 @@ import {
   goldenMeasurementsOf,
 } from "../tee-evidence-bridge.mjs";
 
-const repoRoot = path.resolve(
-  fileURLToPath(new URL("../..", import.meta.url)),
-);
+const repoRoot = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const confidentialManifestPath = path.join(
   repoRoot,
   "release/confidential-2026-05-21/manifest.json",

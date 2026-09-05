@@ -5,11 +5,12 @@
  * attested build.
  */
 import { describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -46,6 +47,11 @@ function scaffoldAospRoot(options: {
   const root = mkdtempSync(join(tmpdir(), "elizaos-grizzly-attest-"));
   const productDir = join(root, "out/target/product/grizzly");
   const vendorDir = join(productDir, "vendor");
+  mkdirSync(join(productDir, "system/etc/init/hw"), { recursive: true });
+  writeFileSync(
+    join(productDir, "system/etc/init/hw/init.rc"),
+    "on post-fs-data\n    exec - system system -- /system/bin/vdc keymaster earlyBootEnded\n",
+  );
   mkdirSync(join(vendorDir, "etc/init/hw"), { recursive: true });
   const stampDir = join(root, "vendor/google_devices/grizzly");
   mkdirSync(stampDir, { recursive: true });
@@ -99,12 +105,97 @@ function scaffoldAospRoot(options: {
     "super_empty.img",
   ];
   for (const image of requiredImages) {
-    writeFileSync(join(productDir, image), image === "vendor.img" ? "vendor-image-bytes" : `${image}-bytes`);
+    writeFileSync(
+      join(productDir, image),
+      image === "vendor.img" ? "vendor-image-bytes" : `${image}-bytes`,
+    );
+  }
+  for (const partition of ["vendor", "system"]) {
+    execFileSync(
+      "mkfs.ext4",
+      [
+        "-q",
+        "-F",
+        "-d",
+        join(productDir, partition),
+        join(productDir, `${partition}.img`),
+        "4096",
+      ],
+      { stdio: "pipe" },
+    );
   }
   return { root, productDir };
 }
 
 describe("verify-grizzly-artifacts attest", () => {
+  test("rejects packaged content mismatch even when staging and timestamps agree", () => {
+    const { root, productDir } = scaffoldAospRoot({});
+    try {
+      const payload = join(root, "wrong.prop");
+      writeFileSync(
+        payload,
+        "debug.renderengine.graphite=false\npersist.graphics.egl=angle\n",
+      );
+      const image = join(productDir, "vendor.img");
+      execFileSync("debugfs", ["-w", "-R", "rm /build.prop", image], {
+        stdio: "pipe",
+      });
+      execFileSync(
+        "debugfs",
+        ["-w", "-R", `write ${payload} /build.prop`, image],
+        { stdio: "pipe" },
+      );
+      const result = run(["attest", "--aosp-root", root]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("packaged vendor build.prop graphite");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("attests packaged images after staging cleanup and rejects missing init", () => {
+    const { root, productDir } = scaffoldAospRoot({});
+    try {
+      rmSync(join(productDir, "vendor"), { recursive: true });
+      rmSync(join(productDir, "system"), { recursive: true });
+      expect(run(["attest", "--aosp-root", root]).status).toBe(0);
+      execFileSync(
+        "debugfs",
+        ["-w", "-R", "rm /etc/init/hw/init.rc", join(productDir, "system.img")],
+        { stdio: "pipe" },
+      );
+      const result = run(["attest", "--aosp-root", root]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("system init.rc unavailable");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+  test("rejects stale system staging and unattested extra images", () => {
+    const { root, productDir } = scaffoldAospRoot({});
+    try {
+      const result = run(["attest", "--aosp-root", root]);
+      expect(result.status).toBe(0);
+      writeFileSync(join(productDir, "stray.img"), "unreviewed");
+      const check = run([
+        "check",
+        "--manifest",
+        join(productDir, "grizzly-artifacts.json"),
+        "--artifact-dir",
+        productDir,
+      ]);
+      expect(check.status).toBe(1);
+      expect(check.stderr).toContain("unattested images");
+      mkdirSync(join(productDir, "system"), { recursive: true });
+      writeFileSync(join(productDir, "system", "changed"), "new input");
+      utimesSync(join(productDir, "system.img"), new Date(0), new Date(0));
+      const stale = run(["attest", "--aosp-root", root]);
+      expect(stale.status).toBe(1);
+      expect(stale.stderr).toContain("system.img is older");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
   test("attests a coherent build and writes the sha256 manifest", () => {
     const { root, productDir } = scaffoldAospRoot({});
     try {
@@ -119,7 +210,7 @@ describe("verify-grizzly-artifacts attest", () => {
       expect(manifest.device).toBe("grizzly");
       expect(manifest.prepareStamp.conservativeF2fs).toBe(false);
       const expected = createHash("sha256")
-        .update("vendor-image-bytes")
+        .update(readFileSync(join(productDir, "vendor.img")))
         .digest("hex");
       expect(manifest.images["vendor.img"].sha256).toBe(expected);
     } finally {
@@ -134,7 +225,11 @@ describe("verify-grizzly-artifacts attest", () => {
       mkdirSync(vendorLib, { recursive: true });
       symlinkSync("/vendor_dlkm/lib/modules", join(vendorLib, "modules"));
       const vendorImage = join(productDir, "vendor.img");
-      writeFileSync(vendorImage, "vendor-image-bytes");
+      execFileSync(
+        "mkfs.ext4",
+        ["-q", "-F", "-d", join(productDir, "vendor"), vendorImage, "4096"],
+        { stdio: "pipe" },
+      );
       const current = run(["attest", "--aosp-root", root]);
       expect(current.status).toBe(0);
       expect(current.stderr).not.toContain("ENOENT");
@@ -229,15 +324,47 @@ describe("verify-grizzly-artifacts attest", () => {
 });
 
 describe("verify-grizzly-artifacts check", () => {
+  test("refuses a self-consistent but truncated attestation manifest", () => {
+    const { root, productDir } = scaffoldAospRoot({});
+    const artifactDir = mkdtempSync(join(tmpdir(), "grizzly-partial-"));
+    try {
+      expect(run(["attest", "--aosp-root", root]).status).toBe(0);
+      const manifestPath = join(productDir, "grizzly-artifacts.json");
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+      manifest.images = { "boot.img": manifest.images["boot.img"] };
+      writeFileSync(manifestPath, JSON.stringify(manifest));
+      writeFileSync(
+        join(artifactDir, "boot.img"),
+        readFileSync(join(productDir, "boot.img")),
+      );
+      const result = run([
+        "check",
+        "--manifest",
+        manifestPath,
+        "--artifact-dir",
+        artifactDir,
+      ]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("manifest omits required images");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(artifactDir, { recursive: true, force: true });
+    }
+  });
   test("verifies matching images and refuses tampered bytes", () => {
     const { root, productDir } = scaffoldAospRoot({});
     const artifactDir = mkdtempSync(join(tmpdir(), "elizaos-grizzly-check-"));
     try {
       expect(run(["attest", "--aosp-root", root]).status).toBe(0);
       const manifestPath = join(productDir, "grizzly-artifacts.json");
-      const manifest = JSON.parse(require("node:fs").readFileSync(manifestPath, "utf8"));
+      const manifest = JSON.parse(
+        require("node:fs").readFileSync(manifestPath, "utf8"),
+      );
       for (const image of Object.keys(manifest.images)) {
-        writeFileSync(join(artifactDir, image), require("node:fs").readFileSync(join(productDir, image)));
+        writeFileSync(
+          join(artifactDir, image),
+          require("node:fs").readFileSync(join(productDir, image)),
+        );
       }
       const ok = run([
         "check",
@@ -247,7 +374,9 @@ describe("verify-grizzly-artifacts check", () => {
         artifactDir,
       ]);
       expect(ok.status).toBe(0);
-      expect(ok.stdout).toContain("safe to flash");
+      expect(ok.stdout).toContain(
+        "device compatibility and flash authorization remain separate checks",
+      );
 
       writeFileSync(join(artifactDir, "vendor.img"), "DIFFERENT-bytes");
       const tampered = run([

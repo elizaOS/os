@@ -8,6 +8,15 @@ import {
 } from "../../../../scripts/distro-android/grizzly-evidence.mjs";
 
 test("evidence selection uses serial and transport state, not model metadata", () => {
+  expect(
+    selectEvidenceTransports({ fastbootOutput: "phone\tROM Recovery\n" }),
+  ).toEqual({ device: "phone", adb: false, fastboot: true });
+  expect(() =>
+    selectEvidenceTransports({
+      fastbootOutput: "phone\tROM Recovery\n",
+      adbOutput: "other device\n",
+    }),
+  ).toThrow("multiple devices");
   const adbOutput =
     "List of devices attached\nother device product:device\nphone unauthorized model:device device:recovery\n";
   expect(selectEvidenceTransports({ device: "phone", adbOutput })).toEqual({

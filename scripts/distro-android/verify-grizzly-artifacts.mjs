@@ -47,6 +47,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { isMainModule } from "./is-main.mjs";
 
 const PRODUCT_DEVICE = "grizzly";
 const STAMP_RELATIVE_PATH =
@@ -87,7 +88,16 @@ function info(message) {
 
 function sha256File(filePath) {
   const hash = createHash("sha256");
-  hash.update(fs.readFileSync(filePath));
+  const fd = fs.openSync(filePath, "r");
+  try {
+    const buffer = Buffer.alloc(1024 * 1024);
+    let length;
+    while ((length = fs.readSync(fd, buffer, 0, buffer.length, null)) > 0) {
+      hash.update(buffer.subarray(0, length));
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
   return hash.digest("hex");
 }
 
@@ -172,12 +182,27 @@ function readImageEntry(aospRoot, imagePath, entryPath) {
   const temporaryDir = fs.mkdtempSync(path.join(os.tmpdir(), "grizzly-img-"));
   const rawPath = path.join(temporaryDir, "image.raw");
   try {
-    const header = fs.readFileSync(imagePath).subarray(0, 4);
-    const sourcePath = header.equals(Buffer.from([0x3a, 0xff, 0x26, 0xed])) && fs.existsSync(simg2img)
-      ? (execFileSync(simg2img, [imagePath, rawPath]), rawPath)
-      : imagePath;
+    const header = Buffer.alloc(4);
+    const fd = fs.openSync(imagePath, "r");
     try {
-      return execFileSync("debugfs", ["-R", `cat /${entryPath}`, sourcePath], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+      fs.readSync(fd, header, 0, 4, 0);
+    } finally {
+      fs.closeSync(fd);
+    }
+    const sourcePath =
+      header.equals(Buffer.from([0x3a, 0xff, 0x26, 0xed])) &&
+      fs.existsSync(simg2img)
+        ? (execFileSync(simg2img, [imagePath, rawPath]), rawPath)
+        : imagePath;
+    try {
+      const contents = execFileSync(
+        "debugfs",
+        ["-R", `cat /${entryPath}`, sourcePath],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      );
+      // debugfs can exit zero for a missing entry. Empty output is not proof
+      // that a required file exists, nor that a probe was packaged.
+      return contents.length ? contents : null;
     } catch {
       return null;
     }
@@ -280,23 +305,56 @@ function assertPackagedVendorEntries(aospRoot, productDir, stamp) {
   const vendorImage = path.join(productDir, "vendor.img");
   const buildProp = readImageEntry(aospRoot, vendorImage, "build.prop");
   const fstab = readImageEntry(aospRoot, vendorImage, "etc/fstab.malibu");
-  if (!buildProp || !fstab) fail("vendor.img is missing packaged build.prop or fstab.malibu; refusing to attest an opaque image");
+  if (!buildProp || !fstab)
+    fail(
+      "vendor.img is missing packaged build.prop or fstab.malibu; refusing to attest an opaque image",
+    );
   const backendMatch = buildProp.match(/^debug\.renderengine\.backend=(\S+)$/m);
   const stagedBackend = backendMatch ? backendMatch[1] : null;
-  if (stagedBackend !== (stamp.renderengineBackend ?? null)) fail(`packaged vendor build.prop backend=${JSON.stringify(stagedBackend)} does not match prepare stamp`);
-  const graphiteMatch = buildProp.match(/^debug\.renderengine\.graphite=(true|false)$/m);
-  if (!graphiteMatch || (graphiteMatch[1] === "true") !== stamp.renderengineGraphite) fail("packaged vendor build.prop graphite value does not match prepare stamp");
+  if (stagedBackend !== (stamp.renderengineBackend ?? null))
+    fail(
+      `packaged vendor build.prop backend=${JSON.stringify(stagedBackend)} does not match prepare stamp`,
+    );
+  const graphiteMatch = buildProp.match(
+    /^debug\.renderengine\.graphite=(true|false)$/m,
+  );
+  if (
+    !graphiteMatch ||
+    (graphiteMatch[1] === "true") !== stamp.renderengineGraphite
+  )
+    fail(
+      "packaged vendor build.prop graphite value does not match prepare stamp",
+    );
   const stagedAngle = /^persist\.graphics\.egl=angle$/m.test(buildProp);
-  if ((stamp.eglSelection === "native" && stagedAngle) || (stamp.eglSelection !== "native" && !stagedAngle)) fail("packaged vendor EGL selection does not match prepare stamp");
+  if (
+    (stamp.eglSelection === "native" && stagedAngle) ||
+    (stamp.eglSelection !== "native" && !stagedAngle)
+  )
+    fail("packaged vendor EGL selection does not match prepare stamp");
   const rewritten = /elizaos/i.test(fstab);
-  if (stamp.conservativeF2fs !== rewritten) fail("packaged vendor fstab stance does not match prepare stamp");
+  if (stamp.conservativeF2fs !== rewritten)
+    fail("packaged vendor fstab stance does not match prepare stamp");
   if (!stamp.conservativeF2fs) {
-    const userdataLine = fstab.split("\n").find((line) => /\s\/data\s/.test(line) && !line.trim().startsWith("#"));
-    if (!userdataLine || !userdataLine.includes("fileencryption=") || !userdataLine.includes("metadata_encryption=")) fail("packaged vendor fstab lost the stock /data encryption contract");
+    const userdataLine = fstab
+      .split("\n")
+      .find((line) => /\s\/data\s/.test(line) && !line.trim().startsWith("#"));
+    if (
+      !userdataLine ||
+      !userdataLine.includes("fileencryption=") ||
+      !userdataLine.includes("metadata_encryption=")
+    )
+      fail("packaged vendor fstab lost the stock /data encryption contract");
   }
-  const probe = readImageEntry(aospRoot, vendorImage, "etc/init/hw/init.elizaos-debug.rc");
-  if ((probe !== null) !== stamp.earlyBootProbes) fail("packaged vendor probe state does not match prepare stamp");
-  info(`packaged vendor image verified: backend=${stagedBackend ?? "(stock)"} graphite=${stamp.renderengineGraphite}`);
+  const probe = readImageEntry(
+    aospRoot,
+    vendorImage,
+    "etc/init/hw/init.elizaos-debug.rc",
+  );
+  if ((probe !== null) !== stamp.earlyBootProbes)
+    fail("packaged vendor probe state does not match prepare stamp");
+  info(
+    `packaged vendor image verified: backend=${stagedBackend ?? "(stock)"} graphite=${stamp.renderengineGraphite}`,
+  );
 }
 
 // 16 KiB page-size kernels refuse to map ELFs whose LOAD segments are aligned
@@ -377,32 +435,83 @@ function attest({ aospRoot, out }) {
     assertStagedRenderEngine(stagedVendorDir, stamp);
     assertStagedFstab(stagedVendorDir, stamp);
     assertStagedProbes(stagedVendorDir, stamp);
-  } else {
-    assertPackagedVendorEntries(aospRoot, productDir, stamp);
   }
+  // Staging alone cannot prove what was packaged, even with matching mtimes.
+  assertPackagedVendorEntries(aospRoot, productDir, stamp);
   checkElfAlignment(aospRoot, productDir);
+  const init = readImageEntry(
+    aospRoot,
+    path.join(productDir, "system.img"),
+    "etc/init/hw/init.rc",
+  );
+  if (!init)
+    fail(
+      "system init.rc unavailable; cannot attest keymaster diagnostic stance",
+    );
+  const background =
+    /exec_background - system system -- \/system\/bin\/vdc keymaster earlyBootEnded/m.test(
+      init,
+    );
+  const marked =
+    /# elizaOS: diagnostic non-blocking keymaster notification\n[ \t]*exec_background - system system -- \/system\/bin\/vdc keymaster earlyBootEnded/m.test(
+      init,
+    );
+  if (
+    background !== (stamp.keymasterNonblocking === true) ||
+    (background && !marked)
+  ) {
+    fail("system init keymaster stance does not match prepare stamp");
+  }
+  if (
+    !background &&
+    !/^[ \t]*exec - system system -- \/system\/bin\/vdc keymaster earlyBootEnded[ \t]*$/m.test(
+      init,
+    )
+  ) {
+    fail("system init lacks the expected blocking keymaster notification");
+  }
+  // The diagnostic fstab also changes first-stage mount behavior. Until the
+  // packaged vendor_boot ramdisk is inspected, do not claim this stance is
+  // verified merely because the vendor staging tree matches.
+  if (stamp.conservativeF2fs)
+    fail(
+      "conservative f2fs attestation requires packaged vendor_boot ramdisk verification, which is not implemented",
+    );
 
-  // A vendor.img older than any staged vendor file is definitionally stale.
-  const vendorImage = path.join(productDir, "vendor.img");
-  if (fs.existsSync(vendorImage)) {
-    const imageMtime = fs.statSync(vendorImage).mtimeMs;
-    const newestStaged = newestMtimeUnder(stagedVendorDir);
+  for (const partition of [
+    "vendor",
+    "system",
+    "system_ext",
+    "product",
+    "vendor_dlkm",
+    "system_dlkm",
+  ]) {
+    const imagePath = path.join(productDir, `${partition}.img`);
+    if (!fs.existsSync(imagePath))
+      fail(`required image absent: ${partition}.img`);
+    const imageMtime = fs.statSync(imagePath).mtimeMs;
+    const newestStaged = newestMtimeUnder(path.join(productDir, partition));
     if (newestStaged > imageMtime) {
       fail(
-        `vendor.img is older than the staged vendor tree (image ${new Date(imageMtime).toISOString()} < staged ${new Date(newestStaged).toISOString()}); rebuild before attesting`,
+        `${partition}.img is older than the staged ${partition} tree (image ${new Date(imageMtime).toISOString()} < staged ${new Date(newestStaged).toISOString()}); rebuild before attesting`,
       );
     }
   }
 
   const images = {};
-  for (const name of [...REQUIRED_ATTESTED_IMAGES, ...OPTIONAL_ATTESTED_IMAGES]) {
+  for (const name of [
+    ...REQUIRED_ATTESTED_IMAGES,
+    ...OPTIONAL_ATTESTED_IMAGES,
+  ]) {
     const imagePath = path.join(productDir, name);
     if (!fs.existsSync(imagePath)) {
-      if (REQUIRED_ATTESTED_IMAGES.includes(name)) fail(`required image absent: ${name}`);
+      if (REQUIRED_ATTESTED_IMAGES.includes(name))
+        fail(`required image absent: ${name}`);
       warn(`image absent, not attested: ${name}`);
       continue;
     }
-    const stat = fs.statSync(imagePath);
+    const stat = fs.lstatSync(imagePath);
+    if (!stat.isFile()) fail(`image is not a regular file: ${name}`);
     images[name] = {
       sha256: sha256File(imagePath),
       size: stat.size,
@@ -432,7 +541,8 @@ function check({ manifest: manifestPath, artifactDir }) {
   if (!manifestPath || !artifactDir) {
     fail("check requires --manifest and --artifact-dir");
   }
-  if (!fs.existsSync(manifestPath)) fail(`manifest does not exist: ${manifestPath}`);
+  if (!fs.existsSync(manifestPath))
+    fail(`manifest does not exist: ${manifestPath}`);
   if (!fs.existsSync(artifactDir) || !fs.statSync(artifactDir).isDirectory()) {
     fail(`artifact dir does not exist or is not a directory: ${artifactDir}`);
   }
@@ -445,8 +555,20 @@ function check({ manifest: manifestPath, artifactDir }) {
   if (manifest.device !== PRODUCT_DEVICE) {
     fail(`manifest device is ${manifest.device}, expected ${PRODUCT_DEVICE}`);
   }
+  if (
+    manifest.schemaVersion !== 1 ||
+    !manifest.images ||
+    typeof manifest.images !== "object" ||
+    Array.isArray(manifest.images)
+  )
+    fail("unsupported or malformed attestation manifest");
   const names = Object.keys(manifest.images ?? {});
   if (names.length === 0) fail("manifest attests no images");
+  const unattested = fs
+    .readdirSync(artifactDir)
+    .filter((name) => name.endsWith(".img") && !names.includes(name));
+  if (unattested.length)
+    fail(`artifact dir contains unattested images: ${unattested.join(", ")}`);
   let checked = 0;
   for (const name of names) {
     if (path.basename(name) !== name || !/^[a-z0-9_]+\.img$/.test(name)) {
@@ -462,6 +584,8 @@ function check({ manifest: manifestPath, artifactDir }) {
         `attested image missing from artifact dir: ${name} — flashing a partial set silently mixes build generations`,
       );
     }
+    if (!fs.lstatSync(local).isFile())
+      fail(`image is not a regular file: ${name}`);
     const actual = sha256File(local);
     if (actual !== expected) {
       fail(
@@ -470,13 +594,22 @@ function check({ manifest: manifestPath, artifactDir }) {
     }
     checked += 1;
   }
+  const missingCore = REQUIRED_ATTESTED_IMAGES.filter(
+    (name) => !names.includes(name),
+  );
+  if (missingCore.length)
+    fail(`manifest omits required images: ${missingCore.join(", ")}`);
   info(
     `verified ${checked} image(s) against attestation from ${manifest.attestedAt}`,
   );
   info(`attested prepare stamp: ${JSON.stringify(manifest.prepareStamp)}`);
-  info("images are exactly the attested build; safe to flash");
+  info(
+    "image hashes match; device compatibility and flash authorization remain separate checks",
+  );
 }
 
-const args = parseArgs(process.argv.slice(2));
-if (args.mode === "attest") attest(args);
-else check(args);
+if (isMainModule(import.meta)) {
+  const args = parseArgs(process.argv.slice(2));
+  if (args.mode === "attest") attest(args);
+  else check(args);
+}

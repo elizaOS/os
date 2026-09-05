@@ -470,6 +470,13 @@ build_plan() {
   for spec in "${IMAGE_SPECS[@]}"; do
     partition="${spec%%=*}"
     image="${spec#*=}"
+    if [[ -n "$MANIFEST" ]]; then
+      local declared=0 index
+      for index in "${!MANIFEST_PARTITIONS[@]}"; do
+        [[ "${MANIFEST_PARTITIONS[$index]}" != "$partition" ]] || declared=1
+      done
+      [[ "$declared" -eq 1 ]] || die "image for partition '$partition' is not declared by the release manifest"
+    fi
     mode="$(flash_mode_for_partition "$partition")"
     if [[ "$mode" != "bootloader" && "$mode" != "fastbootd" ]]; then
       die "manifest artifact '$partition' has unsupported fastboot mode '$mode'"
@@ -542,15 +549,31 @@ fastboot_preflight() {
 
   run_cmd "${fastboot_cmd[@]}" devices
 
+  local inventory serial state found=0 count=0 selected=""
+  inventory="$("${fastboot_cmd[@]}" devices)" || die "could not inventory fastboot devices"
+  while read -r serial state; do
+    [[ "$state" == "fastboot" ]] || continue
+    count=$((count + 1))
+    selected="$serial"
+    [[ "$serial" != "$DEVICE_SERIAL" ]] || found=1
+  done <<< "$inventory"
+  if [[ -n "$DEVICE_SERIAL" ]]; then
+    [[ "$found" -eq 1 ]] || die "requested device is not in normal fastboot mode: $DEVICE_SERIAL"
+  else
+    [[ "$count" -eq 1 ]] || die "expected exactly one normal fastboot device; found $count; pass --device SERIAL"
+    DEVICE_SERIAL="$selected"
+    read -r -a fastboot_cmd <<<"$(fastboot_base)"
+  fi
+
   local unlocked
-  unlocked="$("${fastboot_cmd[@]}" getvar unlocked 2>&1 | awk -F': ' '/unlocked:/ {print $2; exit}' | tr -d '\r' || true)"
+  unlocked="$(fastboot_getvar_value unlocked)"
   if [[ "$unlocked" != "yes" && "$unlocked" != "true" ]]; then
     die "bootloader does not report unlocked=yes; unlock it manually before flashing"
   fi
 
   if [[ -n "$FLASH_SUPPORTED_CODENAMES" ]]; then
     local product
-    product="$("${fastboot_cmd[@]}" getvar product 2>&1 | awk -F': ' '/product:/ {print $2; exit}' | tr -d '\r' || true)"
+    product="$(fastboot_getvar_value product)"
     case " $FLASH_SUPPORTED_CODENAMES " in
       *" $product "*) ;;
       *) die "fastboot product '$product' is not lab-validated by $MANIFEST" ;;
@@ -563,7 +586,9 @@ fastboot_preflight() {
 fastboot_getvar_value() {
   local fastboot_cmd
   read -r -a fastboot_cmd <<<"$(fastboot_base)"
-  "${fastboot_cmd[@]}" getvar "$1" 2>&1 | awk -F': ' -v key="$1" '$0 ~ key": " {print $2; exit}' | tr -d '\r' || true
+  local output
+  output="$("${fastboot_cmd[@]}" getvar "$1" 2>&1)" || return 1
+  printf '%s\n' "$output" | awk -v key="$1" '{sub(/\r$/, ""); sub(/^\(bootloader\) */, ""); if (index($0, key ":") == 1) {value=substr($0, length(key)+2); sub(/^ */, "", value); print value; exit}}'
 }
 
 # Vendor blobs are built against the bootloader/baseband recorded in the
@@ -652,6 +677,11 @@ main() {
 
   if [[ "$DRY_RUN" -eq 0 && "$ASSUME_BOOTLOADER" -eq 0 ]]; then
     preflight_adb
+  fi
+
+  # Pin the serial before building any executable commands.
+  if [[ "$EXECUTE" -eq 1 && "$ASSUME_BOOTLOADER" -eq 1 ]]; then
+    fastboot_preflight
   fi
 
   build_plan

@@ -28,8 +28,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
 import { loadBrandFromArgv } from "./brand-config.mjs";
+import { isMainModule } from "./is-main.mjs";
 
 /**
  * Step map factory — bound to a brand so the LAUNCHER step uses the
@@ -282,9 +282,7 @@ async function main(argv = process.argv.slice(2)) {
   await captureScreens({ ...args, adb, stepMap });
 }
 
-const isMain =
-  process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isMain = isMainModule(import.meta);
 if (isMain) {
   await main();
 }

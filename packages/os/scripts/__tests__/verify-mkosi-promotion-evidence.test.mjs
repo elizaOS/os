@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { createHash } from "node:crypto";
 
-const script = new URL("../verify-mkosi-promotion-evidence.mjs", import.meta.url);
+const script = new URL(
+  "../verify-mkosi-promotion-evidence.mjs",
+  import.meta.url,
+);
 const sourceSha = "a".repeat(40);
 
 function sha256(bytes) {
@@ -58,7 +61,10 @@ async function fixture() {
         architecture: "amd64",
         diskInterface: "usb",
         firmwareMode: "pflash",
-        emulator: { path: "/usr/bin/qemu-system-x86_64", version: "QEMU 11.1.0" },
+        emulator: {
+          path: "/usr/bin/qemu-system-x86_64",
+          version: "QEMU 11.1.0",
+        },
         terminationReason: "required-markers",
         markersFound: ["Linux version", "Reached target Graphical Interface"],
         forbiddenMarkersFound: [],
@@ -80,7 +86,10 @@ async function fixture() {
         architecture: "amd64",
         diskInterface: "usb",
         firmwareMode: "bios",
-        emulator: { path: "/usr/bin/qemu-system-x86_64", version: "QEMU 11.1.0" },
+        emulator: {
+          path: "/usr/bin/qemu-system-x86_64",
+          version: "QEMU 11.1.0",
+        },
         terminationReason: "required-markers",
         markersFound: ["Linux version", "Reached target Graphical Interface"],
         forbiddenMarkersFound: [],
@@ -99,7 +108,10 @@ async function fixture() {
         success: true,
         preflightOnly: false,
         architecture: "amd64",
-        sourceImage: { size: expandedBytes.length, sha256: sha256(expandedBytes) },
+        sourceImage: {
+          size: expandedBytes.length,
+          sha256: sha256(expandedBytes),
+        },
         virtualUsbReadback: {
           bytes: expandedBytes.length,
           sha256: sha256(expandedBytes),
@@ -188,7 +200,9 @@ test("promotion verifier rejects QEMU evidence for different expanded bytes", as
 
 test("promotion verifier rejects persistence evidence for different expanded bytes", async () => {
   const paths = await fixture();
-  const document = JSON.parse(await readFile(paths.persistenceEvidence, "utf8"));
+  const document = JSON.parse(
+    await readFile(paths.persistenceEvidence, "utf8"),
+  );
   document.virtualUsbReadback.sha256 = "c".repeat(64);
   await writeFile(paths.persistenceEvidence, JSON.stringify(document));
   const result = verify(paths);

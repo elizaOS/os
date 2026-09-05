@@ -54,6 +54,7 @@ import {
   DEFAULT_BRAND_CONFIG,
   loadBrandConfig,
 } from "../distro-android/brand-config.mjs";
+import { isMainModule } from "../distro-android/is-main.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const osRepoRoot = path.resolve(here, "../..");
@@ -246,13 +247,26 @@ function adbArgs(device, rest) {
 function listAdbDevices() {
   const res = spawnSync("adb", ["devices"], { encoding: "utf8" });
   if (res.status !== 0) return [];
-  return res.stdout
+  const rows = res.stdout
     .split("\n")
     .slice(1)
     .map((l) => l.trim())
     .filter((l) => l && !l.startsWith("*"))
-    .map((l) => l.split(/\s+/)[0])
-    .filter(Boolean);
+    .map((l) => l.split(/\s+/))
+    .filter((fields) => fields.length >= 2);
+  const unauthorized = rows.filter(([, state]) => state === "unauthorized");
+  if (unauthorized.length > 0) {
+    console.warn(
+      `[deploy-pixel] ignoring unauthorized adb device(s) ${unauthorized
+        .map(([serial]) => serial)
+        .join(", ")} — accept the USB debugging prompt on the device`,
+    );
+  }
+  // Only fully usable devices are deploy candidates; auto-selecting an
+  // unauthorized/offline serial just fails later on a raw shell command.
+  return rows
+    .filter(([, state]) => state === "device")
+    .map(([serial]) => serial);
 }
 
 async function main(argv = process.argv.slice(2)) {
@@ -610,7 +624,7 @@ async function main(argv = process.argv.slice(2)) {
   process.exit(ok ? 0 : 1);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta)) {
   main().catch((err) => {
     console.error(err?.stack || String(err));
     process.exit(1);

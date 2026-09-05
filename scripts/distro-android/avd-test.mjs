@@ -34,6 +34,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { loadBrandFromArgv } from "./brand-config.mjs";
 import { resolveAdb } from "./capture-screens.mjs";
+import { isMainModule } from "./is-main.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../..");
@@ -366,9 +367,7 @@ async function main(argv = process.argv.slice(2)) {
   }
 }
 
-const isMain =
-  process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isMain = isMainModule(import.meta);
 if (isMain) {
   await main();
 }

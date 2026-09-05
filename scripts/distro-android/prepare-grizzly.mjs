@@ -14,6 +14,7 @@ import {
   materializeLockedSourceOverlays,
   verifyLockedArtifact,
 } from "./bootstrap-aosp.mjs";
+import { isMainModule } from "./is-main.mjs";
 import { lintInitRc } from "./lint-init-rc.mjs";
 import { withSisoCompatibility } from "./siso-env.mjs";
 
@@ -231,7 +232,7 @@ export function resolveRenderEngineOverrides(env = process.env) {
   // Stock keeps Graphite on; a backend override needs Graphite off to be
   // honored unless the probe explicitly asks for Graphite-on-Vulkan.
   const graphite =
-    graphiteRaw !== null ? graphiteRaw === "1" : backend ? false : true;
+    graphiteRaw !== null ? graphiteRaw === "1" : !backend;
   return { backend, graphite };
 }
 
@@ -330,7 +331,12 @@ export function generatedTreeHasBringupProbes(aospRoot) {
     if (relativePath.endsWith("grizzly.mk")) {
       // grizzly.mk legitimately contains no probe text by default; only the
       // probe copy-rule marks it.
-      return contents.includes("init.elizaos-debug.rc");
+      return (
+        contents.includes("init.elizaos-debug.rc") ||
+        contents.includes(
+          "Match the stock Pixel 11 Pro Android 17 RenderEngine path",
+        )
+      );
     }
     return PROBE_SENTINELS.some((sentinel) => sentinel.test(contents));
   });
@@ -382,43 +388,80 @@ export function normalizeGeneratedBringupProbes(aospRoot) {
 export function normalizeAospKeymasterInit(aospRoot, enabled = false) {
   const sourceInitPath = path.join(aospRoot, "system/core/rootdir/init.rc");
   const generatedRoot = path.join(aospRoot, "vendor/google_devices/grizzly");
-  const overlayInitPath = path.join(generatedRoot, "diagnostics/system/etc/init/hw/init.rc");
+  const overlayInitPath = path.join(
+    generatedRoot,
+    "diagnostics/system/etc/init/hw/init.rc",
+  );
   const makefilePath = path.join(generatedRoot, "grizzly.mk");
   if (!fs.existsSync(sourceInitPath) || !fs.existsSync(makefilePath)) {
     fail(`keymaster diagnostic requires ${sourceInitPath} and ${makefilePath}`);
   }
   const contents = fs.readFileSync(sourceInitPath, "utf8");
-  const blocking = "exec - system system -- /system/bin/vdc keymaster earlyBootEnded";
-  const background = "exec_background - system system -- /system/bin/vdc keymaster earlyBootEnded";
+  const blocking =
+    "exec - system system -- /system/bin/vdc keymaster earlyBootEnded";
+  const background =
+    "exec_background - system system -- /system/bin/vdc keymaster earlyBootEnded";
   const marker = "elizaOS: diagnostic non-blocking keymaster notification";
   if (!enabled) {
     fs.rmSync(overlayInitPath, { force: true });
     const makefile = fs.readFileSync(makefilePath, "utf8");
-    const withoutOverlay = makefile.replace(/\n?# elizaOS diagnostic keymaster init overlay\nPRODUCT_COPY_FILES += \\\n {4}vendor\/google_devices\/grizzly\/diagnostics\/system\/etc\/init\/hw\/init\.rc:\$\(TARGET_COPY_OUT_SYSTEM\)\/etc\/init\/hw\/init\.rc\n?/m, "\n");
-    if (withoutOverlay !== makefile) fs.writeFileSync(makefilePath, withoutOverlay);
+    const withoutOverlay = makefile.replace(
+      /\n?# elizaOS diagnostic keymaster init overlay\nPRODUCT_COPY_FILES \+= \\\n {4}vendor\/google_devices\/grizzly\/diagnostics\/system\/etc\/init\/hw\/init\.rc:\$\(TARGET_COPY_OUT_SYSTEM\)\/etc\/init\/hw\/init\.rc\n?/m,
+      "\n",
+    );
+    if (withoutOverlay !== makefile)
+      fs.writeFileSync(makefilePath, withoutOverlay);
     return;
   }
-  const escape = (value) => value.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&");
-  const blockingPattern = new RegExp(`^([\\t ]*)${escape(blocking)}$`, "m");
+  const escapePattern = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const blockingPattern = new RegExp(`^([\\t ]*)${escapePattern(blocking)}$`, "m");
   if (!blockingPattern.test(contents)) {
-    if (new RegExp(`^([\\t ]*)${escape(background)}$`, "m").test(contents)) {
-      fail(`${sourceInitPath} already uses exec_background without the elizaOS marker`);
+    if (new RegExp(`^([\\t ]*)${escapePattern(background)}$`, "m").test(contents)) {
+      fail(
+        `${sourceInitPath} already uses exec_background without the elizaOS marker`,
+      );
     }
-    fail(`${sourceInitPath} is missing the expected vdc keymaster earlyBootEnded command`);
+    fail(
+      `${sourceInitPath} is missing the expected vdc keymaster earlyBootEnded command`,
+    );
   }
-  const normalized = contents.replace(blockingPattern, `$1# ${marker}\n$1${background}`);
+  const normalized = contents.replace(
+    blockingPattern,
+    `$1# ${marker}\n$1${background}`,
+  );
   fs.mkdirSync(path.dirname(overlayInitPath), { recursive: true });
-  if (!fs.existsSync(overlayInitPath) || fs.readFileSync(overlayInitPath, "utf8") !== normalized) fs.writeFileSync(overlayInitPath, normalized);
+  if (
+    !fs.existsSync(overlayInitPath) ||
+    fs.readFileSync(overlayInitPath, "utf8") !== normalized
+  )
+    fs.writeFileSync(overlayInitPath, normalized);
   const makefile = fs.readFileSync(makefilePath, "utf8");
-  const copyEntry = "    vendor/google_devices/grizzly/diagnostics/system/etc/init/hw/init.rc:$(TARGET_COPY_OUT_SYSTEM)/etc/init/hw/init.rc";
-  if (!makefile.includes(copyEntry)) fs.writeFileSync(makefilePath, `${makefile.trimEnd()}\n\n# elizaOS diagnostic keymaster init overlay\nPRODUCT_COPY_FILES += \\\n${copyEntry}\n`);
+  const copyEntry =
+    "    vendor/google_devices/grizzly/diagnostics/system/etc/init/hw/init.rc:$(TARGET_COPY_OUT_SYSTEM)/etc/init/hw/init.rc";
+  if (!makefile.includes(copyEntry))
+    fs.writeFileSync(
+      makefilePath,
+      `${makefile.trimEnd()}\n\n# elizaOS diagnostic keymaster init overlay\nPRODUCT_COPY_FILES += \\\n${copyEntry}\n`,
+    );
 }
 
 export function generatedTreeHasKeymasterOverride(aospRoot) {
   const generatedRoot = path.join(aospRoot, "vendor/google_devices/grizzly");
-  const overlayPath = path.join(generatedRoot, "diagnostics/system/etc/init/hw/init.rc");
+  const overlayPath = path.join(
+    generatedRoot,
+    "diagnostics/system/etc/init/hw/init.rc",
+  );
   const makefilePath = path.join(generatedRoot, "grizzly.mk");
-  return (fs.existsSync(overlayPath) && /diagnostic non-blocking keymaster notification/.test(fs.readFileSync(overlayPath, "utf8"))) || (fs.existsSync(makefilePath) && /diagnostic keymaster init overlay/.test(fs.readFileSync(makefilePath, "utf8")));
+  return (
+    (fs.existsSync(overlayPath) &&
+      /diagnostic non-blocking keymaster notification/.test(
+        fs.readFileSync(overlayPath, "utf8"),
+      )) ||
+    (fs.existsSync(makefilePath) &&
+      /diagnostic keymaster init overlay/.test(
+        fs.readFileSync(makefilePath, "utf8"),
+      ))
+  );
 }
 
 // After the generated tree exists, prove the graphics stack adevtool extracted
@@ -820,6 +863,6 @@ export async function prepareGrizzly({
   return { lock, files };
 }
 
-if (import.meta.main) {
+if (isMainModule(import.meta)) {
   await prepareGrizzly(parseArgs(process.argv.slice(2)));
 }

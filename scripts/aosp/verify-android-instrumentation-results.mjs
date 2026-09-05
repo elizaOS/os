@@ -2,6 +2,7 @@
 /** Fail-closed verifier for Gradle connected-Android-test JUnit XML. */
 import fs from "node:fs";
 import path from "node:path";
+import { isMainModule } from "../distro-android/is-main.mjs";
 
 function usage(message) {
   if (message) console.error(`[android-instrumentation-results] ${message}`);
@@ -70,26 +71,37 @@ function collectXml(directory) {
       const target = path.join(entry, name);
       const stat = fs.statSync(target);
       if (stat.isDirectory()) visit(target);
-      else if (name.endsWith(".xml")) documents.push(fs.readFileSync(target, "utf8"));
+      else if (name.endsWith(".xml"))
+        documents.push(fs.readFileSync(target, "utf8"));
     }
   };
   visit(directory);
   return documents;
 }
 
-if (import.meta.main) {
+if (isMainModule(import.meta)) {
   const results = value("--results");
   const requiredClass = value("--required-class");
   const minTests = Number(value("--min-tests"));
-  if (!results || !requiredClass || !Number.isInteger(minTests) || minTests < 1) {
-    usage("all arguments are required and --min-tests must be a positive integer");
+  if (
+    !results ||
+    !requiredClass ||
+    !Number.isInteger(minTests) ||
+    minTests < 1
+  ) {
+    usage(
+      "all arguments are required and --min-tests must be a positive integer",
+    );
   }
   if (!fs.existsSync(results) || !fs.statSync(results).isDirectory()) {
     usage(`results directory does not exist: ${results}`);
   }
   const documents = collectXml(results);
   if (documents.length === 0) usage(`no JUnit XML found under ${results}`);
-  const verdict = verifyInstrumentationXml(documents, { requiredClass, minTests });
+  const verdict = verifyInstrumentationXml(documents, {
+    requiredClass,
+    minTests,
+  });
   console.log(JSON.stringify(verdict, null, 2));
   if (!verdict.pass) process.exit(1);
 }

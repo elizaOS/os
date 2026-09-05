@@ -58,14 +58,17 @@ test("local mkosi front door builds a pinned multiarch tool container", async ()
   ]);
 
   assert.match(dockerfile, /^FROM \$\{DEBIAN_BASE_IMAGE\}$/m);
-  assert.match(dockerfile, /^        mkosi \\/m);
+  assert.match(dockerfile, /^ {8}mkosi \\/m);
   assert.match(makefile, /^builder:\n\tdocker build --pull/m);
   assert.match(makefile, /DEBIAN_SNAPSHOT_SERIAL=\$\(DEBIAN_SNAPSHOT_SERIAL\)/);
   assert.match(makefile, /DEBIAN_BASE_IMAGE=\$\(DEBIAN_BASE_IMAGE\)/);
-  assert.match(dockerfile, /^        qemu-user-binfmt \\/m);
-  assert.match(dockerfile, /^        qemu-system-x86 \\/m);
-  assert.match(dockerfile, /^        ipxe-qemu \\/m);
-  assert.match(makefile, /ELIZAOS_ARCH=\$\(ARCH\) \/work\/src\/elizaos\/scripts\/ensure-foreign-binfmt\.sh/);
+  assert.match(dockerfile, /^ {8}qemu-user-binfmt \\/m);
+  assert.match(dockerfile, /^ {8}qemu-system-x86 \\/m);
+  assert.match(dockerfile, /^ {8}ipxe-qemu \\/m);
+  assert.match(
+    makefile,
+    /ELIZAOS_ARCH=\$\(ARCH\) \/work\/src\/elizaos\/scripts\/ensure-foreign-binfmt\.sh/,
+  );
   assert.match(binfmt, /\/usr\/lib\/binfmt\.d\/\$handler\.conf/);
   assert.match(binfmt, />\/proc\/sys\/fs\/binfmt_misc\/register/);
   assert.match(binfmt, /failed to enable \$handler/);
@@ -77,9 +80,15 @@ test("local mkosi front door builds a pinned multiarch tool container", async ()
   assert.match(qemuQualify, /You are in emergency mode/);
   assert.match(qemuQualify, /Failed to start initrd-switch-root\.service/);
   assert.match(persistenceQualify, /You are in emergency mode/);
-  assert.match(persistenceQualify, /Failed to start initrd-switch-root\.service/);
+  assert.match(
+    persistenceQualify,
+    /Failed to start initrd-switch-root\.service/,
+  );
   assert.match(persistenceQualify, /normalized_console_text/);
-  assert.match(persistenceQualify, /Started gdm\.service - GNOME Display Manager/);
+  assert.match(
+    persistenceQualify,
+    /Started gdm\.service - GNOME Display Manager/,
+  );
   assert.match(snapshot.baseImage, /^debian:trixie@sha256:[a-f0-9]{64}$/);
   assert.match(snapshot.serial, /^[0-9]{8}T[0-9]{6}Z$/);
 });
@@ -105,10 +114,16 @@ test("development images may omit the future control broker but releases fail cl
     postinstall,
     /control input topology absent in explicit \$\{build_mode\} build; broker disabled/,
   );
-  assert.match(postinstall, /if \[ "\$control_installed" -eq 1 \]; then\n    systemctl enable eliza-control-broker\.socket/);
+  assert.match(
+    postinstall,
+    /if \[ "\$control_installed" -eq 1 \]; then\n {4}systemctl enable eliza-control-broker\.socket/,
+  );
   assert.match(postinstall, /logo_blue_nobg\.svg/);
   assert.match(postinstall, /glib-compile-schemas/);
-  assert.match(postinstall, /gtk-update-icon-cache --force \/usr\/share\/icons\/elizaOS/);
+  assert.match(
+    postinstall,
+    /gtk-update-icon-cache --force \/usr\/share\/icons\/elizaOS/,
+  );
   assert.match(initialSetupProfile, /system-db:local/);
   assert.match(brandingDefaults, /elizaos-blue\.svg/);
   assert.match(brandingDefaults, /icon-theme='elizaOS'/);
@@ -199,10 +214,7 @@ test("public release gate requires every qualified mkosi architecture and bounda
             filename: `${filename}.sig`,
             source: { ...source, pattern: "*.raw.zst.sig" },
             validation: {
-              requiredEvidence: [
-                "ed25519-signature",
-                "image-release-verified",
-              ],
+              requiredEvidence: ["ed25519-signature", "image-release-verified"],
             },
           },
           {
@@ -241,7 +253,9 @@ test("public release gate requires every qualified mkosi architecture and bounda
     ],
   };
   assert.deepEqual(validateCanonicalLinuxRelease(manifest), []);
-  manifest.artifacts.find((artifact) => artifact.kind === "raw-image").validation.requiredEvidence = canonicalEvidence.slice(1);
+  manifest.artifacts.find(
+    (artifact) => artifact.kind === "raw-image",
+  ).validation.requiredEvidence = canonicalEvidence.slice(1);
   assert.match(
     validateCanonicalLinuxRelease(manifest).join("\n"),
     /must require mkosi-release-build evidence/,

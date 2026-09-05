@@ -26,10 +26,14 @@ PRODUCT_PACKAGES += \
     default-permissions-ai.elizaos.app.xml \
     privapp-permissions-ai.elizaos.app.xml
 
-# Strip every stock app whose role Eliza owns. Trebuchet is LineageOS's
-# launcher; absent from AOSP but harmless to list. SetupWizard ships with
-# Pixel partner blobs only; stripping it here has no effect on Cuttlefish
-# and load-bearing on Pixel targets.
+# KNOWN GAP: `-=` is not a make (or kati) operator — this block is currently
+# a no-op that defines a stray variable, so none of these stock apps are
+# actually removed from any image. Even a working subtraction here could not
+# remove packages contributed by inherited makefiles (inherit-product
+# aggregation is deferred past this file's evaluation). Role/HOME defaults in
+# vendor/eliza/overlays keep Eliza in front regardless; the real de-bloat
+# needs a supported mechanism and boot-level verification. Tracked as a
+# follow-up; do not trust this list as a removal contract.
 PRODUCT_PACKAGES -= \
     Browser2 \
     Calendar \
@@ -82,9 +86,9 @@ PRODUCT_COPY_FILES += \
     vendor/eliza/bootanimation/bootanimation.zip:$(TARGET_COPY_OUT_PRODUCT)/media/bootanimation.zip
 endif
 
-# Sepolicy hooks. Custom domains for the Eliza priv-app go under
-# vendor/eliza/sepolicy/private; public types under .../public.
-# Empty today — denials show up in logcat tagged `avc: denied` until
-# real policy is written. BOARD_VENDOR_SEPOLICY_DIRS is the historical
-# variable; SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS is the modular-equivalent.
+# Keep the declaration next to the product overlay so Cuttlefish and generated
+# Pixel products share the same intended policy contract. Whether this
+# product-level append is consumed by a given Android 17 board is build-system
+# dependent; the compiled CIL and on-device denials are authoritative and are
+# required in the hardware gate.
 BOARD_VENDOR_SEPOLICY_DIRS += vendor/eliza/sepolicy

@@ -21,6 +21,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { isMainModule } from "./is-main.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../..");
@@ -84,7 +85,11 @@ export function selectEvidenceTransports({
     "offline",
     "unauthorized",
   ]);
-  const fastboot = rows(fastbootOutput, ["fastboot"]);
+  // platform-tools labels early DBL devices "ROM Recovery", not "fastboot".
+  const fastboot = fastbootOutput.split(/\r?\n/).flatMap((line) => {
+    const match = line.trim().match(/^(\S+)\s+(fastboot|ROM Recovery)$/);
+    return match ? [{ serial: match[1], state: match[2] }] : [];
+  });
   const serials = [...new Set([...adb, ...fastboot].map((row) => row.serial))];
   if (!device && serials.length > 1) {
     throw new Error(
@@ -226,6 +231,6 @@ export function captureEvidence(
   return outDir;
 }
 
-if (import.meta.main) {
+if (isMainModule(import.meta)) {
   captureEvidence(parseArgs(process.argv.slice(2)));
 }

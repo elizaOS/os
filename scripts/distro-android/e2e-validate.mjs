@@ -26,7 +26,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
 import { validateBootedDevice } from "./boot-validate.mjs";
 import { loadBrandFromArgv } from "./brand-config.mjs";
 import {
@@ -34,6 +33,7 @@ import {
   captureScreens,
   resolveAdb,
 } from "./capture-screens.mjs";
+import { isMainModule } from "./is-main.mjs";
 
 export function parseSubArgs(argv) {
   const args = {
@@ -160,9 +160,7 @@ async function main(argv = process.argv.slice(2)) {
   }
 }
 
-const isMain =
-  process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isMain = isMainModule(import.meta);
 if (isMain) {
   await main();
 }

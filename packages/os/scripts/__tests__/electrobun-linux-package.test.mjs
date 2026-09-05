@@ -8,14 +8,18 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const repoRoot = path.resolve(fileURLToPath(new URL("../../../..", import.meta.url)));
+const repoRoot = path.resolve(
+  fileURLToPath(new URL("../../../..", import.meta.url)),
+);
 const verifier = path.join(
   repoRoot,
   "packages/os/scripts/verify-electrobun-linux-package.sh",
 );
 
 async function fixture() {
-  const root = await mkdtemp(path.join(os.tmpdir(), "elizaos-electrobun-test-"));
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "elizaos-electrobun-test-"),
+  );
   const source = path.join(root, "source");
   await execFileAsync("mkdir", [source]);
   const installer = path.join(source, "installer");
@@ -38,7 +42,9 @@ test("Electrobun Linux package verifier accepts the exact installer envelope", a
   const { root, source } = await fixture();
   const payload = path.join(root, "package.tar.gz");
   await archive(source, payload);
-  const { stdout } = await execFileAsync(verifier, [payload], { cwd: repoRoot });
+  const { stdout } = await execFileAsync(verifier, [payload], {
+    cwd: repoRoot,
+  });
   assert.match(stdout, /Verified Electrobun Linux package/);
 });
 

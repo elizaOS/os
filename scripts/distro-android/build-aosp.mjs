@@ -27,6 +27,7 @@ import {
   verifyProprietaryArchive,
 } from "./bootstrap-aosp.mjs";
 import { loadBrandFromArgv } from "./brand-config.mjs";
+import { isMainModule } from "./is-main.mjs";
 import { provisionCuttlefishE1 } from "./provision-cuttlefish-e1.mjs";
 import { withSisoCompatibility } from "./siso-env.mjs";
 import { main as syncToAospMain } from "./sync-to-aosp.mjs";
@@ -469,10 +470,7 @@ const CUTTLEFISH_GPU_MODES = new Set([
   "none",
 ]);
 
-export function resolveCuttlefishGpuMode(
-  brand,
-  env = process.env,
-) {
+export function resolveCuttlefishGpuMode(brand, env = process.env) {
   const configured = env.ELIZA_CUTTLEFISH_GPU_MODE?.trim();
   if (configured) {
     if (!CUTTLEFISH_GPU_MODES.has(configured)) {
@@ -505,11 +503,7 @@ function launchCuttlefish(aospRoot, brand) {
   // real launch failure is never hidden by an incompatible fallback. Android's
   // documented gfxstream mode forwards guest OpenGL/Vulkan to the host and is
   // explicit here because auto mode can silently choose guest SwiftShader.
-  run(
-    "bash",
-    ["-lc", cuttlefishLaunchCommand(brand)],
-    { cwd: aospRoot },
-  );
+  run("bash", ["-lc", cuttlefishLaunchCommand(brand)], { cwd: aospRoot });
 }
 
 /**
@@ -626,9 +620,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 }
 
-const isMain =
-  process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isMain = isMainModule(import.meta);
 
 if (isMain) {
   await main();

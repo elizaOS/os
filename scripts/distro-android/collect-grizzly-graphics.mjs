@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { isMainModule } from "./is-main.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../..");
@@ -25,7 +26,9 @@ export function parseArgs(argv) {
     const argument = argv[index];
     const value = argv[index + 1];
     if (argument === "--adb" && value) {
-      options.adb = path.resolve(value);
+      // Only resolve paths; a bare command name ("adb") must stay a PATH
+      // lookup instead of becoming $PWD/adb.
+      options.adb = value.includes(path.sep) ? path.resolve(value) : value;
       index += 1;
     } else if ((argument === "--serial" || argument === "-s") && value) {
       options.serial = value;
@@ -85,17 +88,11 @@ export const GRAPHICS_PROBES = [
   { name: "properties", args: ["shell", "getprop"] },
   {
     name: "graphics-properties",
-    args: [
-      "shell",
-      "getprop | grep -Ei '(^|\\[)(ro\\.hardware\\.(egl|vulkan)|ro\\.board\\.platform|debug\\.renderengine|ro\\.surface_flinger|ro\\.gfx|graphics|gralloc|composer|vulkan|egl)'",
-    ],
+    args: ["shell", "getprop"],
   },
   {
     name: "graphics-libraries",
-    args: [
-      "shell",
-      "find /vendor/lib64 /system/lib64 -maxdepth 3 -type f 2>/dev/null | grep -Ei '/(egl|hw)/|vulkan|gralloc|mapper|composer' | sort",
-    ],
+    args: ["shell", "find /vendor/lib64 /system/lib64 -maxdepth 3 -type f"],
   },
   {
     name: "graphics-library-contexts",
@@ -119,21 +116,22 @@ export const GRAPHICS_PROBES = [
   { name: "vulkan-json", args: ["shell", "cmd gpu vkjson"] },
   {
     name: "vendor-vintf",
+    // Record absent optional fragments but retain failures reading existing ones.
     args: [
       "shell",
-      "for f in /vendor/etc/vintf/manifest.xml /vendor/etc/vintf/manifest/*.xml; do echo ===$f; cat $f; done",
+      'status=0; for f in /vendor/etc/vintf/manifest.xml /vendor/etc/vintf/manifest/*.xml; do if [ -e "$f" ]; then echo "===$f"; cat "$f" || status=1; else echo "ABSENT $f"; fi; done; exit "$status"',
     ],
   },
   {
     name: "graphics-processes",
-    args: [
-      "shell",
-      "ps -AZ | grep -Ei 'surfaceflinger|composer|allocator|mapper|gpu'",
-    ],
+    // Capture the raw inventory; filtering must not mask collection failures.
+    args: ["shell", "ps -AZ"],
   },
   {
     name: "kernel-graphics",
-    args: ["shell", "dmesg | grep -Ei 'drm|gpu|vulkan|mali|gralloc|display'"],
+    // dmesg is root-only on a booted userdebug device; the denial lands in
+    // stderr as evidence and must remain a failed probe.
+    args: ["shell", "dmesg"],
   },
   {
     name: "logcat-all",
@@ -192,8 +190,6 @@ export function main(argv = process.argv.slice(2)) {
   }
 }
 
-const isMain =
-  process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isMain = isMainModule(import.meta);
 
 if (isMain) main();
