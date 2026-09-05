@@ -127,7 +127,6 @@ build_native_plugin() {
         silero-vad-cpp) sentinel_a="$builddir/libsilero_vad.a";;
         voice-classifier-cpp) sentinel_a="$builddir/libvoice_classifier.a";;
         wakeword-cpp) sentinel_a="$builddir/libwakeword.a";;
-        yolo-cpp) sentinel_a="$builddir/libyolo.a";;
         face-cpp) sentinel_a="$builddir/libface.a";;
         doctr-cpp) sentinel_a="$builddir/libdoctr.a";;
         polarquant-cpu) sentinel_a="$builddir/libpolarquant.a";;
@@ -187,7 +186,6 @@ build_native_plugin turboquant-cpu       "$TBQ_RVV"
 build_native_plugin silero-vad-cpp       ""
 build_native_plugin voice-classifier-cpp ""
 build_native_plugin wakeword-cpp         ""
-build_native_plugin yolo-cpp             ""
 build_native_plugin face-cpp             ""
 build_native_plugin doctr-cpp            ""
 

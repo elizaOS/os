@@ -39,9 +39,13 @@ The smoke harness writes a machine-readable report to
 
 - **Native plugins** (`$ELIZAOS_ELIZA_ROOT/packages/native/plugins/<pkg>/build/riscv64/`)
   for `qjl-cpu`, `polarquant-cpu`, `turboquant-cpu`, `silero-vad-cpp`,
-  `voice-classifier-cpp`, `wakeword-cpp`, `yolo-cpp`, `face-cpp`,
+  `voice-classifier-cpp`, `wakeword-cpp`, `face-cpp`,
   `doctr-cpp`. Each plugin contributes one `.a`, an optional `.so`,
   and a handful of GoogleTest-driven smoke executables.
+
+  The pinned upstream removed the unused YOLO prototype in
+  `17f56c177c2c3c32585885db2bcc748530471163`; it is no longer a required
+  artifact. Missing sources or outputs for the remaining plugins still fail.
 
 - **`libllama` + `libggml` family + `libeliza-llama-shim.so`** —
   MTP llama.cpp cross-build via
