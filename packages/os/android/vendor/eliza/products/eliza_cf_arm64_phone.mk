@@ -1,5 +1,7 @@
 $(call inherit-product, device/google/cuttlefish/vsoc_arm64/phone/aosp_cf.mk)
 
+PRODUCT_SOONG_DEFINED_SYSTEM_IMAGE := eliza_aosp_shared_system_image
+
 PRODUCT_NAME := eliza_cf_arm64_phone
 PRODUCT_DEVICE := vsoc_arm64
 PRODUCT_MODEL := elizaOS Cuttlefish Phone (ARM64)

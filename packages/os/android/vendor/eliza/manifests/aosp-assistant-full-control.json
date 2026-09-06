@@ -187,6 +187,7 @@
   },
   "privilegedPermissions": [
     "android.permission.PACKAGE_USAGE_STATS",
+    "android.permission.SCHEDULE_EXACT_ALARM",
     "android.permission.MANAGE_APP_OPS_MODES",
     "android.permission.MANAGE_VIRTUAL_MACHINE",
     "android.permission.READ_FRAME_BUFFER",

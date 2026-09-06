@@ -487,7 +487,18 @@ export function resolveCuttlefishGpuMode(brand, env = process.env) {
 
 export function cuttlefishLaunchCommand(brand, env = process.env) {
   const gpuMode = resolveCuttlefishGpuMode(brand, env);
-  const launchArgs = `--daemon --gpu_mode=${gpuMode}`;
+  const rendererFeatures = env.ELIZA_CUTTLEFISH_GPU_RENDERER_FEATURES?.trim();
+  if (
+    rendererFeatures &&
+    !/^[A-Za-z][A-Za-z0-9]*:(?:enabled|disabled)(?:;[A-Za-z][A-Za-z0-9]*:(?:enabled|disabled))*$/.test(
+      rendererFeatures,
+    )
+  ) {
+    throw new Error(
+      "ELIZA_CUTTLEFISH_GPU_RENDERER_FEATURES must contain semicolon-separated Feature:enabled or Feature:disabled entries",
+    );
+  }
+  const launchArgs = `--daemon --gpu_mode=${gpuMode}${rendererFeatures ? ` --gpu_renderer_features='${rendererFeatures}'` : ""}`;
   return [
     "source build/envsetup.sh",
     `lunch ${brand.lunchTarget}`,

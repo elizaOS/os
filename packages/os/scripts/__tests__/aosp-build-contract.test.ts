@@ -691,6 +691,32 @@ describe("AOSP build contracts", () => {
     ).toBe(false);
   });
 
+  test("Cuttlefish extends the Soong system image with elizaOS modules", () => {
+    const vendorRoot = join(repositoryRoot, "packages/os/android/vendor/eliza");
+    const systemImage = readFileSync(join(vendorRoot, "Android.bp"), "utf8");
+
+    expect(systemImage).toContain('name: "eliza_aosp_shared_system_image"');
+    expect(systemImage).toContain('defaults: ["system_image_defaults"]');
+    expect(systemImage).toContain('"Eliza"');
+    expect(systemImage).toContain('"default-permissions-ai.elizaos.app.xml"');
+    expect(systemImage).toContain('"privapp-permissions-ai.elizaos.app.xml"');
+
+    for (const product of [
+      "eliza_cf_arm64_phone",
+      "eliza_cf_riscv64_e1_phone",
+      "eliza_cf_riscv64_phone",
+      "eliza_cf_x86_64_phone",
+    ]) {
+      const productMakefile = readFileSync(
+        join(vendorRoot, `products/${product}.mk`),
+        "utf8",
+      );
+      expect(productMakefile).toContain(
+        "PRODUCT_SOONG_DEFINED_SYSTEM_IMAGE := eliza_aosp_shared_system_image",
+      );
+    }
+  });
+
   test("the E1 Cuttlefish simulator is a separately locked product", () => {
     const lockPath = join(
       repositoryRoot,
@@ -1671,6 +1697,18 @@ describe("AOSP build contracts", () => {
     expect(command).toContain("if command -v cvd");
     expect(command).not.toContain("gpu_mode=auto");
     expect(command).not.toContain("2>/dev/null ||");
+    expect(
+      cuttlefishLaunchCommand(brand, {
+        ELIZA_CUTTLEFISH_GPU_RENDERER_FEATURES:
+          "VulkanAllocateHostMemory:enabled;VulkanDisableCoherentMemoryAndEmulate:enabled",
+      }),
+    ).toContain("--gpu_renderer_features='VulkanAllocateHostMemory:enabled;VulkanDisableCoherentMemoryAndEmulate:enabled'");
+    expect(() =>
+      cuttlefishLaunchCommand(brand, {
+        ELIZA_CUTTLEFISH_GPU_RENDERER_FEATURES:
+          "VulkanAllocateHostMemory:enabled;VulkanDisableCoherentMemoryAndEmulate:enabled'; touch /tmp/unsafe",
+      }),
+    ).toThrow("ELIZA_CUTTLEFISH_GPU_RENDERER_FEATURES must contain");
   });
 
   test("Cuttlefish GPU selection is explicit and rejects shell input", () => {

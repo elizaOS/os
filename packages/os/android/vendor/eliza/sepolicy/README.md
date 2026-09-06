@@ -12,6 +12,15 @@ on-device app is platform-signed and runs as `platform_app`; the only active
 rule allows `platform_app` to execute files labeled `app_data_file` so the app
 can start its bundled bun runtime from `/data/data/<pkg>/files/agent/`.
 
+Android 17 assigns platform-signed apps targeting SDK 36 or earlier to
+`platform_app_36`. The same execution allowance applies to that compatibility
+domain only in userdebug/eng images. A Cuttlefish boot reproduced an
+`{ execute }` denial from `platform_app_36` to `app_data_file` for the musl loader.
+The compatibility domain also receives `file link` only in userdebug/eng images:
+Cuttlefish reproduced a `linkat` denial during atomic runtime identity publication.
+Ownership checks and no-overwrite hard-link publication remain enforced by the
+runtime; production policy is unchanged by these compatibility rules.
+
 The rule is intentionally documented as a broad userdebug-build allowance in
 the `.te` file. A previous custom-domain attempt hit AOSP neverallow checks
 around app data labels and vendor domain transitions, so the production path is
