@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "repository": "elizaOS/eliza",
   "sourceRef": "develop",
-  "commit": "d69ac857580678824025ba9dcd453b15fce4b3cb",
-  "commitTimestamp": "2026-09-05T05:16:10Z",
+  "commit": "1bd8ad63b37369a36c0aff3d5b3f8478559a5f92",
+  "commitTimestamp": "2026-09-06T04:08:26Z",
   "submodules": "recursive"
 }
