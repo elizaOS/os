@@ -28,8 +28,16 @@ archive="ripgrep-${version}-${target}.tar.gz"
 release_url="https://github.com/BurntSushi/ripgrep/releases/download/${version}"
 install_root="${RUNNER_TEMP}/ripgrep-${version}"
 mkdir -p "${install_root}"
-curl -fsSL "${release_url}/${archive}" -o "${install_root}/${archive}"
-curl -fsSL "${release_url}/${archive}.sha256" -o "${install_root}/${archive}.sha256"
+# GitHub release downloads can reset the TLS connection before transferring
+# bytes. Retry transport errors within a finite budget; checksum failures still
+# stop immediately below.
+curl_args=(
+    --fail --silent --show-error --location
+    --retry 3 --retry-delay 2 --retry-all-errors
+    --connect-timeout 20 --max-time 120 --retry-max-time 180
+)
+curl "${curl_args[@]}" "${release_url}/${archive}" -o "${install_root}/${archive}"
+curl "${curl_args[@]}" "${release_url}/${archive}.sha256" -o "${install_root}/${archive}.sha256"
 (cd "${install_root}" && sha256sum --check "${archive}.sha256")
 tar -xzf "${install_root}/${archive}" -C "${install_root}"
 bin_dir="${install_root}/ripgrep-${version}-${target}"
