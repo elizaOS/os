@@ -210,8 +210,8 @@ async function pollHealth(deadline, request, token) {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
-        const body = await res.json().catch(() => ({}));
-        return { ok: true, body };
+        const body = await res.json();
+        if (body.ready === true) return { ok: true, body };
       }
     } catch {
       // fall through to retry
