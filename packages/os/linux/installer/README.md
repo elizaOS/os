@@ -250,3 +250,61 @@ accepted AF_UNIX connection and must prove peer PID/UID/GID and pidfd live,
 exited, and closed states without treating a denied syscall as a skip. A
 restricted local sandbox may therefore pass the compile gate while remaining
 explicitly non-qualified for the kernel boundary.
+
+
+## Native GPT snapshot qualification
+
+`native/gpt-snapshot.c` contains candidate primitives for the missing recovery backend.
+Its read-only capture operation records the protective MBR sector, primary header/array and backup
+array/header through one retained whole-device descriptor. It binds kernel
+device number, disk sequence, capacity, logical sector size and the trusted
+original plan/inventory binding. It re-reads all captured regions and rechecks
+the held identity before returning exact artifact bytes and their SHA-256.
+Capture never opens a device pathname, repairs a header or writes any device.
+
+Validation follows the relevant [UEFI GPT structures](https://uefi.org/specs/UEFI/2.11/05_GUID_Partition_Table_Format.html): both actual header and array CRCs,
+matching redundant metadata, protective-only MBR, bounded non-overlapping array
+locations and usable ranges, non-overlapping partitions, unique nonzero partition
+GUIDs and reserved entry bytes. Supported policy bounds are 512/4096-byte logical
+sectors, up to 4096 entries and 16 KiB through 4 MiB per declared array, with
+128-times-a-power-of-two entry sizes. Hybrid MBRs, invalid redundancy and layouts
+outside those bounds fail closed. Relocated arrays, larger entries and a partial
+last array sector are supported; no fixed single-partition Restore layout is
+assumed. The versioned envelope retains each region byte-for-byte, including
+its sector padding, and verification requires its exact trusted digest/binding.
+
+Both existing disposable Debian VM lanes now also qualify this reader on a
+separate named virtio disk. Three multi-partition layouts, checksum corruption,
+validly checksummed invalid layouts, identity drift, malformed artifacts and
+inappropriate descriptors are exercised. Full target and non-target canary
+hashes must stay unchanged across capture. The host compares the saved artifact
+regions directly with the final virtual disk, retains `gpt-snapshot.bin`, and
+binds the source, binary, artifact and transcript hashes into its report.
+
+The separate restore operation copies and verifies the trusted artifact, binding
+and expected identity before writing through an exclusively retained buffered
+whole-device descriptor. It restores, flushes and reads back the backup GPT copy
+before writing the primary array/header and protective MBR, then flushes and
+compares all five original regions. Required trusted authorization/cancellation
+checks and live descriptor identity checks run between bounded writes and
+operations. Results retain the last completed checkpoint, byte count and whether
+a write was attempted; an error after an attempted write is incomplete even
+when the reported byte count is zero.
+
+Both VM lanes damage only their dedicated GPT fixture disk, then exercise native
+restoration, cancellation and child-process termination at seven checkpoints,
+with explicit restoration and exact full-disk verification after each interruption.
+They also reject invalid artifacts, authorization and descriptor/identity states,
+stop after a real read-only transition following a partial write, and verify that
+callback mutation cannot replace the copied inputs. All three layouts are restored;
+the larger array also exercises cancellation between 64 KiB write chunks.
+Process interruption is not
+a guest or hardware power cut. Success proves restored on-disk metadata, not a
+refreshed kernel partition map, bootability or rollback of filesystem/payload writes.
+
+The library is not installed or connected to the privileged installer. Captured
+bytes are not yet a durable backup: production must independently verify the
+recovery storage, fsync the file and directory, and bind the artifact into the
+journal. Production recovery authorization, kernel map verification, power-loss
+recovery and physical-media qualification remain unfinished. OpenSSL libcrypto is used for artifact hashing
+in this candidate; the VM builds it with `libssl-dev` and links `-lcrypto`.
