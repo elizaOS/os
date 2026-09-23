@@ -11,12 +11,19 @@ param(
   [switch]$RebootAfterFlash,
   [switch]$Execute,
   [switch]$ConfirmFlash,
-  [switch]$DryRun = $true,
-  [Parameter(ValueFromRemainingArguments = $true)]
-  [string[]]$ExtraArgs
+  [switch]$DryRun,
+  [string]$ToolDir,
+  [string]$RecoveryDir,
+  [string]$Journal,
+  [string]$HealthTokenFile
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($DryRun -and $Execute) { throw "-DryRun conflicts with -Execute" }
+if ($ConfirmFlash) {
+  throw "PowerShell supports planning and read-only discovery only. Confirmed installation requires the qualified Linux host and signed v2 installer."
+}
 
 function Find-Bash {
   $candidates = @("bash.exe", "bash")
@@ -50,8 +57,10 @@ if ($Execute) {
 } else {
   $argsList += "--dry-run"
 }
-if ($ConfirmFlash) { $argsList += "--confirm-flash" }
-if ($ExtraArgs) { $argsList += $ExtraArgs }
+if ($ToolDir) { $argsList += @("--tool-dir", $ToolDir) }
+if ($RecoveryDir) { $argsList += @("--recovery-dir", $RecoveryDir) }
+if ($Journal) { $argsList += @("--journal", $Journal) }
+if ($HealthTokenFile) { $argsList += @("--health-token-file", $HealthTokenFile) }
 
 $bash = Find-Bash
 & $bash $bashInstaller @argsList

@@ -3,6 +3,7 @@ set -euo pipefail
 
 DRY_RUN=1
 EXECUTE=0
+EXPLICIT_DRY_RUN=0
 CONFIRM_FLASH=0
 SKIP_PREFLIGHT=0
 ASSUME_BOOTLOADER=0
@@ -34,7 +35,7 @@ Usage:
   install-elizaos-android.sh --artifact-dir OUT_DIR [options]
   install-elizaos-android.sh --image partition=/path/to/image.img [--image ...] [options]
 
-Plans and optionally runs an elizaOS Android image flash through adb/fastboot.
+Plans legacy images or delegates signed v2 installation to the shared executor.
 The default mode is dry-run: commands are printed and no device is modified.
 
 Required image input:
@@ -52,8 +53,8 @@ Required image input:
   --journal FILE              New private JSONL file for durable command results.
 
 Device and safety options:
-  --device SERIAL             adb/fastboot serial. Required if multiple devices
-                              are attached.
+  --device SERIAL             adb/fastboot serial. Always required for confirmed
+                              installation; discovery can select one device.
   --slot SLOT                 Pass --slot SLOT to fastboot flash commands and
                               set it active after flashing, so a bootloader
                               slot-fallback cannot silently boot the other
@@ -65,7 +66,7 @@ Device and safety options:
   --allow-stale-artifacts     Skip the artifact-coherence check that refuses an
                               artifact dir whose image mtimes span more than an
                               hour (a signature of mixed build generations).
-  --skip-preflight            Skip USB debugging and bootloader unlock checks.
+  --skip-preflight            Skip legacy discovery checks only; forbidden for flashing.
   --assume-bootloader         Do not plan or run adb reboot bootloader.
   --wipe-data                 Authorize qualified data wipes. Never implied.
                               Required the first time the userdata/encryption
@@ -209,8 +210,8 @@ parse_args() {
         shift
         ;;
       --dry-run)
+        EXPLICIT_DRY_RUN=1
         DRY_RUN=1
-        EXECUTE=0
         shift
         ;;
       --execute)
@@ -231,6 +232,9 @@ parse_args() {
         ;;
     esac
   done
+
+  [[ "$EXPLICIT_DRY_RUN" -eq 0 || "$EXECUTE" -eq 0 ]] || die "--dry-run conflicts with --execute"
+  [[ -z "$DEVICE_SERIAL" || "$DEVICE_SERIAL" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]*$ ]] || die "invalid device serial"
 
   if [[ -z "$ARTIFACT_DIR" && "${#IMAGE_SPECS[@]}" -eq 0 ]]; then
     die "provide --artifact-dir or at least one --image PARTITION=PATH"
@@ -311,20 +315,20 @@ flash_mode_for_partition() {
 
 discover_adb_device() {
   local devices
-  devices="$(adb devices -l | awk 'NR > 1 && NF > 0 {print $1 ":" $2}')"
+  devices="$(adb devices -l | awk 'NR > 1 && NF > 0 {print $1 "\t" $2}')"
 
   if [[ -n "$DEVICE_SERIAL" ]]; then
     local state
-    state="$(echo "$devices" | awk -F: -v serial="$DEVICE_SERIAL" '$1 == serial {print $2; found=1} END {if (!found) exit 1}' || true)"
+    state="$(echo "$devices" | awk -F '\t' -v serial="$DEVICE_SERIAL" '$1 == serial {print $2; found=1} END {if (!found) exit 1}' || true)"
     [[ -n "$state" ]] || die "adb device '$DEVICE_SERIAL' was not found"
     [[ "$state" == "device" ]] || die "adb device '$DEVICE_SERIAL' is '$state'; authorize USB debugging and reconnect"
     return
   fi
 
   local ready_count
-  ready_count="$(echo "$devices" | awk -F: '$2 == "device" {count++} END {print count + 0}')"
+  ready_count="$(echo "$devices" | awk -F '\t' '$2 == "device" {count++} END {print count + 0}')"
   if [[ "$ready_count" -eq 0 ]]; then
-    if echo "$devices" | grep -q ':unauthorized'; then
+    if echo "$devices" | grep -q $'\tunauthorized'; then
       die "adb sees an unauthorized device; accept the USB debugging prompt on the device"
     fi
     die "no adb device in 'device' state was found"
@@ -334,7 +338,8 @@ discover_adb_device() {
     die "multiple adb devices are attached; pass --device SERIAL"
   fi
 
-  DEVICE_SERIAL="$(echo "$devices" | awk -F: '$2 == "device" {print $1; exit}')"
+  DEVICE_SERIAL="$(echo "$devices" | awk -F '\t' '$2 == "device" {print $1; exit}')"
+  [[ "$DEVICE_SERIAL" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]*$ ]] || die "invalid discovered device serial"
   log "selected adb device $DEVICE_SERIAL"
 }
 
@@ -438,6 +443,7 @@ collect_images() {
   for spec in "${specs[@]}"; do
     [[ "$spec" == *=* ]] || die "--image must be PARTITION=PATH, got '$spec'"
     partition="${spec%%=*}"
+    [[ "$partition" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || die "invalid partition name"
     image="${spec#*=}"
     [[ -n "$partition" && -n "$image" ]] || die "invalid image spec '$spec'"
     [[ -f "$image" ]] || die "image for partition '$partition' does not exist: $image"
@@ -480,6 +486,7 @@ build_plan() {
   local spec partition image mode current_mode="bootloader"
   for spec in "${IMAGE_SPECS[@]}"; do
     partition="${spec%%=*}"
+    [[ "$partition" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || die "invalid partition name"
     image="${spec#*=}"
     if [[ -n "$MANIFEST" ]]; then
       local declared=0 index
@@ -530,7 +537,7 @@ build_plan() {
 
 print_plan() {
   echo
-  echo "Flash command plan:"
+  echo "Legacy hypothetical flash plan (not installation authorization):"
   local command
   for command in "${PLAN[@]}"; do
     echo "  $command"
@@ -548,7 +555,7 @@ print_plan() {
   if [[ "$DRY_RUN" -eq 1 ]]; then
     echo "Dry-run only. No commands were executed."
   elif [[ "$CONFIRM_FLASH" -ne 1 ]]; then
-    echo "Discovery/preflight may run, but flashing is blocked until --confirm-flash is provided."
+    echo "Read-only discovery only. Actual installation requires a qualified signed v2 contract."
   fi
 }
 
@@ -572,6 +579,7 @@ fastboot_preflight() {
     [[ "$found" -eq 1 ]] || die "requested device is not in normal fastboot mode: $DEVICE_SERIAL"
   else
     [[ "$count" -eq 1 ]] || die "expected exactly one normal fastboot device; found $count; pass --device SERIAL"
+    [[ "$selected" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]*$ ]] || die "invalid discovered device serial"
     DEVICE_SERIAL="$selected"
     read -r -a fastboot_cmd <<<"$(fastboot_base)"
   fi
@@ -638,16 +646,13 @@ enforce_android_info() {
       fi
     done
     unset IFS
-    [[ "$matched" -eq 1 ]] || die "device reports $key='$actual' but $ANDROID_INFO requires '$values'; flash the matching firmware before this image set"
+    [[ "$matched" -eq 1 ]] || die "device reports $key='$actual' but $ANDROID_INFO requires '$values'; stop and qualify the exact firmware/image combination"
   done < "$ANDROID_INFO"
 }
 
 execute_plan() {
   [[ "$EXECUTE" -eq 1 ]] || return 0
   [[ "$CONFIRM_FLASH" -ne 1 ]] || die "confirmed flashing must use the signed v2 installer"
-  if [[ "$ASSUME_BOOTLOADER" -eq 1 ]]; then
-    fastboot_preflight
-  fi
   log "execution requested without --confirm-flash; stopping before bootloader/flashing commands"
 }
 
@@ -665,8 +670,9 @@ main() {
     require_tool node
     exec node "$ROOT/../../../../scripts/android/install-release.mjs" "${original_args[@]}"
   fi
-  require_tool adb
-  require_tool fastboot
+  if [[ "$EXECUTE" -eq 1 ]]; then
+    if [[ "$ASSUME_BOOTLOADER" -eq 1 ]]; then require_tool fastboot; else require_tool adb; fi
+  fi
   collect_images
   validate_release_inputs
 

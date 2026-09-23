@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 /** Standalone read-only post-install verification using the signed contract. */
 import path from "node:path";
-import { checkedRun, parseOptions, toolPaths } from "./install-release.mjs";
+import {
+  checkedRun,
+  parseOptions,
+  pinnedToolRunner,
+  toolPaths,
+} from "./install-release.mjs";
 import { readHealthToken, verifyPostBoot } from "./post-boot.mjs";
 import {
   loadPolicy,
@@ -31,10 +36,11 @@ try {
   if (o.execute) {
     const healthToken = readHealthToken(o.healthTokenFile);
     const tools = toolPaths(path.resolve(o.toolDir), release, checkedRun);
+    const run = pinnedToolRunner(tools, release);
     const result = verifyPostBoot(
       release,
       (args, options) =>
-        checkedRun(tools.adb, ["-s", o.serial, "shell", ...args], options),
+        run(tools.adb, ["-s", o.serial, "shell", ...args], options),
       o.slot,
       healthToken,
       (token) => readAndroidHealth(tools.adb, o.serial, token),

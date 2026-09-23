@@ -63,7 +63,7 @@ case "$*" in
       printf 'HTTP/1.0 %s Unavailable\r\nContent-Type: application/json\r\n\r\n{"status":"unhealthy"}\n' "$FAKE_AGENT_HEALTH_STATUS"
     fi
     ;;
-  *"logcat -d"*) echo 'logcat clean' ;;
+  *"logcat -d"*) [[ "${FAKE_LOGCAT_FAIL:-0}" == 0 ]] || exit 1; echo 'logcat clean' ;;
   *"settings get global adb_enabled"*) echo 1 ;;
   *) echo "fake adb $*" ;;
 esac
@@ -341,3 +341,58 @@ if node "$ROOT/scripts/validate-release-manifest.mjs" \
 fi
 assert_contains "$EXTRA_ARTIFACT_OUT" "dtbo.img: image is not declared by the release manifest"
 pass "manifest validator refuses undeclared flash images"
+
+if FAKE_LOGCAT_FAIL=1 "$ROOT/scripts/validate-post-flash.sh" --device TEST123 --execute >"$TMP_DIR/logcat.out" 2>&1; then
+  fail "validator accepted failed logcat transport"
+fi
+pass "validator fails closed when logcat cannot be read"
+
+# Network-connected Cuttlefish serials contain a colon.
+cat >"$BIN_DIR/adb" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  "devices -l") printf 'List of devices attached\n127.0.0.1:6521 device\n' ;;
+  *"settings get global adb_enabled") echo 1 ;;
+  *) echo fixture ;;
+esac
+EOF
+chmod +x "$BIN_DIR/adb"
+for serial in explicit automatic; do
+  selection=()
+  [[ "$serial" != explicit ]] || selection=(--device 127.0.0.1:6521)
+  "$ROOT/install-elizaos-android.sh" --artifact-dir "$ARTIFACT_DIR" --execute "${selection[@]}" >"$TMP_DIR/network.out" 2>&1
+  assert_contains "$TMP_DIR/network.out" "adb -s 127.0.0.1:6521"
+done
+pass "legacy discovery preserves network ADB serials"
+
+# Rejections must occur before any transport is invoked.
+for tool in adb fastboot; do
+  cat >"$BIN_DIR/$tool" <<'EOF'
+#!/usr/bin/env bash
+echo unexpected-transport-call >&2
+exit 99
+EOF
+  chmod +x "$BIN_DIR/$tool"
+done
+for entry in "$ROOT/install-elizaos-android.sh" "$ROOT/scripts/validate-post-flash.sh"; do
+  input=()
+  [[ "$entry" != "$ROOT/install-elizaos-android.sh" ]] || input=(--artifact-dir "$ARTIFACT_DIR")
+  for order in first last; do
+    flags=(--dry-run --execute)
+    [[ "$order" != last ]] || flags=(--execute --dry-run)
+    if "$entry" "${input[@]}" "${flags[@]}" >"$TMP_DIR/refusal.out" 2>&1; then fail "accepted conflicting execution flags"; fi
+    assert_contains "$TMP_DIR/refusal.out" "--dry-run conflicts with --execute"
+  done
+  if "$entry" "${input[@]}" --device 'SERIAL --transport-id 2' --execute >"$TMP_DIR/refusal.out" 2>&1; then fail "accepted invalid serial"; fi
+  assert_contains "$TMP_DIR/refusal.out" "invalid device serial"
+done
+pass "installer and validator reject conflicts and serial argument injection before transport"
+for option in --launcher-package --expect; do
+  if "$ROOT/scripts/validate-post-flash.sh" "$option" 'x;touch /data/local/tmp/injected=value' --execute >"$TMP_DIR/refusal.out" 2>&1; then fail "accepted remote shell injection"; fi
+  if grep -q unexpected-transport-call "$TMP_DIR/refusal.out"; then fail "queried device before rejecting remote shell injection"; fi
+  assert_contains "$TMP_DIR/refusal.out" "invalid"
+done
+pass "legacy validator rejects remote shell metacharacters before transport"
+"$ROOT/install-elizaos-android.sh" --artifact-dir "$ARTIFACT_DIR" >"$TMP_DIR/offline.out" 2>&1
+if grep -q unexpected-transport-call "$TMP_DIR/offline.out"; then fail "dry-run queried transport"; fi
+pass "legacy planning never invokes transport"

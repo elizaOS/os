@@ -495,7 +495,10 @@ export function validateEnvelope(
 
 // Stream images: multi-gigabyte super/ZIP files must not be loaded into RAM.
 export function hashFile(file) {
-  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  const fd = fs.openSync(
+    file,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+  );
   try {
     const before = fs.fstatSync(fd);
     requireThat(

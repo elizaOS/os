@@ -1,7 +1,9 @@
 # elizaOS Android installer
 
 The Bash/PowerShell helpers retain legacy image planning and read-only
-discovery. All confirmed writes now delegate to the signed v2 installer.
+discovery. Confirmed writes from Bash delegate to the signed v2 installer. PowerShell
+refuses confirmed writes, including through WSL; it supports planning and
+read-only discovery only.
 Current hardware and trust policy are unenrolled, so physical execution remains
 blocked. A candidate build is not installation authorization.
 
@@ -17,6 +19,8 @@ packages/os/android/installer/install-elizaos-android.sh --artifact-dir /absolut
 ```
 
 This legacy dry-run discovers loose filenames and prints a hypothetical plan.
+Planning requires no adb/fastboot installation. Conflicting `--dry-run` and
+`--execute` flags are rejected in either order.
 It does not establish that the images are coherent, bootable or authorized to
 flash. `--image`, `--allow-stale-artifacts` and `--skip-preflight` cannot bypass
 the signed execution path. `--execute` without `--confirm-flash` performs only
@@ -92,3 +96,7 @@ over adb stdin, never in command arguments or journals; health must return
 available, omit `--reboot-after-flash`, complete the qualified boot/setup
 procedure, then run the standalone validator with the new credential. Missing
 credentials never count as successful validation. Do not commit this file.
+
+PowerShell uses explicit parameters (`-ToolDir`, `-RecoveryDir`, `-Journal`,
+`-HealthTokenFile`); arbitrary trailing Bash arguments are no longer accepted.
+`-DryRun -Execute` is an error.
