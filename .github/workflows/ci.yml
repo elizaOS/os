@@ -220,4 +220,5 @@ jobs:
           path: |
             ${{ runner.temp }}/restore-evidence/*.log
             ${{ runner.temp }}/restore-evidence/qualification.json
+            ${{ runner.temp }}/restore-evidence/gpt-snapshot.bin
           if-no-files-found: warn

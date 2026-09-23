@@ -25,6 +25,7 @@ IMAGE_SHA512 = "a733e7d49442a03e70d03e4eb5aaf3967f3efc69ef70952f9bb10fc1ee2c4876
 SOURCE_URL = "https://codeload.github.com/exfatprogs/exfatprogs/tar.gz/3e87676349387a119cadacd68661d2966796b7fd"
 SOURCE_SHA256 = "2c342bb1a4a9fb5ace61020bb6fae1784cb48e98577b18e271691d9de85fa337"
 NATIVE = Path(__file__).resolve().parent
+INSTALLER_NATIVE = NATIVE.parent.parent / "linux" / "installer" / "native"
 SIZE = 512 * 1024 * 1024
 
 
@@ -227,13 +228,16 @@ def main():
         "linux-restore-helper.c", "linux-restore-helper.qualify.c",
         "restore-transaction.c", "restore-transaction.h", "restore-transaction.qualify.c",
     )}
+    installer_sources = {name: (INSTALLER_NATIVE / name).read_bytes() for name in (
+        "gpt-snapshot.c", "gpt-snapshot.h", "qualify-gpt-snapshot.py",
+    )}
     data = """#cloud-config
 hostname: elizaos-restore-qualification
 package_update: true
-packages: [gcc, make, autoconf, automake, libtool, patch, libc6-dev, libfdisk-dev, fdisk, python3, strace]
+packages: [gcc, make, autoconf, automake, libtool, patch, libc6-dev, libfdisk-dev, libssl-dev, fdisk, python3, strace]
 write_files:
 """
-    for name, content in {**sources, "exfat.tar.gz": source.read_bytes()}.items():
+    for name, content in {**sources, **installer_sources, "exfat.tar.gz": source.read_bytes()}.items():
         data += (f"  - path: /root/{name}\n    permissions: '0600'\n    encoding: b64\n"
                  f"    content: {base64.b64encode(content).decode()}\n")
     guest_script = """#!/bin/sh
@@ -248,6 +252,8 @@ cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 /root/res
 cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 /root/linux-restore-helper.c -o /usr/libexec/elizaos-restore-helper-test
 cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 -shared -fPIC /root/linux-restore-helper.qualify.c -o /root/linux-restore-helper-qualification.so
 cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 -shared -fPIC /root/restore-transaction.qualify.c /root/restore-transaction.c /root/restore-gpt-fd.c /root/restore-tool-runner.c -lfdisk -o /root/restore-transaction-qualification.so
+cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 -shared -fPIC /root/gpt-snapshot.c -lcrypto -o /root/gpt-snapshot.so
+python3 /root/qualify-gpt-snapshot.py --disposable-vm --sector-size SECTOR_BYTES > /dev/ttyS1
 helper_status=0
 strace -f -e trace=openat,fcntl,ioctl,fsync -o /root/helper.trace python3 /root/qualify-restore-helper.py --disposable-vm --sector-size SECTOR_BYTES > /dev/ttyS1 || helper_status=$?
 cat /root/helper.trace
@@ -267,7 +273,7 @@ exit "$status"
                 str(output / "guest.qcow2"), "8G"])
     image_tool(["genisoimage", "-quiet", "-output", str(output / "seed.iso"),
                 "-volid", "cidata", "-joliet", "-rock", "user-data", "meta-data"])
-    for disk in ("target.raw", "canary.raw", "helper-usb.raw", "transaction-usb.raw"):
+    for disk in ("target.raw", "canary.raw", "helper-usb.raw", "transaction-usb.raw", "gpt-snapshot.raw"):
         with (output / disk).open("xb") as stream:
             stream.truncate(SIZE)
     before = file_hash(output / "canary.raw")
@@ -284,6 +290,9 @@ exit "$status"
                         f"logical_block_size={args.sector_size},physical_block_size={args.sector_size}"),
             "-drive", "file=canary.raw,if=none,id=canary,format=raw",
             "-device", "virtio-blk-pci,drive=canary,serial=ELIZAOS-CANARY",
+            "-drive", "file=gpt-snapshot.raw,if=none,id=gpt-snapshot,format=raw",
+            "-device", ("virtio-blk-pci,id=gpt-snapshot-device,drive=gpt-snapshot,serial=ELIZAOS-GPT-TEST,"
+                        f"logical_block_size={args.sector_size},physical_block_size={args.sector_size}"),
             "-device", "qemu-xhci,id=helper-xhci",
             "-drive", "file=helper-usb.raw,if=none,id=helper-usb,format=raw",
             "-device", "usb-uas,id=helper-uas,bus=helper-xhci.0,serial=ELIZAOS-HELPER-TEST",
@@ -304,6 +313,36 @@ exit "$status"
                for line in transcript.splitlines() if line.startswith("ELIZAOS_RESTORE_FD_REPORT ")]
     if len(reports) != 1 or reports[0].get("status") != "pass":
         raise RuntimeError(f"guest did not qualify: {reports}; inspect {output / 'guest.log'}")
+    snapshot_reports = [json.loads(line.split("ELIZAOS_GPT_SNAPSHOT_REPORT ", 1)[1])
+                        for line in transcript.splitlines() if line.startswith("ELIZAOS_GPT_SNAPSHOT_REPORT ")]
+    if len(snapshot_reports) != 1 or snapshot_reports[0].get("status") != "pass":
+        raise RuntimeError("native GPT snapshot did not qualify")
+    snapshot_report = snapshot_reports[0]
+    if (snapshot_report["sectorBytes"] != args.sector_size or snapshot_report["canarySha256"] != before or
+            snapshot_report["targetSha256"] != file_hash(output / "gpt-snapshot.raw")):
+        raise RuntimeError("GPT snapshot target/canary digest mismatch")
+    artifact = base64.b64decode(snapshot_report.pop("artifactBase64"), validate=True)
+    if (hashlib.sha256(artifact).hexdigest() != snapshot_report["artifactSha256"] or
+            artifact[:16] != b"ELIZAOS-GPT-V1\x00\x00" or len(artifact) < 128):
+        raise RuntimeError("GPT snapshot artifact digest/envelope mismatch")
+    sector, span, size, primary_array, secondary_array = struct.unpack_from("<IIQQQ", artifact, 16)
+    if (sector != args.sector_size or span < 16384 or span > 4194304 or span % sector or size != SIZE or
+            artifact[48:80].hex() != snapshot_report["binding"] or any(artifact[80:128]) or
+            len(artifact) != 128 + 3 * sector + 2 * span):
+        raise RuntimeError("GPT snapshot geometry mismatch")
+    cursor = 128
+    with (output / "gpt-snapshot.raw").open("rb") as disk:
+        for lba, length in [(0, sector), (1, sector), (primary_array, span),
+                            (secondary_array, span), (SIZE // sector - 1, sector)]:
+            if lba * sector + length > SIZE:
+                raise RuntimeError("GPT snapshot region exceeds disk")
+            disk.seek(lba * sector)
+            if disk.read(length) != artifact[cursor:cursor + length]:
+                raise RuntimeError("GPT snapshot did not preserve exact on-disk metadata")
+            cursor += length
+    (output / "gpt-snapshot.bin").write_bytes(artifact)
+    (output / "gpt-snapshot-partitions.log").write_text(subprocess.check_output(
+        ["fdisk", "-b", str(sector), "-l", str(output / "gpt-snapshot.raw")], text=True, timeout=15))
     helper_reports = [json.loads(line.split("ELIZAOS_RESTORE_HELPER_REPORT ", 1)[1])
                       for line in transcript.splitlines() if line.startswith("ELIZAOS_RESTORE_HELPER_REPORT ")]
     if len(helper_reports) != 1 or helper_reports[0].get("status") != "pass":
@@ -333,6 +372,8 @@ exit "$status"
               "transactionPartitions": transaction_parts, "hostRunnerSha256": host_runner_sha256,
               "guest": reports[0], "partitions": parts,
               "nativeHelper": helper_report, "helperPartitions": helper_parts,
+              "gptSnapshot": snapshot_report,
+              "installerSourceSha256": {name: hashlib.sha256(content).hexdigest() for name, content in installer_sources.items()},
               "canarySha256Before": before, "canarySha256After": after,
               "imageSha512": IMAGE_SHA512, "exfatSourceSha256": SOURCE_SHA256,
               "sourceSha256": {name: hashlib.sha256(content).hexdigest() for name, content in sources.items()},
