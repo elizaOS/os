@@ -79,9 +79,12 @@ connected, so the package never changes a partition table.
   process-interruption checks. A local qualification also kills/reboots disposable
   QEMU overlays at four storage checkpoints and requires a directory-synced
   artifact to survive exact native verification. This discards the guest kernel;
-  physical power loss and host storage caches are not modeled. Its required
-  trusted storage-policy callbacks are
-  not a production backing-device resolver. Production
+  physical power loss and host storage caches are not modeled. Required trusted
+  callbacks are not a production storage policy. Native kernel-ancestry checks
+  bind the filesystem to a retained partition and direct whole-disk parent,
+  reject the target as storage, and recheck disk generations. Physical alias
+  detection, configured-path/mount lifetime and qualified durable media remain
+  policy responsibilities. Production
   backup storage/backend composition and power-loss proof remain unfinished.
   Save and verify both GPT headers and
   partition entries to separate recovery media/state, perform typed operations,

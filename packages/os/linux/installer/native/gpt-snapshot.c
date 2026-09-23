@@ -65,7 +65,7 @@ static int read_exact(int fd, void *buffer, size_t n, uint64_t offset) {
   }
   return 0;
 }
-static int validate_fd(int fd, const struct elizaos_install_disk_identity *id) {
+int elizaos_install_check_whole_disk(int fd, const struct elizaos_install_disk_identity *id) {
   if (!id || !id->diskseq || id->size_bytes < UINT64_C(67108864) ||
       id->size_bytes > INT64_MAX ||
       (id->sector_bytes != 512U && id->sector_bytes != 4096U) ||
@@ -229,7 +229,7 @@ int elizaos_install_capture_gpt(int fd,
     size_t *length, unsigned char digest[32]) {
   if (!binding || !output || !length || !digest || zeroes(binding, 32U)) return -EINVAL;
   *length = 0;
-  int rc = validate_fd(fd, expected);
+  int rc = elizaos_install_check_whole_disk(fd, expected);
   if (rc) return rc;
   const uint32_t sector = expected->sector_bytes;
   unsigned char header[4096];
@@ -265,7 +265,7 @@ int elizaos_install_capture_gpt(int fd,
       (rc = compare_region(fd, first_array * sector, entries, span)) ||
       (rc = compare_region(fd, last_array * sector, secondary_entries, span)) ||
       (rc = compare_region(fd, last * sector, secondary, sector)) ||
-      (rc = validate_fd(fd, expected)) || (rc = sha256(output, needed, digest))) return rc;
+      (rc = elizaos_install_check_whole_disk(fd, expected)) || (rc = sha256(output, needed, digest))) return rc;
   *length = needed;
   return 0;
 }
@@ -275,7 +275,7 @@ static int restore_guard(int fd, const struct elizaos_install_disk_identity *id,
                           const struct elizaos_gpt_restore_control *control) {
   int rc = control->check(control->context);
   if (rc != 0) return rc < 0 ? rc : -EACCES;
-  if ((rc = validate_fd(fd, id))) return rc;
+  if ((rc = elizaos_install_check_whole_disk(fd, id))) return rc;
   const int flags = fcntl(fd, F_GETFL);
   if (flags < 0) return -errno;
   if ((flags & O_ACCMODE) != O_RDWR || (flags & (O_APPEND | O_DIRECT)) != 0) return -EACCES;

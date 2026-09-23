@@ -12,6 +12,13 @@ struct elizaos_install_disk_identity {
   uint32_t sector_bytes;
 };
 
+/* Read-only kernel identity check shared by the internal recovery primitives.
+ * Requires a whole block descriptor with the expected dev_t, diskseq, size and
+ * sector geometry and a matching live sysfs generation. This does not authorize
+ * access or prove physical hardware identity, exclusivity or storage topology. */
+int elizaos_install_check_whole_disk(int fd,
+    const struct elizaos_install_disk_identity *expected);
+
 /* Read-only internal primitive, not installed or an authorization API. Caller
  * authenticates the exact plan, excludes mounted/current-boot targets and holds
  * the exclusive whole-device claim throughout capture. binding is the trusted

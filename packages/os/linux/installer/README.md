@@ -329,6 +329,18 @@ descriptors; special files, changed names and corrupt/truncated bytes fail close
 Required trusted callbacks repeat authorization, cancellation and storage-policy
 checks. These callbacks must come from the root backend, never renderer input.
 
+`elizaos_install_check_recovery_storage` supplies a read-only native check for
+kernel backing ancestry. It binds the directory's filesystem device to a retained
+partition, verifies that partition's direct sysfs parent against a retained whole
+disk, checks partition geometry and disk generation, and requires a different
+kernel whole-disk identity for the installation target. Both whole disks must have
+a direct device and no slave devices; stacked or unresolved storage is refused.
+The storage VM fixture invokes this check at each persistence guard and exercises
+same-target, wrong-partition/parent, stale-generation and directory-identity
+refusals, plus refusal of a real mounted ext4 loop partition. This checks kernel topology, not physical independence: production policy
+must still reject hardware aliases (such as two paths to one LUN), qualify the
+recovery medium, bind the configured pathname and retain locks/mount lifetime.
+
 The VM qualification stores artifacts on its separate ext4 root disk, exercises
 cancellation and child-process exit at four persistence checkpoints, explicitly
 reopens complete artifacts, rejects incomplete ones, and preserves interrupted
