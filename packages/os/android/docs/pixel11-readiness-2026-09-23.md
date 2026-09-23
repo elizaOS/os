@@ -91,3 +91,36 @@ summarizes their scope and is not a signed qualification receipt.
 
 Until those gates pass, the correct installer result is refusal. No host test
 suite can establish a zero-brick guarantee for untested hardware transitions.
+
+## Additional qualification before connecting a phone
+
+The next host-side review added an exclusive per-serial installer interlock.
+It spans device inspection, staging, writes and requested boot verification.
+A failed write or killed process leaves the lock in place for investigation;
+there is no automatic retry of a partially applied plan. See the
+[interlock operating rules](../../../../scripts/android/README.md#concurrent-or-interrupted-installation).
+This protects concurrent invocations by the same host account, not independent
+raw fastboot processes or another host/account.
+
+The read-only incident collector now preserves subprocess stderr for model
+identification. Fastboot normally reports its getvars there; previously the
+collector saved that output but did not return it to the identity check.
+Tests exercise an actual subprocess writing stderr, while unknown products
+and failed probes still cannot authorize device-specific diagnostics.
+
+Verified before physical connection:
+
+| Boundary | Result and limit |
+| --- | --- |
+| Concurrent installation | Separate processes targeting one serial are rejected; different serials remain independent. |
+| Interrupted installer | SIGKILL leaves an interlock; write errors block immediate retries; normal completion and pre-write failures release the lock. |
+| Flash command failure | Injected a failure at every command in the generated plan; no later command ran and no success receipt was produced. This is simulated I/O, not USB/power-loss qualification. |
+| Artifact integrity | Every signed file was independently corrupted and removed; verification rejected each case. |
+| Public entrypoints | Node and shell entrypoints rejected fixture authorization before invoking any ADB/fastboot tool. |
+| Repository verification | Frozen dependency install and full verification passed: 230 Node release tests, 114 Bun contract tests / 1134 assertions, workspace checks and native compilation. |
+| Shell compatibility | All 19 shell installer mock checks passed. |
+| Running Cuttlefish | Repeated complete post-boot verification passed against the previously recorded APK/image, including authenticated health, expected slot, SELinux, page size and app roles. |
+
+**Ready for read-only phone intake, not physical installation.** Nothing in this
+review establishes a bootable grizzly image or qualifies a firmware transition.
+The builder, exact image, physical recovery and hardware gates above remain open.
