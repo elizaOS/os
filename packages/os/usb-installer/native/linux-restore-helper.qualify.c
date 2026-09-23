@@ -9,11 +9,13 @@ int elizaos_qualify_consume(const char *plan_id, const char *binding) {
   if (!is_lower_hex(plan_id, 32U) || !is_lower_hex(binding, 64U)) return -3;
   memcpy(request.plan_id, plan_id, 33U);
   memcpy(request.plan_binding, binding, 65U);
+  struct retained_authorization grant;
   int directory = -1;
-  int result = validate_authorized_plan(&request, &directory);
+  int result = validate_authorized_plan(&request, &directory, &grant);
   if (result != 0) return result;
-  result = consume_authorized_plan(&request, directory);
-  if (close(directory) != 0) return -1;
+  result = consume_authorized_plan(&request, directory, &grant);
+  const int closed_grant = close_authorization(&grant);
+  if (close(directory) != 0 || closed_grant != 0) return -1;
   return result;
 }
 
