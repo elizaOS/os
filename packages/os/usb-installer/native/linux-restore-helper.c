@@ -43,6 +43,11 @@ struct request {
   uint64_t authorized_until_ns; /* Trusted file only, never parsed from request. */
 };
 
+struct retained_authorization {
+  int directory;
+  int record;
+};
+
 struct sha256_context {
   uint8_t data[64];
   uint32_t data_length;
@@ -376,7 +381,7 @@ static bool request_matches_current_boot(const struct request *request) {
          memcmp(value, request->boot_id, BOOT_ID_BYTES) == 0;
 }
 
-static int authorization_status(const struct request *request) {
+static int authorization_clock_status(const struct request *request) {
   struct timespec now;
   if (clock_gettime(CLOCK_BOOTTIME, &now) != 0 || now.tv_sec < 0 ||
       now.tv_nsec < 0 || now.tv_nsec >= 1000000000L) return -EIO;
@@ -398,7 +403,7 @@ static bool read_authorization(int descriptor, struct request *request) {
   char value[160];
   size_t used = 0U;
   while (used < sizeof(value)) {
-    const ssize_t amount = read(descriptor, value + used, sizeof(value) - used);
+    const ssize_t amount = pread(descriptor, value + used, sizeof(value) - used, (off_t)used);
     if (amount < 0) {
       if (errno == EINTR) continue;
       return false;
@@ -419,6 +424,35 @@ static bool read_authorization(int descriptor, struct request *request) {
          parse_uint64(separator + 1, false, &request->authorized_until_ns);
 }
 
+/* Retain the original inode so replacement cannot become a renewed grant.
+ * The broker withdraws authorization by unlinking its exact record. These
+ * checks sample revocation between operations; they never interrupt a write. */
+static int authorization_status(const struct request *request,
+                                 const struct retained_authorization *grant) {
+  const int clock_status = authorization_clock_status(request);
+  if (clock_status != 0) return clock_status;
+  struct stat held, named;
+  struct request current = *request;
+  if (!trusted_state_directory(grant->directory) ||
+      !trusted_authorization_file(grant->record) ||
+      fstat(grant->record, &held) != 0 ||
+      fstatat(grant->directory, request->plan_id, &named, AT_SYMLINK_NOFOLLOW) != 0 ||
+      !S_ISREG(named.st_mode) || held.st_dev != named.st_dev || held.st_ino != named.st_ino ||
+      !read_authorization(grant->record, &current) ||
+      current.authorized_from_ns != request->authorized_from_ns ||
+      current.authorized_until_ns != request->authorized_until_ns ||
+      !trusted_authorization_file(grant->record)) return -EKEYREVOKED;
+  return 0;
+}
+
+static int close_authorization(struct retained_authorization *grant) {
+  const int record = close(grant->record);
+  const int directory = close(grant->directory);
+  grant->record = -1;
+  grant->directory = -1;
+  return record == 0 && directory == 0 ? 0 : -1;
+}
+
 /*
  * A caller-controlled digest is not authorization. A separate privileged
  * broker must place the exact binding in authorized/<plan-id> as a root-owned,
@@ -426,8 +460,11 @@ static bool read_authorization(int descriptor, struct request *request) {
  * broker or policy entry, so ordinary callers cannot authorize mutation.
  */
 static int validate_authorized_plan(struct request *request,
-                                    int *consumed_directory) {
+                                    int *consumed_directory,
+                                    struct retained_authorization *grant) {
   *consumed_directory = -1;
+  grant->directory = -1;
+  grant->record = -1;
   const int root = open(STATE_ROOT, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
   if (root < 0 || !trusted_state_directory(root)) {
     if (root >= 0) (void)close(root);
@@ -461,8 +498,8 @@ static int validate_authorized_plan(struct request *request,
     (void)close(root);
     return -2;
   }
-  (void)close(authorization);
-  if (authorization_status(request) != 0) {
+  if (authorization_clock_status(request) != 0) {
+    (void)close(authorization);
     (void)close(consumed);
     (void)close(authorized);
     (void)close(root);
@@ -472,20 +509,23 @@ static int validate_authorized_plan(struct request *request,
   struct stat marker_metadata;
   if (fstatat(consumed, request->plan_id, &marker_metadata,
               AT_SYMLINK_NOFOLLOW) == 0) {
+    (void)close(authorization);
     (void)close(consumed);
     (void)close(authorized);
     (void)close(root);
     return 1;
   }
   if (errno != ENOENT) {
+    (void)close(authorization);
     (void)close(consumed);
     (void)close(authorized);
     (void)close(root);
     return -1;
   }
 
-  (void)close(authorized);
   (void)close(root);
+  grant->record = authorization;
+  grant->directory = authorized;
   *consumed_directory = consumed;
   return 0;
 }
@@ -497,8 +537,9 @@ static int validate_authorized_plan(struct request *request,
  * disabled helper deliberately never consumes a plan.
  */
 static int consume_authorized_plan(const struct request *request,
-                                   int consumed_directory) {
-  const int authorization = authorization_status(request);
+                                   int consumed_directory,
+                                   const struct retained_authorization *grant) {
+  const int authorization = authorization_status(request, grant);
   if (authorization != 0) { errno = -authorization; return -1; }
   const int marker = openat(consumed_directory, request->plan_id,
                             O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
@@ -744,8 +785,9 @@ int main(int argc, char **argv) {
                        4);
   }
   int consumed_directory = -1;
+  struct retained_authorization grant;
   const int authorized =
-      validate_authorized_plan(&request, &consumed_directory);
+      validate_authorized_plan(&request, &consumed_directory, &grant);
   if (authorized == 1) {
     return emit_result("blocked", "PLAN_ALREADY_CONSUMED",
                        "The single-use restore plan was already consumed.", 5);
@@ -770,6 +812,7 @@ int main(int argc, char **argv) {
   if (whole_device < 0 || !validate_whole_device_fd(whole_device, &request)) {
     if (whole_device >= 0) (void)close(whole_device);
     (void)close(consumed_directory);
+    (void)close_authorization(&grant);
     return emit_result("blocked", "TARGET_IDENTITY_MISMATCH",
                        "The opened whole-device identity is not the authorized target.",
                        8);
@@ -787,6 +830,7 @@ int main(int argc, char **argv) {
   (void)open_verified_partition;
   (void)close(whole_device);
   (void)close(consumed_directory);
+  (void)close_authorization(&grant);
   return emit_result(
       "blocked", "NATIVE_FD_QUALIFICATION_REQUIRED",
       "Restore remains disabled until fixed native tools pass FD qualification.",

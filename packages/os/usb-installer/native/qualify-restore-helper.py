@@ -458,7 +458,6 @@ def main():
         os.close(removal_fd)
     removal_plan = request(device_path=removal_path, **{
         f"expected_{field}": getattr(removal_identity, field) for field, _ in Identity._fields_})
-    authorize(removal_plan)
     observer_type = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int)
     observer_errors = []
     removal_evidence = {}
@@ -489,6 +488,64 @@ def main():
     observed.argtypes = [ctypes.c_char_p, ctypes.c_size_t, observer_type,
                          ctypes.POINTER(TransactionResult), ctypes.POINTER(ctypes.c_uint32)]
     observed.restype = ctypes.c_int
+    revocation_cases = []
+    for revoke_kind in ("unlink", "replace", "extend", "binding", "mode", "rename", "symlink"):
+        for revoke_step in (0, 1):
+            revoke_plan = request()
+            before_revoke = current_digest()
+            revoke_path = authorize(revoke_plan)
+            revoke_errors = []
+            before_fds = len(os.listdir("/proc/self/fd"))
+
+            @observer_type
+            def revoke(step, _whole, _partition):
+                if step != revoke_step:
+                    return 0
+                try:
+                    original = revoke_path.read_bytes()
+                    if revoke_kind == "unlink":
+                        revoke_path.unlink()
+                    elif revoke_kind == "replace":
+                        replacement = revoke_path.with_suffix(".replacement")
+                        replacement.write_bytes(original)
+                        replacement.chmod(0o600)
+                        os.replace(replacement, revoke_path)
+                    elif revoke_kind == "extend":
+                        issued, expires = grant_times[revoke_plan[0]]
+                        # Still a valid bounded grant in isolation; the admitted
+                        # transaction must not adopt its changed deadline.
+                        grant_times[revoke_plan[0]] = (issued + 1, expires + 1)
+                        revoke_path.write_bytes(authorization_bytes(revoke_plan))
+                    elif revoke_kind == "binding":
+                        revoke_path.write_bytes(authorization_bytes(revoke_plan, binding="0" * 64))
+                    elif revoke_kind == "mode":
+                        revoke_path.chmod(0o644)
+                    else:
+                        moved = revoke_path.with_suffix(".withdrawn")
+                        revoke_path.rename(moved)
+                        if revoke_kind == "symlink":
+                            revoke_path.symlink_to(moved)
+                    return 0
+                except Exception as error:
+                    revoke_errors.append(str(error))
+                    return 1
+
+            revoke_result, revoke_steps = TransactionResult(), ctypes.c_uint32()
+            revoke_rc = observed(revoke_plan[2], len(revoke_plan[2]), revoke,
+                                 ctypes.byref(revoke_result), ctypes.byref(revoke_steps))
+            require(not revoke_errors and revoke_rc == -errno.EKEYREVOKED and
+                    revoke_result.error == revoke_rc and revoke_result.outcome == 0 and
+                    revoke_result.media == revoke_step and revoke_result.last_completed == revoke_step and
+                    revoke_steps.value == (1 << (revoke_step + 1)) - 1,
+                    f"withdrawn transaction continued: {revoke_kind} at {revoke_step}: {revoke_errors}")
+            require(len(os.listdir("/proc/self/fd")) == before_fds, "retained authorization descriptor leaked")
+            require((STATE / "consumed" / revoke_plan[0]).exists() == (revoke_step == 1),
+                    "revocation violated the consumption boundary")
+            require(current_digest() == before_revoke, "revoked transaction wrote the target")
+            revocation_cases.append({"kind": revoke_kind, "revokedAfter": revoke_step,
+                                     "error": revoke_rc, "media": revoke_result.media,
+                                     "diskUnchanged": True, "descriptorsClosed": True})
+
     expiry_cases = []
     for expiry_step in (0, 1):
         expiry_plan = request()
@@ -527,6 +584,7 @@ def main():
         expiry_cases.append({"expiredAfter": expiry_step, "error": expiry_rc,
                              "media": expiry_result.media, "diskUnchanged": True})
 
+    authorize(removal_plan)
     removal_result, removal_steps = TransactionResult(), ctypes.c_uint32()
     removal_rc = observed(removal_plan[2], len(removal_plan[2]), observe,
                           ctypes.byref(removal_result), ctypes.byref(removal_steps))
@@ -547,7 +605,8 @@ def main():
               "fixtureBusyRetries": fixture_busy_retries,
               "transaction": {"cases": transaction_cases, "complete": True, "filesystem": filesystem,
                               "admissionRefusals": ["missing authorization", "wrong kernel generation"],
-                              "deviceRemoval": removal_evidence, "expiry": expiry_cases},
+                              "deviceRemoval": removal_evidence, "expiry": expiry_cases,
+                              "revocation": revocation_cases},
               "singleUseResults": {"accepted": results.count(0), "rejected": results.count(1)},
               "partitionBinding": ["valid partition", "symlink refused", "wrong disk refused", *geometry_cases],
               "binaries": {str(path): hashlib.sha256(path.read_bytes()).hexdigest()

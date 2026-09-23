@@ -53,7 +53,7 @@ an in-flight write: it stops subsequent operations after bounded work settles.
 Before consumption, expiry leaves media untouched; after consumption is
 attempted, the result is incomplete and the consumed marker remains. This
 implements the native deadline boundary, not local-user authentication,
-revocation, a credential verifier, or a production broker.
+a credential verifier, or a production broker.
 
 The authorization and replay ledger are deliberately boot-scoped under `/run`.
 The helper rejects a correctly digest-bound request when its boot ID differs
@@ -376,7 +376,7 @@ use aligned direct reads to avoid stale cache aliases after partition writes. Ke
 bounded EBUSY response from partition-map ioctls while transient probes finish;
 the native transaction and disk writes are never retried by the test harness.
 These are process-level cancellation and failure tests, not power-loss proof.
-Production broker credentials/revocation, packaging/policy and physical-media
+Production broker credentials and session revocation, packaging/policy and physical-media
 qualification remain required before activation.
 
 
@@ -419,3 +419,33 @@ authorized and plan-consumed checkpoints. Both must return authorization expiry,
 run no GPT write, preserve the complete target digest, and refuse reuse; only
 the latter may have a consumed marker. Existing cancellation, replay, complete
 restore and transaction-removal proofs remain required.
+
+
+## Withdrawal of an admitted authorization
+
+The helper retains the authorized directory and the original grant file through
+transaction settlement. Every authorization boundary, including immediately
+before marker creation, verifies the directory trust, record ownership/mode and
+single-link regular-file type, exact directory entry/inode association, and the
+original binding and timestamps. Reads use bounded `pread` calls on the held
+record. The transaction never adopts a replacement file or a renewed deadline.
+Both authorization descriptors are closed on every terminal path.
+
+A trusted broker withdraws a grant by unlinking its exact record. Unlink,
+replacement, rename, a symlink substitution, changed binding/deadline or unsafe
+file permissions cause the next boundary to fail with `EKEYREVOKED`. Holding the
+original descriptor prevents inode reuse from accepting a replacement. As with
+expiry and cancellation, withdrawal is sampled between operations: in-flight
+work settles before the next check. No rollback is claimed. Before consumption
+the media stays untouched; afterward the consumed marker remains and media is
+reported incomplete.
+
+The VM qualification withdraws grants in seven ways at both the authorized and
+consumed checkpoints. All fourteen cases must stop without a GPT write, retain
+identical direct-read disk hashes, preserve the appropriate marker state and
+close their retained descriptors. These checks implement native record
+withdrawal only. The future broker must authenticate the local owner, map
+session/credential revocation to withdrawal, durably forbid plan-ID reissue,
+and keep the trusted state directory topology fixed while helpers are active.
+It must never renew or recreate a withdrawn grant. Production Restore remains
+disabled.

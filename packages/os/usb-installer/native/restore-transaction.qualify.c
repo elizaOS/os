@@ -9,6 +9,7 @@ typedef int (*qualification_observer)(int step, int whole, int partition);
 
 struct qualification {
   struct request request;
+  struct retained_authorization grant;
   int consumed_directory;
   int cancel_step;
   bool cancelled;
@@ -19,13 +20,13 @@ struct qualification {
 };
 static int transaction_authorization(void *data) {
   const struct qualification *context = data;
-  return authorization_status(&context->request);
+  return authorization_status(&context->request, &context->grant);
 }
 static int transaction_consume(void *data) {
   struct qualification *context = data;
   const int rc = consume_authorized_plan(&context->request,
-                                         context->consumed_directory);
-  return rc == 0 ? 0 : rc == 1 ? -EALREADY : errno == EKEYEXPIRED ? -EKEYEXPIRED : -EIO;
+                                         context->consumed_directory, &context->grant);
+  return rc == 0 ? 0 : rc == 1 ? -EALREADY : (errno == EKEYEXPIRED || errno == EKEYREVOKED) ? -errno : -EIO;
 }
 static int transaction_open(void *data, int whole) {
   struct qualification *context = data;
@@ -71,7 +72,7 @@ static int qualify_transaction(const char *input, size_t length, int cancel_step
   if (!parse_request(wire, length, &context.request) ||
       !request_matches_current_boot(&context.request)) return result->error;
   const int authorization = validate_authorized_plan(&context.request,
-                                                      &context.consumed_directory);
+                                                      &context.consumed_directory, &context.grant);
   if (authorization != 0) {
     result->error = authorization == 1 ? -EALREADY : authorization == -3 ? -EKEYEXPIRED : -EPERM;
     return result->error;
@@ -81,6 +82,7 @@ static int qualify_transaction(const char *input, size_t length, int cancel_step
   if (whole < 0) {
     result->error = -errno;
     (void)close(context.consumed_directory);
+    (void)close_authorization(&context.grant);
     return result->error;
   }
   context.whole_fd = whole;
@@ -98,7 +100,8 @@ static int qualify_transaction(const char *input, size_t length, int cancel_step
   int rc = elizaos_restore_execute(&transaction, result);
   const int close_whole = close(whole);
   const int close_directory = close(context.consumed_directory);
-  if (rc == 0 && (close_whole != 0 || close_directory != 0)) {
+  const int close_grant = close_authorization(&context.grant);
+  if (rc == 0 && (close_whole != 0 || close_directory != 0 || close_grant != 0)) {
     rc = -EIO;
     result->error = rc;
     result->outcome = ELIZAOS_RESTORE_FAILED;
