@@ -613,6 +613,54 @@ static bool validate_partition_geometry(int partition, int partition_sysfs,
          size_units == expected_size / 512U;
 }
 
+static bool validate_partition_fd(const struct request *request,
+                                   int whole_device_fd, int partition) {
+  if (!validate_whole_device_fd(whole_device_fd, request)) return false;
+  struct stat metadata;
+  uint64_t diskseq = 0U;
+  if (fstat(partition, &metadata) != 0 || !S_ISBLK(metadata.st_mode) ||
+      ioctl(partition, BLKGETDISKSEQ, &diskseq) != 0 ||
+      diskseq != request->expected_diskseq) {
+    return false;
+  }
+
+  const int partition_sysfs = open_sysfs_block_directory(metadata.st_rdev);
+  if (partition_sysfs < 0) {
+    return false;
+  }
+  char partition_number[8];
+  size_t partition_number_length = 0U;
+  if (!read_sysfs_value_at(partition_sysfs, "partition", partition_number,
+                           sizeof(partition_number),
+                           &partition_number_length) ||
+      partition_number_length != 2U || partition_number[0] != '1' ||
+      partition_number[1] != '\n') {
+    (void)close(partition_sysfs);
+    return false;
+  }
+  if (!validate_partition_geometry(partition, partition_sysfs, whole_device_fd,
+                                    request)) {
+    (void)close(partition_sysfs);
+    return false;
+  }
+  const int parent_sysfs =
+      openat(partition_sysfs, "..", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  (void)close(partition_sysfs);
+  if (parent_sysfs < 0) {
+    return false;
+  }
+  struct stat whole_metadata;
+  const bool parent_matches = fstat(whole_device_fd, &whole_metadata) == 0 &&
+                              S_ISBLK(whole_metadata.st_mode) &&
+                              sysfs_directory_has_dev(parent_sysfs,
+                                                      whole_metadata.st_rdev);
+  (void)close(parent_sysfs);
+  if (!parent_matches || !validate_whole_device_fd(whole_device_fd, request)) {
+    return false;
+  }
+  return true;
+}
+
 static int open_verified_partition(const struct request *request,
                                    int whole_device_fd) {
   if (!validate_whole_device_fd(whole_device_fd, request)) return -1;
@@ -623,56 +671,10 @@ static int open_verified_partition(const struct request *request,
                               request->device_path, needs_p ? "p" : "");
   if (length <= 0 || (size_t)length >= sizeof(partition_path)) return -1;
 
-  /* The retained whole-device O_EXCL claim already serializes this operation.
-   * A second, distinct exclusive claim for its partition would fail EBUSY. */
-  const int partition =
-      open(partition_path, O_RDWR | O_CLOEXEC | O_NOFOLLOW);
+  /* Retain the whole-device O_EXCL claim; a second partition claim fails EBUSY. */
+  const int partition = open(partition_path, O_RDWR | O_CLOEXEC | O_NOFOLLOW);
   if (partition < 0) return -1;
-  struct stat metadata;
-  uint64_t diskseq = 0U;
-  if (fstat(partition, &metadata) != 0 || !S_ISBLK(metadata.st_mode) ||
-      ioctl(partition, BLKGETDISKSEQ, &diskseq) != 0 ||
-      diskseq != request->expected_diskseq) {
-    (void)close(partition);
-    return -1;
-  }
-
-  const int partition_sysfs = open_sysfs_block_directory(metadata.st_rdev);
-  if (partition_sysfs < 0) {
-    (void)close(partition);
-    return -1;
-  }
-  char partition_number[8];
-  size_t partition_number_length = 0U;
-  if (!read_sysfs_value_at(partition_sysfs, "partition", partition_number,
-                           sizeof(partition_number),
-                           &partition_number_length) ||
-      partition_number_length != 2U || partition_number[0] != '1' ||
-      partition_number[1] != '\n') {
-    (void)close(partition_sysfs);
-    (void)close(partition);
-    return -1;
-  }
-  if (!validate_partition_geometry(partition, partition_sysfs, whole_device_fd,
-                                    request)) {
-    (void)close(partition_sysfs);
-    (void)close(partition);
-    return -1;
-  }
-  const int parent_sysfs =
-      openat(partition_sysfs, "..", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-  (void)close(partition_sysfs);
-  if (parent_sysfs < 0) {
-    (void)close(partition);
-    return -1;
-  }
-  struct stat whole_metadata;
-  const bool parent_matches = fstat(whole_device_fd, &whole_metadata) == 0 &&
-                              S_ISBLK(whole_metadata.st_mode) &&
-                              sysfs_directory_has_dev(parent_sysfs,
-                                                      whole_metadata.st_rdev);
-  (void)close(parent_sysfs);
-  if (!parent_matches || !validate_whole_device_fd(whole_device_fd, request)) {
+  if (!validate_partition_fd(request, whole_device_fd, partition)) {
     (void)close(partition);
     return -1;
   }

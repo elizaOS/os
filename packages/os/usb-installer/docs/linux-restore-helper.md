@@ -2,7 +2,7 @@
 
 Linux Restore is **not available** in the application. This package contains a
 native identity-retention gate, separate retained-FD GPT/exFAT primitives, a
-fixed-tool process runner, and
+fixed-tool process runner, a candidate native transaction, and
 an executable TypeScript safety model. The primitives are exercised in disposable
 VMs and are not linked into the shipped helper or exposed by the application.
 
@@ -315,3 +315,44 @@ transcript (`guest.log`). Console output previously split a report marker in
 CI. The host still requires exactly one complete successful report per proof;
 it never reconstructs or accepts a damaged console message. Both channels are
 retained and hashed in the final qualification report.
+
+
+## Candidate native transaction (not installed)
+
+`restore-transaction.c` connects the retained-FD GPT writer, fixed tool runner,
+partition binding and durable plan consumption into one synchronous operation.
+It accepts only trusted in-process bindings from the helper; these are not an
+IPC callback interface or authorization supplied by the application. The caller
+must already hold the authenticated request, trusted state directory and
+exclusive whole-device claim, and keep that claim until the operation settles.
+The candidate is compiled only into the disposable VM qualification library.
+The shipped helper, server capability and UI remain disabled.
+
+The transaction validates the held identities around every operation and checks
+cancellation between operations. It durably consumes the plan, writes and
+verifies GPT, rereads the kernel map, settles udev, opens and retains partition 1,
+formats exFAT, runs the read-only filesystem checker, syncs both descriptors,
+and verifies GPT again before completion. Partition revalidation uses the held
+FD, parent identity and exact extent; it never reopens the partition path after
+retention. A failed tool, identity check, sync, or close cannot produce success.
+Cancellation does not race a child or claim rollback. The tool runner reaps the
+child and its cleanup completes before control returns.
+
+Before consumption, cancellation reports untouched media. Once consumption is
+attempted, every failure or cancellation reports incomplete media, including
+uncertainty about marker durability. No subsequent action runs and a consumed
+plan cannot replay. A successful filesystem check alone is insufficient:
+`media-synced` and final identity/GPT checks precede completion. Typed step and
+result values are internal; no production progress wire protocol is exposed.
+
+The VM wrapper uses the exact native authorization, consumption and identity
+functions. Qualification cancels after every pre-completion checkpoint, removes each of the
+three fixed executable paths to force a real tool failure, verifies consumed
+plan refusal without disk changes, then completes a restore and independently
+checks its exFAT type/label with blkid. Replay and final whole-device digests
+use aligned direct reads to avoid stale cache aliases after partition writes. Kernel-only fixture changes may retry a
+bounded EBUSY response from partition-map ioctls while transient probes finish;
+the native transaction and disk writes are never retried by the test harness.
+These are process-level cancellation and failure tests, not power-loss proof.
+Production broker expiry/credentials, packaging/policy and physical-media
+qualification remain required before activation.

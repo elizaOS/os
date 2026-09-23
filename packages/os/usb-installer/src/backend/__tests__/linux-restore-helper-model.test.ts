@@ -128,6 +128,18 @@ describe("Linux Restore held-FD safety model", () => {
     expect(() => failed.advance("gpt-created")).toThrow(/terminal/);
   });
 
+  it("does not claim untouched media when marker durability is uncertain", () => {
+    const sequence = new RestoreMutationSequence();
+    sequence.beginConsumption();
+    expect(() => sequence.beginConsumption()).toThrow(/again/);
+    expect(sequence.terminate("failed")).toEqual({
+      status: "failed",
+      mediaState: "incomplete",
+      lastCompletedStep: "authorized",
+    });
+    expect(() => sequence.beginConsumption()).toThrow(/again/);
+  });
+
   it("fails closed at every boundary after durable plan consumption", () => {
     const steps = [
       "plan-consumed",
@@ -138,6 +150,7 @@ describe("Linux Restore held-FD safety model", () => {
       "partition-retained",
       "exfat-formatted",
       "exfat-verified",
+      "media-synced",
     ] as const;
 
     for (const [terminalIndex, terminalStep] of steps.entries()) {
@@ -166,6 +179,7 @@ describe("Linux Restore held-FD safety model", () => {
       "partition-retained",
       "exfat-formatted",
       "exfat-verified",
+      "media-synced",
       "complete",
     ] as const) {
       sequence.advance(step);

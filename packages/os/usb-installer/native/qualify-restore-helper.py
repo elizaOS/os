@@ -3,10 +3,12 @@
 import argparse
 import concurrent.futures
 import ctypes
+import errno
 import fcntl
 import hashlib
 import importlib.util
 import json
+import mmap
 import os
 from pathlib import Path
 import stat
@@ -14,6 +16,7 @@ import struct
 import subprocess
 import sys
 import threading
+import time
 
 spec = importlib.util.spec_from_file_location(
     "fd_proof", Path(__file__).with_name("qualify-restore-fd.py"))
@@ -182,7 +185,24 @@ def main():
             stat.S_IMODE(metadata.st_mode) == 0o600 and metadata.st_nlink == 1,
             "consumed marker content or metadata is invalid")
 
-    # The only mutation in this script creates a GPT on the named disposable USB.
+    # Kernel-only fixture changes can race udev's short-lived probe opens.
+    # Retry only EBUSY on fixture ioctls, never a native transaction or a write.
+    fixture_busy_retries = 0
+
+    def fixture_ioctl(operation):
+        nonlocal fixture_busy_retries
+        deadline = time.monotonic() + 5
+        while True:
+            try:
+                return operation()
+            except OSError as error:
+                if error.errno != errno.EBUSY or time.monotonic() >= deadline:
+                    raise
+                fixture_busy_retries += 1
+                fd_proof.command(["/usr/bin/udevadm", "settle", "--timeout=10"])
+                time.sleep(0.05)
+
+    # All disk mutations below target only the named disposable USB.
     descriptor = os.open("/dev/sda", os.O_RDWR | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC)
     try:
         gpt = ctypes.CDLL("/root/restore-gpt-fd.so")
@@ -190,7 +210,7 @@ def main():
         create.argtypes = [ctypes.c_int, ctypes.POINTER(Identity)]
         create.restype = ctypes.c_int
         require(create(descriptor, ctypes.byref(expected)) == 0, "USB fixture GPT failed")
-        fcntl.ioctl(descriptor, 0x125F)
+        fixture_ioctl(lambda: fcntl.ioctl(descriptor, 0x125F))
         fd_proof.command(["/usr/bin/udevadm", "settle", "--timeout=10"])
         bind = library.elizaos_qualify_partition
         bind.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32, ctypes.c_uint32,
@@ -239,8 +259,11 @@ def main():
             partition = KernelPartition(start=start, length=length, number=1)
             argument = PartitionOperation(operation=operation, length=ctypes.sizeof(partition),
                                           data=ctypes.cast(ctypes.pointer(partition), ctypes.c_void_p))
-            require(libc.ioctl(descriptor, 0x1269, ctypes.byref(argument)) == 0,
-                    f"BLKPG fixture failed: {ctypes.get_errno()}")
+            def invoke():
+                if libc.ioctl(descriptor, 0x1269, ctypes.byref(argument)) != 0:
+                    error = ctypes.get_errno()
+                    raise OSError(error, os.strerror(error))
+            fixture_ioctl(invoke)
 
         geometry_digest = digest(descriptor, expected.size_bytes)
         geometry_cases = []
@@ -261,7 +284,7 @@ def main():
                 require(partition < 0, f"native partition binding accepted {name}")
                 geometry_cases.append(name + " refused")
             finally:
-                fcntl.ioctl(descriptor, 0x125F)
+                fixture_ioctl(lambda: fcntl.ioctl(descriptor, 0x125F))
                 fd_proof.command(["/usr/bin/udevadm", "settle", "--timeout=10"])
             partition = open_partition()
             require(partition >= 0 and bytes(identity(partition)) == bytes(part_identity),
@@ -272,12 +295,123 @@ def main():
         final_digest = digest(descriptor, expected.size_bytes)
     finally:
         os.close(descriptor)
+    class TransactionResult(ctypes.Structure):
+        _fields_ = [("outcome", ctypes.c_int), ("media", ctypes.c_int),
+                    ("last_completed", ctypes.c_int), ("error", ctypes.c_int),
+                    ("tool", fd_proof.ToolResult)]
+
+    transaction_library = Path("/root/restore-transaction-qualification.so")
+    transaction = ctypes.CDLL(str(transaction_library)).elizaos_qualify_transaction
+    transaction.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.c_int,
+                            ctypes.POINTER(TransactionResult), ctypes.POINTER(ctypes.c_uint32)]
+    transaction.restype = ctypes.c_int
+    transaction_cases = []
+
+    def current_digest():
+        # Formatter writes use the partition address space. Read actual whole
+        # device bytes with aligned O_DIRECT I/O, not a stale whole-disk cache.
+        fd = os.open("/dev/sda", os.O_RDONLY | os.O_DIRECT | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            require(bytes(identity(fd)) == bytes(expected), "transaction target changed identity")
+            result = hashlib.sha256()
+            with mmap.mmap(-1, 1024**2) as buffer:
+                view = memoryview(buffer)
+                try:
+                    for offset in range(0, expected.size_bytes, len(buffer)):
+                        count = os.preadv(fd, [view], offset)
+                        require(count == len(buffer), "short direct fixture read")
+                        result.update(view)
+                finally:
+                    view.release()
+            return result.hexdigest()
+        finally:
+            os.close(fd)
+
+    def execute(plan, cancel=-1):
+        result = TransactionResult()
+        steps = ctypes.c_uint32()
+        rc = transaction(plan[2], len(plan[2]), cancel, ctypes.byref(result), ctypes.byref(steps))
+        require(rc == result.error, "transaction error/result disagree")
+        return rc, result, steps.value
+
+    def replay_refused(plan):
+        before_replay = current_digest()
+        rc, result, steps = execute(plan)
+        require(rc == -errno.EALREADY and result.outcome == 0 and steps == 0,
+                "consumed transaction replay was accepted")
+        require(current_digest() == before_replay, f"replay changed disk bytes for {plan[0]}: {before_replay}")
+
+    before_unauthorized = current_digest()
+    unauthorized = request()
+    rc, result, steps = execute(unauthorized)
+    require(rc == -errno.EPERM and result.media == 0 and steps == 0 and result.last_completed == -1,
+            "candidate transaction bypassed authorization")
+    require(current_digest() == before_unauthorized, "unauthorized transaction changed disk")
+    wrong_generation = request(expected_diskseq=expected.diskseq + 1)
+    authorize(wrong_generation)
+    rc, result, steps = execute(wrong_generation)
+    require(rc == -errno.ESTALE and result.media == 0 and steps == 0 and result.last_completed == -1,
+            "transaction accepted the wrong kernel device generation")
+    require(not (STATE / "consumed" / wrong_generation[0]).exists() and
+            current_digest() == before_unauthorized, "wrong identity consumed or changed the target")
+    for step in range(10):
+        plan = request()
+        authorize(plan)
+        untouched = current_digest() if step == 0 else None
+        rc, result, steps = execute(plan, step)
+        require(rc == -errno.ECANCELED and result.outcome == 1 and
+                result.media == (0 if step == 0 else 1) and result.last_completed == step and
+                steps == (1 << (step + 1)) - 1, f"bad cancellation result at step {step}")
+        marker = STATE / "consumed" / plan[0]
+        require(marker.exists() == (step > 0), "cancellation marker boundary is wrong")
+        if step == 0:
+            require(current_digest() == untouched, "pre-consumption cancellation changed disk")
+        else:
+            require(marker.read_bytes() == b"consumed\n", "transaction marker is invalid")
+            replay_refused(plan)
+        transaction_cases.append({"cancelAfter": step, "lastCompleted": result.last_completed,
+                                  "media": result.media, "error": rc})
+
+    for tool_path, last_step in (("/usr/bin/udevadm", 4),
+                                 ("/usr/libexec/elizaos-mkfs-exfat-fd", 6),
+                                 ("/usr/libexec/elizaos-fsck-exfat-fd", 7)):
+        tool = Path(tool_path)
+        saved = tool.with_name(tool.name + ".qualification-saved")
+        require(not saved.exists(), "tool fault fixture already exists")
+        plan = request()
+        authorize(plan)
+        tool.rename(saved)
+        try:
+            rc, result, steps = execute(plan)
+        finally:
+            saved.rename(tool)
+        require(rc < 0 and result.outcome == 0 and result.media == 1 and
+                result.last_completed == last_step and steps == (1 << (last_step + 1)) - 1,
+                f"missing fixed tool did not stop transaction: {tool_path}")
+        replay_refused(plan)
+        transaction_cases.append({"missingTool": tool_path, "lastCompleted": result.last_completed,
+                                  "media": result.media, "error": rc, "toolOutcome": result.tool.outcome})
+
+    plan = request()
+    authorize(plan)
+    rc, result, steps = execute(plan)
+    require(rc == 0 and result.outcome == 2 and result.media == 2 and
+            result.last_completed == 10 and steps == (1 << 11) - 1,
+            "complete native transaction did not reach verified success")
+    replay_refused(plan)
+    filesystem = fd_proof.command(["/usr/sbin/blkid", "-p", "-o", "export", "/dev/sda1"])
+    require("TYPE=exfat" in filesystem.splitlines() and
+            "LABEL=ELIZAOS-USB" in filesystem.splitlines(), "restored exFAT label/type is invalid")
+    final_digest = current_digest()
     report = {"status": "pass", "sectorBytes": sector_bytes, "cases": cases, "gateSha256Before": before,
               "gateSha256After": after_gate, "finalUsbSha256": final_digest,
+              "fixtureBusyRetries": fixture_busy_retries,
+              "transaction": {"cases": transaction_cases, "complete": True, "filesystem": filesystem,
+                              "admissionRefusals": ["missing authorization", "wrong kernel generation"]},
               "singleUseResults": {"accepted": results.count(0), "rejected": results.count(1)},
               "partitionBinding": ["valid partition", "symlink refused", "wrong disk refused", *geometry_cases],
               "binaries": {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
-                           for path in (HELPER, SHIM)},
+                           for path in (HELPER, SHIM, transaction_library)},
               "limits": ["emulated USB only", "no production authorization broker",
                          "no power-loss durability proof", "production helper remains disabled"]}
     print("ELIZAOS_RESTORE_HELPER_REPORT " + json.dumps(report, sort_keys=True), flush=True)
