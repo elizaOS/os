@@ -76,7 +76,11 @@ connected, so the package never changes a partition table.
   and verify the kernel partition map in disposable VM qualification. A separate
   uninstalled filesystem primitive exclusively persists and re-verifies artifacts
   through a retained private directory, including file/directory syncs and
-  process-interruption checks. Its required trusted storage-policy callbacks are
+  process-interruption checks. A local qualification also kills/reboots disposable
+  QEMU overlays at four storage checkpoints and requires a directory-synced
+  artifact to survive exact native verification. This discards the guest kernel;
+  physical power loss and host storage caches are not modeled. Its required
+  trusted storage-policy callbacks are
   not a production backing-device resolver. Production
   backup storage/backend composition and power-loss proof remain unfinished.
   Save and verify both GPT headers and

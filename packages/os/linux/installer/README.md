@@ -336,6 +336,30 @@ files against replacement. It also exercises chunk cancellation, unsafe files an
 directories, tmpfs refusal, input mutation and replacement of an opened inode.
 These are filesystem/process-restart checks, not power-cut tests.
 
+`native/qualify-gpt-vm-interruption.py` separately starts four disposable overlays
+from a completed local VM qualification. It kills the exact QEMU process with
+SIGKILL after creation, writing, file sync, or directory sync, then boots each
+same overlay with a fresh kernel and re-verifies the artifact through the native
+reader. A directory-synced artifact must survive byte-for-byte. Earlier checkpoints
+may retain a valid artifact or fail closed with no usable output. The prepared
+image is read-only backing storage and its digest must remain unchanged.
+
+```sh
+python3 packages/os/linux/installer/native/qualify-gpt-vm-interruption.py \
+  --prepared /var/tmp/restore-fd-512 \
+  --output-dir /var/tmp/gpt-vm-interruption-512 \
+  --container-tools-image elizaos-usb-qualification-tools:local
+```
+
+This local KVM test requires the stopped prepared `guest.qcow2`, its original
+backing image, logs, report and artifact; downloaded CI reports alone are not
+enough. The container supplies only unprivileged image/ISO tools. No host block
+devices are attached. Run it for each prepared sector-size lane. Retain the
+per-boot logs, seeds, QEMU commands, native source/binary bindings and final
+`qualification.json`. SIGKILL discards the guest kernel and QEMU process but
+leaves host storage caches and the physical drive powered, so this cannot prove
+physical power-loss safety.
+
 The libraries are not installed or connected to the privileged installer.
 Filesystem identity and successful syncs alone do not prove independent durable
 recovery media: production must resolve and repeatedly verify the physical backing
