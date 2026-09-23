@@ -14,13 +14,15 @@ Do not use Cuttlefish results as physical-device qualification.
   The documented May 2026 inactive-slot rollback warning applies to the listed
   Pixel 10 models; it is not proof of a Pixel 11-specific failure. It does
   demonstrate why recovery must match measured firmware and rollback state.
-- GrapheneOS describes a **partial**, unfinished Pixel 11 port, citing missing
-  MTE support and changed verified-boot/security hardware. See its
-  [official announcement](https://discuss.grapheneos.org/d/41564-pixel-11-doesnt-meet-the-grapheneos-security-standards-and-may-be-skipped)
-  and [Mastodon post](https://grapheneos.social/@GrapheneOS/117179231167297908).
-  Generated vendor support does not establish a supported production release
-  or validate our AVB/signing assumptions. MTE concerns are not a diagnosis of
-  the two failed installs.
+- GrapheneOS initially described a partial port and suspected missing hardware
+  MTE, but its [September 1 update](https://bsky.app/profile/grapheneos.org/post/3mugn23cpx22l)
+  confirmed some hardware support while leaving performance/usability unresolved.
+  The earlier [announcement](https://discuss.grapheneos.org/d/41564-pixel-11-doesnt-meet-the-grapheneos-security-standards-and-may-be-skipped)
+  must not be read as the final hardware finding. Pixel 11 remains absent from
+  the [official production list](https://grapheneos.org/faq#supported-devices).
+  Neither MTE report diagnoses our two failed installs. See the
+  [subsequent complete-toolchain review](pixel11-upstream-audit-2026-09-23.md)
+  for newer common configuration and carrier/firmware changes.
 - The [LineageOS device inventory](https://github.com/LineageOS/lineage_wiki/tree/main/_data/devices)
   was checked through GitHub's contents API (739 entries). No `cubs`, `grizzly`,
   `kodiak`, or `yogi` device entry was present. This is not a claim that no
