@@ -356,3 +356,35 @@ the native transaction and disk writes are never retried by the test harness.
 These are process-level cancellation and failure tests, not power-loss proof.
 Production broker expiry/credentials, packaging/policy and physical-media
 qualification remain required before activation.
+
+
+## Native transaction removal qualification
+
+A second named 512 MiB USB UAS/SCSI fixture, `ELIZAOS-TXN-TEST`, is reserved for
+removal during the candidate transaction. Both USB fixtures are resolved by
+their unique serial ancestry, removable status and capacity; SCSI enumeration
+order is not trusted. The successful restore artifact remains on the first USB
+fixture and must keep its complete disk digest through the removal test.
+
+The qualification-only wrapper forwards a synchronous checkpoint observer with
+borrowed whole-device and partition descriptors. At `partition-retained`, the
+observer verifies those descriptors, reads the target with aligned direct I/O,
+emits a fixed removal marker on the proof channel, and waits for both sysfs
+entries to disappear. It never closes or replaces the descriptors. The host
+hashes the separate target, removes only `transaction-uas`, and requires the
+matching QMP `DEVICE_DELETED` event; command acknowledgement alone cannot pass.
+The QMP interface accepts only the two named removal fixtures, never the OS,
+canary or completed-restore disk.
+
+When the observer returns, the real transaction must fail with stale identity,
+report incomplete media at `partition-retained`, and run neither format nor
+filesystem check. The consumed marker must remain and replay must fail. Guest
+and host pre-removal digests must agree, and the host verifies that the target
+remains byte-for-byte unchanged after removal. It independently inspects the
+interrupted target's GPT alongside the separate completed restore artifact.
+The original virtio retained-FD removal test remains required as well.
+
+This proves USB removal between native transaction operations in the emulated
+controller. It does not prove physical electrical unplug, removal during an
+in-flight write, power-loss durability, authorization policy or production
+readiness. The shipped helper and application capability remain disabled.

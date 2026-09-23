@@ -5,12 +5,17 @@
 #undef main
 #include "restore-transaction.h"
 
+typedef int (*qualification_observer)(int step, int whole, int partition);
+
 struct qualification {
   struct request request;
   int consumed_directory;
   int cancel_step;
   bool cancelled;
   uint32_t *steps;
+  int whole_fd;
+  int partition_fd;
+  qualification_observer observer;
 };
 static int transaction_consume(void *data) {
   struct qualification *context = data;
@@ -20,7 +25,8 @@ static int transaction_consume(void *data) {
 }
 static int transaction_open(void *data, int whole) {
   struct qualification *context = data;
-  return open_verified_partition(&context->request, whole);
+  context->partition_fd = open_verified_partition(&context->request, whole);
+  return context->partition_fd;
 }
 static bool transaction_validate(void *data, int whole, int partition) {
   struct qualification *context = data;
@@ -35,11 +41,15 @@ static void transaction_progress(void *data, enum elizaos_restore_step step) {
   struct qualification *context = data;
   *context->steps |= UINT32_C(1) << (unsigned int)step;
   if ((int)step == context->cancel_step) context->cancelled = true;
+  if (context->observer != NULL &&
+      context->observer((int)step, context->whole_fd,
+                        step == ELIZAOS_RESTORE_COMPLETE ? -1 : context->partition_fd) != 0)
+    context->cancelled = true;
 }
 
-int elizaos_qualify_transaction(const char *input, size_t length, int cancel_step,
-                               struct elizaos_restore_result *result,
-                               uint32_t *steps) {
+static int qualify_transaction(const char *input, size_t length, int cancel_step,
+                               qualification_observer observer,
+                               struct elizaos_restore_result *result, uint32_t *steps) {
   if (result == NULL || steps == NULL) return -EINVAL;
   memset(result, 0, sizeof(*result));
   *steps = 0U;
@@ -52,6 +62,7 @@ int elizaos_qualify_transaction(const char *input, size_t length, int cancel_ste
   memcpy(wire, input, length);
   wire[length] = '\0';
   struct qualification context = {.consumed_directory = -1,
+                                  .whole_fd = -1, .partition_fd = -1, .observer = observer,
                                   .cancel_step = cancel_step, .steps = steps};
   if (!parse_request(wire, length, &context.request) ||
       !request_matches_current_boot(&context.request)) return result->error;
@@ -68,6 +79,7 @@ int elizaos_qualify_transaction(const char *input, size_t length, int cancel_ste
     (void)close(context.consumed_directory);
     return result->error;
   }
+  context.whole_fd = whole;
   const struct elizaos_restore_transaction transaction = {
     .whole_fd = whole,
     .identity = {.major = (uint32_t)context.request.expected_major,
@@ -88,4 +100,19 @@ int elizaos_qualify_transaction(const char *input, size_t length, int cancel_ste
     result->media = ELIZAOS_RESTORE_INCOMPLETE;
   }
   return rc;
+}
+
+int elizaos_qualify_transaction(const char *input, size_t length, int cancel_step,
+                               struct elizaos_restore_result *result, uint32_t *steps) {
+  return qualify_transaction(input, length, cancel_step, NULL, result, steps);
+}
+
+/* Test-only synchronous observer. Descriptors are borrowed and must not be
+ * closed, replaced or retained. No observer is accepted by the shipped helper. */
+int elizaos_qualify_transaction_observed(const char *input, size_t length,
+                                        qualification_observer observer,
+                                        struct elizaos_restore_result *result,
+                                        uint32_t *steps) {
+  if (observer == NULL) return -EINVAL;
+  return qualify_transaction(input, length, -1, observer, result, steps);
 }

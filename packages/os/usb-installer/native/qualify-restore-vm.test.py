@@ -16,7 +16,7 @@ spec.loader.exec_module(module)
 
 
 class QmpHandshake(unittest.TestCase):
-    def exchange(self, behavior, expect_error=False):
+    def exchange(self, behavior, expect_error=False, device="restore-device"):
         with tempfile.TemporaryDirectory(prefix="elizaos-qmp-") as directory:
             path = Path(directory) / "qmp.sock"
             server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -39,8 +39,8 @@ class QmpHandshake(unittest.TestCase):
                         send({"return": {}, "id": capabilities["id"]})
                         request = json.loads(stream.readline())
                         self.assertEqual(request["execute"], "device_del")
-                        self.assertEqual(request["arguments"], {"id": "restore-device"})
-                        event = {"event": "DEVICE_DELETED", "data": {"device": "restore-device"}}
+                        self.assertEqual(request["arguments"], {"id": device})
+                        event = {"event": "DEVICE_DELETED", "data": {"device": device}}
                         if behavior == "event-first":
                             send(event)
                         if behavior == "command-error":
@@ -67,16 +67,29 @@ class QmpHandshake(unittest.TestCase):
             try:
                 if expect_error:
                     with self.assertRaises((RuntimeError, OSError)):
-                        control.remove_restore_device()
+                        control.remove_restore_device(device)
                 else:
-                    event = control.remove_restore_device()
+                    event = control.remove_restore_device(device)
                     self.assertEqual(event["event"], "DEVICE_DELETED")
-                    self.assertEqual(event["data"]["device"], "restore-device")
+                    self.assertEqual(event["data"]["device"], device)
             finally:
                 control.close()
                 worker.join(3)
             self.assertFalse(worker.is_alive())
             self.assertEqual(errors, [])
+
+    def test_transaction_usb_removal(self):
+        self.exchange("event-first", device="transaction-uas")
+        self.exchange("reply-first", device="transaction-uas")
+
+    def test_transaction_usb_requires_its_own_event(self):
+        self.exchange("ack-only", True, device="transaction-uas")
+        self.exchange("wrong-device", True, device="transaction-uas")
+
+    def test_unlisted_device_cannot_be_removed(self):
+        control = object.__new__(module.Qmp)
+        with self.assertRaisesRegex(RuntimeError, "restricted"):
+            control.remove_restore_device("os-disk")
 
     def test_event_before_acknowledgement(self):
         self.exchange("event-first")
