@@ -70,4 +70,23 @@ int elizaos_install_restore_gpt(int fd,
     const unsigned char binding[32], const unsigned char *data, size_t length,
     const unsigned char digest[32], const struct elizaos_gpt_restore_control *control,
     struct elizaos_gpt_restore_result *result);
+struct elizaos_gpt_map_result {
+  int error;
+  int reread_attempted;
+  int verified;
+  uint32_t partitions;
+};
+/* After explicit GPT restoration, require the exact original metadata still on
+ * disk, issue BLKRRPART once and verify every kernel partition index/extent,
+ * including missing or unexpected partitions. Recheck disk bytes and identity
+ * afterward. Uses control->check, not the restore progress callback. Same trusted
+ * authorization, exclusive descriptor and physical-lock prerequisites as restore.
+ * A busy table or any other error remains unverified; there is no retry/fallback.
+ * Success does not prove udev node settlement, safe partition FDs, bootability,
+ * durable journal completion or power-loss recovery. Not installed. */
+int elizaos_install_refresh_gpt_map(int fd,
+    const struct elizaos_install_disk_identity *expected,
+    const unsigned char binding[32], const unsigned char *data, size_t length,
+    const unsigned char digest[32], const struct elizaos_gpt_restore_control *control,
+    struct elizaos_gpt_map_result *result);
 #endif

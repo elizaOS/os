@@ -334,6 +334,21 @@ exit "$status"
         raise RuntimeError("GPT snapshot geometry mismatch")
     cursor = 128
     restoration = snapshot_report["restore"]
+    original_map = {"1": [2048, 131072], "2": [262144, 262144]}
+    alternate_map = {"1": [2048, 131072], "2": [327680, 327680], "3": [786432, 131072]}
+    mismatches = [
+        {"fault": "missing", "error": -116, "map": {"1": original_map["1"]}},
+        {"fault": "shifted", "error": -116, "map": {"1": original_map["1"], "2": [327680, 262144]}},
+        {"fault": "truncated", "error": -116, "map": {"1": original_map["1"], "2": [262144, 131072]}},
+        {"fault": "extra", "error": -116, "map": {**original_map, "3": [786432, 131072]}},
+    ]
+    if restoration.get("kernelMap") != {
+            "verified": True, "partitions": 2, "wrongDiskRefused": True,
+            "busyRefused": True, "cancelBeforeReread": True, "cancelAfterReread": True,
+            "staleMapRecovered": True, "diskUnchanged": True,
+            "mismatchRefusals": ["missing", "shifted", "truncated", "extra"],
+            "before": alternate_map, "after": original_map, "mismatchMaps": mismatches}:
+        raise RuntimeError("native GPT kernel-map recovery proof incomplete")
     if (len(snapshot_report["layouts"]) != 3 or
             not all(layout.get("restored") for layout in snapshot_report["layouts"]) or
             not any(layout.get("chunkCancellation") for layout in snapshot_report["layouts"])):

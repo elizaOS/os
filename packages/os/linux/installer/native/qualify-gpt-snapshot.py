@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only native GPT capture proof; fixture writes are confined to QEMU vdd."""
+"""Native GPT recovery proof; fixture writes are confined to QEMU vdd."""
 import argparse
 import base64
 import ctypes
@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import struct
 import subprocess
+import time
 import uuid
 import zlib
 
@@ -24,6 +25,11 @@ class Identity(ctypes.Structure):
     _fields_ = [("major", ctypes.c_uint32), ("minor", ctypes.c_uint32),
                 ("diskseq", ctypes.c_uint64), ("size_bytes", ctypes.c_uint64),
                 ("sector_bytes", ctypes.c_uint32)]
+
+
+class MapResult(ctypes.Structure):
+    _fields_ = [("error", ctypes.c_int), ("reread_attempted", ctypes.c_int),
+                ("verified", ctypes.c_int), ("partitions", ctypes.c_uint32)]
 
 
 class RestoreResult(ctypes.Structure):
@@ -61,17 +67,23 @@ def identity(fd):
                     struct.unpack("I", fcntl.ioctl(fd, 0x1268, bytes(4)))[0])
 
 
-def fixture(sector, count=128, stride=128, moved=False, fault=None):
+def fixture(sector, count=128, stride=128, moved=False, fault=None, alternate=False):
     last = SIZE // sector - 1
     span = ((count * stride + sector - 1) // sector) * sector
     first_array = 8 if moved else 2
     last_array = last - span // sector - (4 if moved else 0)
     first_usable, last_usable = first_array + span // sector, last_array - 1
     entries = bytearray(span)
-    for index, (start, end, kind, name) in enumerate([
+    partitions = [
         (MIB // sector, 65 * MIB // sector - 1, "c12a7328-f81f-11d2-ba4b-00a0c93ec93b", "EFI fixture"),
         (128 * MIB // sector, 256 * MIB // sector - 1, "0fc63daf-8483-4772-8e79-3d69d8477de4", "Linux fixture"),
-    ]):
+    ]
+    if alternate:
+        partitions[1] = (160 * MIB // sector, 320 * MIB // sector - 1,
+                         partitions[1][2], "Shifted fixture")
+        partitions.append((384 * MIB // sector, 448 * MIB // sector - 1,
+                           partitions[1][2], "Extra fixture"))
+    for index, (start, end, kind, name) in enumerate(partitions):
         if fault == "overlap" and index == 1:
             start = MIB // sector + 8
         if fault == "outside-usable" and index == 0:
@@ -133,6 +145,9 @@ def main():
                         ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p,
                         ctypes.POINTER(RestoreControl), ctypes.POINTER(RestoreResult)]
     restore.restype = ctypes.c_int
+    refresh = library.elizaos_install_refresh_gpt_map
+    refresh.argtypes = restore.argtypes[:-1] + [ctypes.POINTER(MapResult)]
+    refresh.restype = ctypes.c_int
     output, result_digest = ctypes.create_string_buffer(MAXIMUM), ctypes.create_string_buffer(32)
     fd = os.open("/dev/vdd", os.O_RDWR | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC)
     canary = os.open("/dev/vdc", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
@@ -397,7 +412,125 @@ def main():
     restore_report = {"complete": True, "cancellations": cancellations, "processInterruptions": interruptions,
                       "admissionRefusals": restore_refusals, "readOnlyAfterWrite": True,
                       "copiedInputs": True, "metadataBytesWritten": result.bytes_written,
-                      "limits": ["process interruption, not power loss", "no kernel map or boot recovery", "not installed"]}
+                      "limits": ["process interruption, not power loss", "raw restore does not refresh the kernel map or prove boot recovery", "not installed"]}
+    def kernel_map():
+        result = {}
+        for child in Path("/sys/class/block/vdd").iterdir():
+            if (child / "partition").is_file():
+                index = int((child / "partition").read_text())
+                result[index] = (int((child / "start").read_text()), int((child / "size").read_text()))
+        return result
+
+    def run_map(check=None):
+        errors = []
+        @Check
+        def checked(_context):
+            try:
+                return check() if check else 0
+            except Exception as error:
+                errors.append(str(error))
+                return -errno.EIO
+        control = RestoreControl(None, checked, Progress())
+        result = MapResult()
+        rc = refresh(fd, ctypes.byref(expected), BINDING, artifact, len(artifact),
+                     hashlib.sha256(artifact).digest(), ctypes.byref(control), ctypes.byref(result))
+        require(not errors and rc == result.error, f"map guard/result failure: {errors}")
+        return rc, result
+
+    def settle():
+        subprocess.run(["/usr/bin/udevadm", "settle", "--timeout=10"], check=True, timeout=15)
+
+    original_map = {1: (2048, 131072), 2: (262144, 262144)}
+    alternate_map = {1: (2048, 131072), 2: (327680, 327680), 3: (786432, 131072)}
+    require(kernel_map() == original_map, "initial kernel map differs")
+    write_regions(fixture(args.sector_size, alternate=True))
+    changed_digest = digest(fd)
+    rc, result = run_map()
+    require(rc == -errno.ESTALE and not result.reread_attempted and not result.verified and
+            kernel_map() == original_map and digest(fd) == changed_digest,
+            "different on-disk GPT admitted for original map recovery")
+    fcntl.ioctl(fd, 0x125f)  # Establish a stale map, fixture only.
+    settle()
+    require(kernel_map() == alternate_map, "alternate kernel map missing")
+    restored()
+    stale_map = kernel_map()
+    require(stale_map == alternate_map, "raw GPT restoration unexpectedly refreshed the kernel")
+    rc, result = run_map(check=lambda: -errno.ECANCELED)
+    require(rc == -errno.ECANCELED and not result.reread_attempted and not result.verified,
+            "cancelled map refresh issued a reread")
+    busy = os.open("/dev/vdd2", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        rc, result = run_map()
+        require(rc == -errno.EBUSY and result.reread_attempted and not result.verified and
+                kernel_map() == alternate_map, "busy map refresh was reported verified or retried")
+    finally:
+        os.close(busy)
+    settle()
+    rc, result = run_map(check=lambda: 0 if kernel_map() == alternate_map else -errno.ECANCELED)
+    require(rc == -errno.ECANCELED and result.reread_attempted and not result.verified and
+            kernel_map() == original_map, "post-reread cancellation was reported complete")
+    class KernelPartition(ctypes.Structure):
+        _fields_ = [("start", ctypes.c_longlong), ("length", ctypes.c_longlong),
+                    ("number", ctypes.c_int), ("devname", ctypes.c_char * 64),
+                    ("volname", ctypes.c_char * 64)]
+
+    class PartitionOperation(ctypes.Structure):
+        _fields_ = [("operation", ctypes.c_int), ("flags", ctypes.c_int),
+                    ("length", ctypes.c_int), ("data", ctypes.c_void_p)]
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.ioctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_void_p]
+    libc.ioctl.restype = ctypes.c_int
+
+    def alter_map(operation, number, start=0, length=0):
+        partition = KernelPartition(start=start, length=length, number=number)
+        argument = PartitionOperation(operation=operation, length=ctypes.sizeof(partition),
+                                      data=ctypes.cast(ctypes.pointer(partition), ctypes.c_void_p))
+        deadline = time.monotonic() + 5
+        while libc.ioctl(fd, 0x1269, ctypes.byref(argument)) != 0:
+            error = ctypes.get_errno()
+            if error != errno.EBUSY or time.monotonic() >= deadline:
+                raise OSError(error, os.strerror(error))
+            time.sleep(0.05)  # Fixture-only udev race; native refresh never retries.
+
+    mismatch_refusals, mismatch_maps = [], []
+    for fault in ["missing", "shifted", "truncated", "extra"]:
+        settle()
+        checks = 0
+        def change_after_reread():
+            nonlocal checks
+            checks += 1
+            if checks == 3:
+                # The third check follows successful BLKRRPART. Change only the
+                # kernel map, keeping both GPT copies and whole-disk bytes intact.
+                settle()
+                if fault != "extra":
+                    alter_map(2, 2)
+                if fault == "shifted":
+                    alter_map(1, 2, 160 * MIB, 128 * MIB)
+                elif fault == "truncated":
+                    alter_map(1, 2, 128 * MIB, 64 * MIB)
+                elif fault == "extra":
+                    alter_map(1, 3, 384 * MIB, 64 * MIB)
+                settle()
+            return 0
+        rc, result = run_map(check=change_after_reread)
+        require(rc == -errno.ESTALE and result.reread_attempted and not result.verified and
+                kernel_map() != original_map and digest(fd) == original_digest,
+                f"kernel-only {fault} map mismatch was accepted")
+        mismatch_refusals.append(fault)
+        mismatch_maps.append({"fault": fault, "error": rc, "map": kernel_map()})
+    settle()
+    rc, result = run_map()
+    require(rc == 0 and result.reread_attempted and result.verified and result.partitions == 2 and
+            kernel_map() == original_map and digest(fd) == original_digest,
+            "kernel map did not recover exact original partitions without disk mutation")
+    restore_report["kernelMap"] = {"verified": True, "partitions": result.partitions,
+                                   "wrongDiskRefused": True, "busyRefused": True,
+                                   "cancelBeforeReread": True, "cancelAfterReread": True,
+                                   "staleMapRecovered": True, "diskUnchanged": True,
+                                   "mismatchRefusals": mismatch_refusals, "before": stale_map,
+                                   "after": kernel_map(), "mismatchMaps": mismatch_maps}
     final = digest(fd)
     os.close(fd)
     fd = os.open("/dev/vdd", os.O_RDONLY | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC)

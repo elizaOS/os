@@ -299,12 +299,28 @@ stop after a real read-only transition following a partial write, and verify tha
 callback mutation cannot replace the copied inputs. All three layouts are restored;
 the larger array also exercises cancellation between 64 KiB write chunks.
 Process interruption is not
-a guest or hardware power cut. Success proves restored on-disk metadata, not a
-refreshed kernel partition map, bootability or rollback of filesystem/payload writes.
+a guest or hardware power cut. Restore success proves restored on-disk metadata,
+not bootability or rollback of filesystem/payload writes.
+
+The separate `elizaos_install_refresh_gpt_map` candidate first verifies that the
+exact trusted artifact still matches disk bytes. It issues one `BLKRRPART` through
+the retained descriptor, checks every kernel partition number and extent against
+the original GPT, rejects missing or extra partitions, and rechecks the on-disk
+artifact and identity. It uses the kernel's [partition sysfs attributes](https://github.com/torvalds/linux/blob/v6.12/block/partitions/core.c),
+whose extents use 512-byte sectors even on a 4096-byte logical-sector disk.
+An open partition causing `EBUSY`, cancellation before or after reread, or any
+verification failure remains unverified; there is no retry or fallback. Both VM
+lanes establish a shifted map with an extra partition, restore GPT bytes while
+that stale map remains, and prove explicit refresh restores the exact original
+map without changing disk bytes. Success does not establish udev node settlement
+or authorize partition descriptors; callers must retain and validate those
+descriptors before using them. Additional kernel-only faults remove, shift,
+truncate or add a partition after a successful reread; all must fail verification
+while both GPT copies remain unchanged.
 
 The library is not installed or connected to the privileged installer. Captured
 bytes are not yet a durable backup: production must independently verify the
 recovery storage, fsync the file and directory, and bind the artifact into the
-journal. Production recovery authorization, kernel map verification, power-loss
+journal. Production recovery authorization and composition, power-loss
 recovery and physical-media qualification remain unfinished. OpenSSL libcrypto is used for artifact hashing
 in this candidate; the VM builds it with `libssl-dev` and links `-lcrypto`.
