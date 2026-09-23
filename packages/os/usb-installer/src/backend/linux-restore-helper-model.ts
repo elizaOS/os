@@ -77,19 +77,15 @@ export interface RestoreFdQualificationProbe {
 }
 
 export type RestoreMutationTool =
-  | "create-gpt"
-  | "verify-gpt"
   | "settle-udev"
   | "format-exfat"
   | "verify-exfat";
 
 export interface RestoreMutationToolInvocation {
   readonly executable:
-    | "/usr/sbin/parted"
-    | "/usr/sbin/sfdisk"
     | "/usr/bin/udevadm"
-    | "/usr/sbin/mkfs.exfat"
-    | "/usr/sbin/fsck.exfat";
+    | "/usr/libexec/elizaos-mkfs-exfat-fd"
+    | "/usr/libexec/elizaos-fsck-exfat-fd";
   readonly argv: readonly string[];
   readonly inheritedFds: readonly (3 | 4)[];
 }
@@ -102,6 +98,12 @@ export const RESTORE_MUTATION_CHILD_POLICY = {
   maxOutputBytesPerStream: 256 * 1024,
 } as const;
 
+/** Internal libfdisk operation on the held FD, never a pathname-based child. */
+export const RESTORE_GPT_NATIVE_API = {
+  create: "elizaos_restore_create_gpt",
+  verify: "elizaos_restore_verify_gpt",
+} as const;
+
 /**
  * Candidate native process shapes. They are intentionally data only: the
  * shipped helper does not execute them until the same exact binaries have
@@ -110,52 +112,19 @@ export const RESTORE_MUTATION_CHILD_POLICY = {
 export const RESTORE_MUTATION_TOOLS: Readonly<
   Record<RestoreMutationTool, RestoreMutationToolInvocation>
 > = {
-  "create-gpt": {
-    executable: "/usr/sbin/parted",
-    argv: [
-      "parted",
-      "--script",
-      "--align=optimal",
-      "/proc/self/fd/3",
-      "mklabel",
-      "gpt",
-      "mkpart",
-      "ELIZAOS",
-      "2048s",
-      "100%",
-      "type",
-      "1",
-      "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7",
-    ],
-    inheritedFds: [3],
-  },
-  "verify-gpt": {
-    executable: "/usr/sbin/sfdisk",
-    argv: ["sfdisk", "--verify", "/proc/self/fd/3"],
-    inheritedFds: [3],
-  },
   "settle-udev": {
     executable: "/usr/bin/udevadm",
     argv: ["udevadm", "settle", "--timeout=10"],
     inheritedFds: [],
   },
   "format-exfat": {
-    executable: "/usr/sbin/mkfs.exfat",
-    argv: [
-      "mkfs.exfat",
-      "-L",
-      "ELIZAOS-USB",
-      "-P",
-      "none",
-      "-C",
-      "-K",
-      "/proc/self/fd/4",
-    ],
+    executable: "/usr/libexec/elizaos-mkfs-exfat-fd",
+    argv: ["elizaos-mkfs-exfat-fd"],
     inheritedFds: [4],
   },
   "verify-exfat": {
-    executable: "/usr/sbin/fsck.exfat",
-    argv: ["fsck.exfat", "-n", "/proc/self/fd/4"],
+    executable: "/usr/libexec/elizaos-fsck-exfat-fd",
+    argv: ["elizaos-fsck-exfat-fd"],
     inheritedFds: [4],
   },
 } as const;

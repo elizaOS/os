@@ -1,9 +1,9 @@
 # Linux Restore privileged-helper foundation
 
 Linux Restore is **not available** in the application. This package contains a
-native identity-retention gate and an executable TypeScript safety model so the
-future privileged boundary can be reviewed and tested without exposing a
-destructive capability.
+native identity-retention gate, separate retained-FD GPT/exFAT primitives, and
+an executable TypeScript safety model. The primitives are exercised in disposable
+VMs and are not linked into the shipped helper or exposed by the application.
 
 ## Current boundary
 
@@ -45,7 +45,7 @@ Server-side inventory and pathname probes are advisory UX only. They must never
 create privileged authorization or substitute for the helper's post-open
 identity checks.
 
-## Requirements before mutation can be implemented
+## Requirements before production mutation can be enabled
 
 A later change must be reviewed as a new security boundary and must include all
 of the following in one testable design:
@@ -57,9 +57,10 @@ of the following in one testable design:
 2. Absolute, pinned executable paths and constant argv/environment for every
    tool. No shell, `PATH` lookup, caller-controlled option, or requested device
    pathname may reach a child process.
-3. Only retained descriptors passed at fixed child FD numbers. Every tool must
-   address the target as `/proc/self/fd/<n>`. All other inherited descriptors
-   must be closed.
+3. Only retained descriptors passed at fixed child FD numbers. A tool must
+   use that descriptor itself; merely passing `/proc/self/fd/<n>` is insufficient
+   if it canonicalizes and reopens a mutable device path. All other inherited
+   descriptors must be closed.
 4. Revalidation of the retained whole-device identity before and after every
    destructive step. Hot-unplug must fail; a new device reusing the original
    `/dev` name must never become the target.
@@ -100,15 +101,23 @@ independently of whether a child exits, fails, or times out.
 The candidate sequence is deliberately linear:
 
 1. Revalidate the retained whole-device FD and durably consume the plan.
-2. Create one GPT Microsoft Basic Data partition using `/usr/sbin/parted` and
-   verify the table using `/usr/sbin/sfdisk`, both through
-   `/proc/self/fd/3`.
+2. Create one GPT Microsoft Basic Data partition with
+   `elizaos_restore_create_gpt()` from `native/restore-gpt-fd.c`. It calls
+   libfdisk's `fdisk_assign_device_by_fd()` on the existing descriptor, checks
+   identity before writing, fsyncs, and validates the actual primary and backup
+   headers and partition arrays. The byte-level verifier checks both CRCs,
+   matching disk GUIDs and arrays, the protective MBR, exact 1 MiB start and
+   last usable sector, type/name/attributes, and absence of extra partitions.
+   It never accepts libfdisk's in-memory repair as valid on-disk redundancy.
 3. Revalidate, issue `BLKRRPART` on the retained FD, run the fixed bounded
    `/usr/bin/udevadm settle --timeout=10`, then open partition 1 and bind its
    sysfs parent and disk sequence back to the retained whole device.
 4. After another cancellation check and identity validation, create exFAT with
-   `/usr/sbin/mkfs.exfat` and verify it read-only with
-   `/usr/sbin/fsck.exfat`, both through `/proc/self/fd/4`.
+   `/usr/libexec/elizaos-mkfs-exfat-fd` and verify it read-only with
+   `/usr/libexec/elizaos-fsck-exfat-fd`. Both proposed helper binaries take
+   **no arguments**, reject missing/non-block FD 4, and duplicate the inherited
+   descriptor. They never open a device pathname. The formatter always creates
+   label `ELIZAOS-USB`; the checker always uses read-only `-n` semantics.
 5. Sync and revalidate both retained identities before success is possible.
 
 Cancellation is checked immediately before and after every bounded child,
@@ -119,11 +128,45 @@ identity drift after that marker is always terminal `incomplete`; it can never
 be translated to success. Cancellation is observed between bounded tools, not
 by pretending an interrupted partition or filesystem write was rolled back.
 
-The default unit test can prove that the exact `parted`, `sfdisk`,
-`mkfs.exfat`, and `fsck.exfat` builds installed on a runner accept inherited
-regular-file descriptors, and that the constant udev settle command completes.
-That is useful pathname/argv evidence but **not block-device qualification**.
-The production gate remains closed until an isolated privileged job repeats the
-exact process shapes on disposable loop or `scsi_debug` media and exercises
-kernel reread, partition-FD retention, unplug, name reuse, timeout, signal, and
-every failure boundary. No real disk is an acceptable qualification target.
+## Native dependencies and qualification
+
+Real Debian 13 block-device testing rejected the earlier proposed command
+sequence: `parted` canonicalized the descriptor path and reopened `/dev/vdb`,
+the proposed `mkfs.exfat` flags were unsupported, and ordinary `mkfs.exfat`
+requested a second `O_EXCL` claim that conflicts with the held whole-device
+claim. Regular-file tests did not expose those defects and have been replaced
+by the VM lane.
+
+`native/build-exfat-fd.sh` builds only the formatter/checker from
+[exfatprogs 1.2.9, commit 3e87676349387a119cadacd68661d2966796b7fd](https://github.com/exfatprogs/exfatprogs/tree/3e87676349387a119cadacd68661d2966796b7fd).
+It verifies the archive SHA-256 before extraction and applies the checked-in
+`exfatprogs-fd.patch` without fuzz. The patch restricts both entrypoints to fixed
+options and changes device acquisition to `F_DUPFD_CLOEXEC` on FD 4. Build output
+includes the upstream GPL license and binary digests. It installs nothing and
+requires a new output directory. The GPT primitive requires libfdisk >= 2.35
+for its [descriptor API](https://www.kernel.org/pub/linux/utils/util-linux/v2.41/libfdisk-docs/libfdisk-Context.html#fdisk-assign-device-by-fd).
+
+The CI `Restore retained-FD VM` jobs run `native/qualify-restore-vm.py` with both
+512-byte and 4096-byte logical sectors. Supply the pinned Debian qcow2 and
+exfatprogs source archive listed in that script, a new evidence directory, and
+`--sector-size 512` or `4096`. Host dependencies are `qemu-system-x86_64`,
+`qemu-img`, `genisoimage`, `fdisk`, and Python 3. KVM is preferred; `--accelerator
+tcg` is supported. An optional `--container-tools-image` supplies only qemu-img
+and genisoimage in an unprivileged container. No host block device is passed
+to QEMU or Docker.
+
+The runner independently verifies both input digests, boots an isolated guest,
+and builds the checked-in sources. The guest refuses any fixture other than
+the named 512 MiB virtio target and canary, with its OS on a separate disk. It
+checks wrong identity rejection without writes, corrupt primary/backup GPT
+refusal, kernel reread, partition identity, and exFAT verification. It replaces
+the original device nodes with nodes pointing to the canary and still completes
+through the held descriptors. Both the guest and host verify the entire canary
+digest is unchanged; the host also inspects the resulting partition map.
+The report binds source, binary, input-image, and transcript hashes. Logs and
+disk images stay outside source control.
+
+This proves the tested native operations and name replacement behavior, not
+physical USB unplug behavior or production restore. The authorization broker,
+bounded child supervision, cancellation/failure checkpoint matrix, packaging,
+and physical-media qualification above remain required before enabling restore.
