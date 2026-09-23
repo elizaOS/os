@@ -337,7 +337,9 @@ exit "$status"
     storage = snapshot_report["storage"]
     expected_store_stops = [{"after": step, "readable": step > 0} for step in range(4)]
     if (not all(storage.get(key) is True for key in ["verified", "exclusiveCreate", "chunkCancellation",
-                                                    "copiedInputs", "replacementRefused"]) or
+                                                    "copiedInputs", "replacementRefused", "kernelBackingVerified"]) or
+            storage["backingRefusals"] != ["same-target", "wrong-parent", "wrong-partition", "stale-storage",
+                                            "stale-target", "directory-identity", "loop-backed"] or
             storage["storageDevice"] == storage["targetDevice"] or storage["filesystem"] != "ext4 VM root" or
             storage["cancellations"] != expected_store_stops or
             storage["processInterruptions"] != expected_store_stops or

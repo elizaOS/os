@@ -45,6 +45,12 @@ def qualify_store(library, artifact, large_artifact, binding, target_fd, target_
                      ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
     read.restype = ctypes.c_int
     storage_fd = os.open("/dev/vda", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    storage_partition = os.open("/dev/vda1", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    backing = library.elizaos_install_check_recovery_storage
+    backing.argtypes = [ctypes.c_int, ctypes.POINTER(StoreIdentity), ctypes.c_int, ctypes.c_int,
+                        ctypes.POINTER(type(target_identity)), ctypes.c_int,
+                        ctypes.POINTER(type(target_identity))]
+    backing.restype = ctypes.c_int
     storage_identity = identity(storage_fd)
     storage_device = os.fstat(storage_fd).st_rdev
     target_device = os.fstat(target_fd).st_rdev
@@ -77,7 +83,8 @@ def qualify_store(library, artifact, large_artifact, binding, target_fd, target_
                     os.fstat(self.fd).st_dev != filesystem_device or
                     os.stat(self.path, follow_symlinks=False).st_ino != self.id.directory_inode):
                 return -errno.ESTALE
-            return 0
+            return backing(self.fd, ctypes.byref(self.id), storage_partition, storage_fd,
+                           ctypes.byref(storage_identity), target_fd, ctypes.byref(target_identity))
 
         def invoke(self, storing, data=artifact, check=None, observer=None, test_identity=None,
                    source=None, expected_digest=None, capacity=None):
@@ -143,6 +150,74 @@ def qualify_store(library, artifact, large_artifact, binding, target_fd, target_
     rc, _, _ = case.invoke(False, capacity=1)
     require(rc == -errno.ENOBUFS, "small output was accepted")
     case.close()
+    case = Case()
+    require(case.guard() == 0, "native storage ancestry did not verify VM root")
+    backing_refusals = []
+    canary = os.open("/dev/vdc", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    canary_identity = identity(canary)
+    for fault in ["same-target", "wrong-parent", "wrong-partition", "stale-storage", "stale-target", "directory-identity"]:
+        store_fd, store_id = storage_fd, type(storage_identity).from_buffer_copy(storage_identity)
+        other_fd, other_id = target_fd, type(target_identity).from_buffer_copy(target_identity)
+        part_fd = storage_partition
+        directory_id = StoreIdentity.from_buffer_copy(case.id)
+        if fault == "same-target": other_fd, other_id = storage_fd, storage_identity
+        if fault == "wrong-parent": store_fd, store_id = canary, canary_identity
+        if fault == "wrong-partition": part_fd = canary
+        if fault == "stale-storage": store_id.diskseq += 1
+        if fault == "stale-target": other_id.diskseq += 1
+        if fault == "directory-identity": directory_id.directory_inode += 1
+        rc = backing(case.fd, ctypes.byref(directory_id), part_fd, store_fd,
+                     ctypes.byref(store_id), other_fd, ctypes.byref(other_id))
+        require(rc < 0, f"unsafe storage ancestry accepted: {fault}")
+        backing_refusals.append(fault)
+    os.close(canary)
+    case.close()
+    # A real mounted loop partition must not masquerade as independent media.
+    loop_image = Path("/root/gpt-loop-storage.raw")
+    with loop_image.open("xb") as stream:
+        stream.truncate(160 * 1024 * 1024)
+    subprocess.run(["sfdisk", str(loop_image)], input="label: gpt\nstart=2048, size=262144, type=L\n",
+                   text=True, check=True, capture_output=True, timeout=15)
+    subprocess.run(["modprobe", "loop"], check=True, timeout=15)
+    loop = subprocess.check_output(["losetup", "--find", "--show", "--partscan", str(loop_image)],
+                                   text=True, timeout=15).strip()
+    require(loop.startswith("/dev/loop") and loop[9:].isdigit(), "unexpected loop fixture device")
+    mounted = False
+    loop_fd = loop_partition = directory_fd = None
+    mountpoint = Path("/root/gpt-loop-mount")
+    mountpoint.mkdir(mode=0o700)
+    try:
+        partition_path = Path(loop + "p1")
+        deadline = time.monotonic() + 5
+        while not partition_path.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        require(partition_path.exists(), "loop partition did not appear")
+        subprocess.run(["mkfs.ext4", "-q", "-F", str(partition_path)], check=True, timeout=30)
+        subprocess.run(["mount", "-o", "nodev,nosuid,noexec", str(partition_path), str(mountpoint)],
+                       check=True, timeout=15)
+        mounted = True
+        mountpoint.chmod(0o700)
+        loop_fd = os.open(loop, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        loop_partition = os.open(partition_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        directory_fd = os.open(mountpoint, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        loop_id = identity(loop_fd)
+        loop_directory = StoreIdentity(os.fstat(directory_fd).st_dev, os.fstat(directory_fd).st_ino)
+        # Establish that the otherwise valid whole-device identity is not the refusal reason.
+        whole_check = library.elizaos_install_check_whole_disk
+        whole_check.argtypes = [ctypes.c_int, ctypes.POINTER(type(loop_id))]
+        whole_check.restype = ctypes.c_int
+        require(whole_check(loop_fd, ctypes.byref(loop_id)) == 0, "loop identity fixture is invalid")
+        rc = backing(directory_fd, ctypes.byref(loop_directory), loop_partition, loop_fd,
+                     ctypes.byref(loop_id), target_fd, ctypes.byref(target_identity))
+        require(rc == -errno.ENOENT, "loop-backed recovery storage was not refused for missing direct device")
+        backing_refusals.append("loop-backed")
+    finally:
+        for descriptor in [directory_fd, loop_partition, loop_fd]:
+            if descriptor is not None:
+                os.close(descriptor)
+        if mounted:
+            subprocess.run(["umount", str(mountpoint)], check=True, timeout=15)
+        subprocess.run(["losetup", "--detach", loop], check=True, timeout=15)
     cancellations, interruptions = [], []
     for stop in range(4):
         for terminate in [False, True]:
@@ -248,10 +323,11 @@ def qualify_store(library, artifact, large_artifact, binding, target_fd, target_
     rc, _, _ = case.invoke(False, check=replace_opened)
     require(rc == -errno.ESTALE, "read accepted replacement of its opened inode")
     case.close()
+    os.close(storage_partition)
     os.close(storage_fd)
     return {"verified": True, "cancellations": cancellations, "processInterruptions": interruptions,
             "refusals": refusals, "exclusiveCreate": True, "chunkCancellation": True,
-            "copiedInputs": True, "replacementRefused": True, "filesystem": "ext4 VM root",
+            "kernelBackingVerified": True, "backingRefusals": backing_refusals, "copiedInputs": True, "replacementRefused": True, "filesystem": "ext4 VM root",
             "storageDevice": storage_device, "targetDevice": target_device,
             "filesystemDevice": filesystem_device,
             "limits": ["not power-loss qualification", "production storage policy and journal integration absent"]}

@@ -77,7 +77,11 @@ connected, so the package never changes a partition table.
   uninstalled filesystem primitive exclusively persists and re-verifies artifacts
   through a retained private directory, including file/directory syncs and
   process-interruption checks. Its required trusted storage-policy callbacks are
-  not a production backing-device resolver. Production
+  not a production storage policy. Native kernel-ancestry checks now bind its
+  filesystem to a retained partition and direct whole-disk parent, reject the
+  target as storage, and recheck disk generations. Physical alias detection,
+  configured-path/mount lifetime and qualified durable media remain policy
+  responsibilities. Production
   backup storage/backend composition and power-loss proof remain unfinished.
   Save and verify both GPT headers and
   partition entries to separate recovery media/state, perform typed operations,

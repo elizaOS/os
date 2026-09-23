@@ -28,6 +28,20 @@ struct elizaos_gpt_store_result {
   uint64_t bytes_written;
 };
 
+/* Read-only kernel backing check. Bind the private recovery directory to the
+ * retained partition, its direct whole-disk parent, and a distinct target disk.
+ * Reject stacked/virtual backing without a direct device and empty slave list.
+ * All expected identities come from trusted inventory, never request IPC.
+ * Caller retains descriptors/locks and repeats this check at operation boundaries.
+ * This is not a physical alias detector: trusted policy must additionally exclude
+ * multipath aliases, verify hardware identity and qualify durable recovery media,
+ * configured pathname, authorization and mount lifetime. Not installed. */
+int elizaos_install_check_recovery_storage(int directory,
+    const struct elizaos_gpt_store_identity *expected_directory,
+    int partition, int storage,
+    const struct elizaos_install_disk_identity *expected_storage,
+    int target, const struct elizaos_install_disk_identity *expected_target);
+
 /* Internal filesystem primitive, not installed and not a storage/authorization
  * policy. Caller must prove that the retained directory is on qualified durable
  * recovery storage independent of the physical target, bind its configured
