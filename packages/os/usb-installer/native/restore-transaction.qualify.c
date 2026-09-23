@@ -17,11 +17,15 @@ struct qualification {
   int partition_fd;
   qualification_observer observer;
 };
+static int transaction_authorization(void *data) {
+  const struct qualification *context = data;
+  return authorization_status(&context->request);
+}
 static int transaction_consume(void *data) {
   struct qualification *context = data;
   const int rc = consume_authorized_plan(&context->request,
                                          context->consumed_directory);
-  return rc == 0 ? 0 : rc == 1 ? -EALREADY : -EIO;
+  return rc == 0 ? 0 : rc == 1 ? -EALREADY : errno == EKEYEXPIRED ? -EKEYEXPIRED : -EIO;
 }
 static int transaction_open(void *data, int whole) {
   struct qualification *context = data;
@@ -69,7 +73,7 @@ static int qualify_transaction(const char *input, size_t length, int cancel_step
   const int authorization = validate_authorized_plan(&context.request,
                                                       &context.consumed_directory);
   if (authorization != 0) {
-    result->error = authorization == 1 ? -EALREADY : -EPERM;
+    result->error = authorization == 1 ? -EALREADY : authorization == -3 ? -EKEYEXPIRED : -EPERM;
     return result->error;
   }
   const int whole = open(context.request.device_path,
@@ -86,7 +90,8 @@ static int qualify_transaction(const char *input, size_t length, int cancel_step
                  .minor = (uint32_t)context.request.expected_minor,
                  .diskseq = context.request.expected_diskseq,
                  .size_bytes = context.request.expected_size_bytes},
-    .context = &context, .consume = transaction_consume,
+    .context = &context, .check_authorization = transaction_authorization,
+    .consume = transaction_consume,
     .open_partition = transaction_open, .validate = transaction_validate,
     .cancelled = transaction_cancelled, .progress = transaction_progress
   };

@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #ifndef BLKGETDISKSEQ
@@ -24,6 +25,7 @@
 #define PLAN_ID_BYTES 32U
 #define BOOT_ID_BYTES 36U
 #define DEVICE_PATH_BYTES 128U
+#define MAX_AUTHORIZATION_NS UINT64_C(300000000000)
 #define STATE_ROOT "/run/elizaos-usb-restore"
 
 /* This binary is an identity-retention gate, not a mutation implementation. */
@@ -37,6 +39,8 @@ struct request {
   uint64_t expected_minor;
   uint64_t expected_diskseq;
   uint64_t expected_size_bytes;
+  uint64_t authorized_from_ns;
+  uint64_t authorized_until_ns; /* Trusted file only, never parsed from request. */
 };
 
 struct sha256_context {
@@ -372,8 +376,26 @@ static bool request_matches_current_boot(const struct request *request) {
          memcmp(value, request->boot_id, BOOT_ID_BYTES) == 0;
 }
 
-static bool read_exact_binding(int descriptor, const char *expected) {
-  char value[66];
+static int authorization_status(const struct request *request) {
+  struct timespec now;
+  if (clock_gettime(CLOCK_BOOTTIME, &now) != 0 || now.tv_sec < 0 ||
+      now.tv_nsec < 0 || now.tv_nsec >= 1000000000L) return -EIO;
+  const uint64_t seconds = (uint64_t)now.tv_sec;
+  const uint64_t nanos = (uint64_t)now.tv_nsec;
+  if (seconds > (UINT64_MAX - nanos) / UINT64_C(1000000000)) return -EIO;
+  const uint64_t elapsed = seconds * UINT64_C(1000000000) + nanos;
+  if (request->authorized_from_ns > elapsed || request->authorized_until_ns <= elapsed ||
+      request->authorized_until_ns <= request->authorized_from_ns ||
+      request->authorized_until_ns - request->authorized_from_ns > MAX_AUTHORIZATION_NS)
+    return -EKEYEXPIRED;
+  return 0;
+}
+
+static bool read_authorization(int descriptor, struct request *request) {
+  static const char prefix[] = "ELIZAOS_RESTORE_AUTHORIZATION_V1\n";
+  const size_t prefix_length = sizeof(prefix) - 1U;
+  const size_t deadline_offset = prefix_length + 65U;
+  char value[160];
   size_t used = 0U;
   while (used < sizeof(value)) {
     const ssize_t amount = read(descriptor, value + used, sizeof(value) - used);
@@ -384,8 +406,17 @@ static bool read_exact_binding(int descriptor, const char *expected) {
     if (amount == 0) break;
     used += (size_t)amount;
   }
-  return used == 65U && value[64] == '\n' &&
-         memcmp(value, expected, 64U) == 0;
+  if (used < deadline_offset + 2U || used == sizeof(value) ||
+      memchr(value, '\0', used) != NULL || value[used - 1U] != '\n' ||
+      memcmp(value, prefix, prefix_length) != 0 ||
+      memcmp(value + prefix_length, request->plan_binding, 64U) != 0 ||
+      value[deadline_offset - 1U] != '\n') return false;
+  value[used - 1U] = '\0';
+  char *separator = strchr(value + deadline_offset, '\n');
+  if (separator == NULL) return false;
+  *separator = '\0';
+  return parse_uint64(value + deadline_offset, false, &request->authorized_from_ns) &&
+         parse_uint64(separator + 1, false, &request->authorized_until_ns);
 }
 
 /*
@@ -394,7 +425,7 @@ static bool read_exact_binding(int descriptor, const char *expected) {
  * mode-0600, single-link regular file. This helper intentionally ships with no
  * broker or policy entry, so ordinary callers cannot authorize mutation.
  */
-static int validate_authorized_plan(const struct request *request,
+static int validate_authorized_plan(struct request *request,
                                     int *consumed_directory) {
   *consumed_directory = -1;
   const int root = open(STATE_ROOT, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
@@ -423,7 +454,7 @@ static int validate_authorized_plan(const struct request *request,
   const int authorization = openat(authorized, request->plan_id,
                                    O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW);
   if (authorization < 0 || !trusted_authorization_file(authorization) ||
-      !read_exact_binding(authorization, request->plan_binding)) {
+      !read_authorization(authorization, request)) {
     if (authorization >= 0) (void)close(authorization);
     (void)close(consumed);
     (void)close(authorized);
@@ -431,6 +462,12 @@ static int validate_authorized_plan(const struct request *request,
     return -2;
   }
   (void)close(authorization);
+  if (authorization_status(request) != 0) {
+    (void)close(consumed);
+    (void)close(authorized);
+    (void)close(root);
+    return -3;
+  }
 
   struct stat marker_metadata;
   if (fstatat(consumed, request->plan_id, &marker_metadata,
@@ -461,6 +498,8 @@ static int validate_authorized_plan(const struct request *request,
  */
 static int consume_authorized_plan(const struct request *request,
                                    int consumed_directory) {
+  const int authorization = authorization_status(request);
+  if (authorization != 0) { errno = -authorization; return -1; }
   const int marker = openat(consumed_directory, request->plan_id,
                             O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
                             0600);
@@ -710,6 +749,10 @@ int main(int argc, char **argv) {
   if (authorized == 1) {
     return emit_result("blocked", "PLAN_ALREADY_CONSUMED",
                        "The single-use restore plan was already consumed.", 5);
+  }
+  if (authorized == -3) {
+    return emit_result("blocked", "PLAN_AUTHORIZATION_EXPIRED",
+                       "The exact restore authorization is expired or not current.", 10);
   }
   if (authorized == -2) {
     return emit_result("blocked", "PLAN_NOT_AUTHORIZED",

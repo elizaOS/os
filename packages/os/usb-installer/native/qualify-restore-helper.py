@@ -82,11 +82,24 @@ def main():
         lines.insert(3, f"plan_binding={binding}")
         return fields["plan_id"], binding, ("\n".join(lines) + "\n").encode()
 
-    def authorize(plan):
+    grant_times = {}
+
+    def boottime_ns():
+        return time.clock_gettime_ns(time.CLOCK_BOOTTIME)
+
+    def authorization_bytes(plan, binding=None):
+        issued, expires = grant_times[plan[0]]
+        return (f"ELIZAOS_RESTORE_AUTHORIZATION_V1\n{binding or plan[1]}\n"
+                f"{issued}\n{expires}\n").encode()
+
+    def authorize(plan, lifetime_ns=300_000_000_000):
+        issued = boottime_ns()
+        grant_times[plan[0]] = (issued, issued + lifetime_ns)
+        body = authorization_bytes(plan)
         path = STATE / "authorized" / plan[0]
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         try:
-            require(os.write(fd, (plan[1] + "\n").encode()) == 65, "short authorization fixture write")
+            require(os.write(fd, body) == len(body), "short authorization fixture write")
             os.fsync(fd)
         finally:
             os.close(fd)
@@ -137,11 +150,32 @@ def main():
     check("authorization-directory", plan, "PLAN_NOT_AUTHORIZED")
     auth.rmdir()
     saved.rename(auth)
-    auth.write_text("0" * 64 + "\n")
+    auth.write_bytes(authorization_bytes(plan, binding="0" * 64))
     check("wrong-binding", plan, "PLAN_NOT_AUTHORIZED")
-    auth.write_text(plan[1] + "\ntrailing\n")
+    auth.write_bytes(authorization_bytes(plan) + b"trailing\n")
     check("trailing-authorization-bytes", plan, "PLAN_NOT_AUTHORIZED")
-    auth.write_text(plan[1] + "\n")
+    auth.write_bytes(authorization_bytes(plan))
+    for name, body, code in (
+        ("legacy-unbounded-authorization", (plan[1] + "\n").encode(), "PLAN_NOT_AUTHORIZED"),
+        ("zero-issued-time", authorization_bytes(plan).replace(str(grant_times[plan[0]][0]).encode(), b"0"), "PLAN_NOT_AUTHORIZED"),
+        ("noncanonical-deadline", authorization_bytes(plan).replace(str(grant_times[plan[0]][1]).encode(), b"01"), "PLAN_NOT_AUTHORIZED"),
+        ("overflow-deadline", authorization_bytes(plan).replace(str(grant_times[plan[0]][1]).encode(), b"18446744073709551616"), "PLAN_NOT_AUTHORIZED"),
+    ):
+        auth.write_bytes(body)
+        check(name, plan, code)
+    current = boottime_ns()
+    valid_times = grant_times[plan[0]]
+    for name, issued, expires in (
+        ("expired-authorization", current - 2_000_000_000, current - 1_000_000_000),
+        ("future-authorization", current + 60_000_000_000, current + 120_000_000_000),
+        ("overlong-authorization", current, current + 301_000_000_000),
+        ("reversed-authorization-window", current, current - 1),
+    ):
+        grant_times[plan[0]] = (issued, expires)
+        auth.write_bytes(authorization_bytes(plan))
+        check(name, plan, "PLAN_AUTHORIZATION_EXPIRED")
+    grant_times[plan[0]] = valid_times
+    auth.write_bytes(authorization_bytes(plan))
     for directory in (STATE, STATE / "authorized", STATE / "consumed"):
         os.chmod(directory, 0o770)
         check(f"writable-state-{directory.name}", plan, "STATE_UNAVAILABLE")
@@ -455,6 +489,44 @@ def main():
     observed.argtypes = [ctypes.c_char_p, ctypes.c_size_t, observer_type,
                          ctypes.POINTER(TransactionResult), ctypes.POINTER(ctypes.c_uint32)]
     observed.restype = ctypes.c_int
+    expiry_cases = []
+    for expiry_step in (0, 1):
+        expiry_plan = request()
+        before_expiry = current_digest()
+        authorize(expiry_plan, lifetime_ns=5_000_000_000)
+        expiry_errors = []
+
+        @observer_type
+        def expire(step, _whole, _partition):
+            if step != expiry_step:
+                return 0
+            try:
+                deadline = grant_times[expiry_plan[0]][1]
+                wait_until = time.monotonic() + 6
+                while boottime_ns() < deadline:
+                    require(time.monotonic() < wait_until, "boot clock did not advance")
+                    time.sleep(0.01)
+                return 0
+            except Exception as error:
+                expiry_errors.append(str(error))
+                return 1
+
+        expiry_result, expiry_steps = TransactionResult(), ctypes.c_uint32()
+        expiry_rc = observed(expiry_plan[2], len(expiry_plan[2]), expire,
+                             ctypes.byref(expiry_result), ctypes.byref(expiry_steps))
+        require(not expiry_errors and expiry_rc == -errno.EKEYEXPIRED and
+                expiry_result.error == expiry_rc and expiry_result.outcome == 0 and
+                expiry_result.media == expiry_step and expiry_result.last_completed == expiry_step and
+                expiry_steps.value == (1 << (expiry_step + 1)) - 1,
+                f"expired transaction continued at step {expiry_step}")
+        require((STATE / "consumed" / expiry_plan[0]).exists() == (expiry_step == 1),
+                "expiry violated the consumption boundary")
+        require(current_digest() == before_expiry, "expired transaction wrote the target")
+        rc, result, steps = execute(expiry_plan)
+        require(rc == -errno.EKEYEXPIRED and steps == 0, "expired authorization could be reused")
+        expiry_cases.append({"expiredAfter": expiry_step, "error": expiry_rc,
+                             "media": expiry_result.media, "diskUnchanged": True})
+
     removal_result, removal_steps = TransactionResult(), ctypes.c_uint32()
     removal_rc = observed(removal_plan[2], len(removal_plan[2]), observe,
                           ctypes.byref(removal_result), ctypes.byref(removal_steps))
@@ -475,7 +547,7 @@ def main():
               "fixtureBusyRetries": fixture_busy_retries,
               "transaction": {"cases": transaction_cases, "complete": True, "filesystem": filesystem,
                               "admissionRefusals": ["missing authorization", "wrong kernel generation"],
-                              "deviceRemoval": removal_evidence},
+                              "deviceRemoval": removal_evidence, "expiry": expiry_cases},
               "singleUseResults": {"accepted": results.count(0), "rejected": results.count(1)},
               "partitionBinding": ["valid partition", "symlink refused", "wrong disk refused", *geometry_cases],
               "binaries": {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
