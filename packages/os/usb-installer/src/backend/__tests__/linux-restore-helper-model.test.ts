@@ -1,17 +1,7 @@
-import { spawnSync } from "node:child_process";
-import {
-  closeSync,
-  existsSync,
-  ftruncateSync,
-  mkdtempSync,
-  openSync,
-  rmSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   destructiveToolTarget,
+  RESTORE_GPT_NATIVE_API,
   RESTORE_MUTATION_CHILD_POLICY,
   RESTORE_MUTATION_ORCHESTRATION,
   RESTORE_MUTATION_TOOLS,
@@ -70,12 +60,14 @@ describe("Linux Restore held-FD safety model", () => {
         expect(argument).not.toMatch(/^\/dev\//);
       }
     }
-    expect(RESTORE_MUTATION_TOOLS["create-gpt"].argv).toContain(
-      "/proc/self/fd/3",
-    );
-    expect(RESTORE_MUTATION_TOOLS["format-exfat"].argv).toContain(
-      "/proc/self/fd/4",
-    );
+    expect(RESTORE_GPT_NATIVE_API).toEqual({
+      create: "elizaos_restore_create_gpt",
+      verify: "elizaos_restore_verify_gpt",
+    });
+    expect(RESTORE_MUTATION_TOOLS["format-exfat"].argv).toEqual([
+      "elizaos-mkfs-exfat-fd",
+    ]);
+    expect(RESTORE_MUTATION_TOOLS["format-exfat"].inheritedFds).toEqual([4]);
     expect(RESTORE_MUTATION_CHILD_POLICY).toEqual({
       environment: { LANG: "C", LC_ALL: "C", PATH: "/nonexistent" },
       standardInput: "null",
@@ -242,60 +234,3 @@ describe("Linux Restore held-FD safety model", () => {
     ).toThrow(/different system boot/);
   });
 });
-
-const fdToolsPresent = Object.values(RESTORE_MUTATION_TOOLS).every((tool) =>
-  existsSync(tool.executable),
-);
-
-describe.runIf(process.platform === "linux" && fdToolsPresent)(
-  "Linux Restore candidate utility FD qualification",
-  () => {
-    it("creates and verifies GPT and exFAT through only inherited FDs", () => {
-      const directory = mkdtempSync(
-        join(tmpdir(), "elizaos-restore-fd-tools-"),
-      );
-      const wholePath = join(directory, "whole.img");
-      const partitionPath = join(directory, "partition.img");
-      const whole = openSync(wholePath, "w+");
-      const partitionFd = openSync(partitionPath, "w+");
-      ftruncateSync(whole, 64 * 1024 * 1024);
-      ftruncateSync(partitionFd, 62 * 1024 * 1024);
-      const invoke = (
-        name: keyof typeof RESTORE_MUTATION_TOOLS,
-      ): ReturnType<typeof spawnSync> => {
-        const tool = RESTORE_MUTATION_TOOLS[name];
-        const result = spawnSync(tool.executable, tool.argv.slice(1), {
-          argv0: tool.argv[0],
-          env: RESTORE_MUTATION_CHILD_POLICY.environment,
-          stdio: [
-            "ignore",
-            "pipe",
-            "pipe",
-            tool.inheritedFds.includes(3) ? whole : "ignore",
-            tool.inheritedFds.includes(4) ? partitionFd : "ignore",
-          ],
-          timeout: RESTORE_MUTATION_CHILD_POLICY.timeoutMs,
-          killSignal: RESTORE_MUTATION_CHILD_POLICY.killSignal,
-          maxBuffer: RESTORE_MUTATION_CHILD_POLICY.maxOutputBytesPerStream,
-        });
-        expect(result.error).toBeUndefined();
-        expect(result.signal).toBeNull();
-        expect(result.status, result.stderr.toString()).toBe(0);
-        return result;
-      };
-
-      try {
-        invoke("create-gpt");
-        invoke("verify-gpt");
-        invoke("settle-udev");
-        invoke("format-exfat");
-        const verification = invoke("verify-exfat");
-        expect(verification.stdout.toString()).toContain("clean");
-      } finally {
-        closeSync(partitionFd);
-        closeSync(whole);
-        rmSync(directory, { recursive: true });
-      }
-    });
-  },
-);
