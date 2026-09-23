@@ -18,7 +18,7 @@
  *     "lunchTarget":         "eliza_cf_x86_64_phone-trunk_staging-userdebug",
  *     "envPrefix":           "ELIZA",                  // env var prefix (ELIZA_AOSP_BUILD, …)
  *     "vendorDir":            "packages/os/android/vendor/eliza" // source vendor dir relative to repo root
- *     "buildAndroidSystemCmd": ["bun", "run", "build:android:system"]  // command to rebuild the privileged APK
+ *     "buildAndroidSystemCmd": ["bun", "run", "--cwd", "packages/app", "build:android:system"]  // command to rebuild the privileged APK
  *   }
  *
  * Resolution order (first match wins):
@@ -137,6 +137,8 @@ export function loadBrandConfig(configPath) {
   parsed.buildAndroidSystemCmd = parsed.buildAndroidSystemCmd ?? [
     "bun",
     "run",
+    "--cwd",
+    "packages/app",
     "build:android:system",
   ];
   parsed.commonMakefile = parsed.commonMakefile ?? `${parsed.brand}_common.mk`;

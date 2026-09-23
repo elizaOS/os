@@ -34,7 +34,7 @@ and a corresponding **vendor tree** under `packages/os/android/vendor/<brand>/`.
   "initRcName":    "init.eliza.rc",
   "commonMakefile":"eliza_common.mk",
   "cuttlefishMakefile":"eliza_cf_x86_64_phone.mk",
-  "buildAndroidSystemCmd": ["bun", "run", "build:android:system"],
+  "buildAndroidSystemCmd": ["bun", "run", "--cwd", "packages/app", "build:android:system"],
 
   // Optional — only needed if the brand stores assets/cache outside the defaults
   "androidAssetsDir": "packages/app-core/platforms/android/app/src/main/assets/agent",
@@ -58,7 +58,7 @@ For `brand = "<brand>"`:
 ├── <brand>_common.mk                                     # Shared product layer
 ├── apps/<AppName>/
 │   ├── Android.bp                                        # android_app_import (privileged: true, certificate: "platform")
-│   └── <AppName>.apk                                     # Built by `bun run build:android:system`
+│   └── <AppName>.apk                                     # Built by `bun run --cwd packages/app build:android:system`
 ├── bootanimation/
 │   ├── desc.txt
 │   └── (frame .png files)                                # Built by build-bootanimation.mjs
