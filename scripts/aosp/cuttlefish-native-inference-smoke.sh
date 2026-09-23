@@ -38,7 +38,7 @@ ADB="${ADB:-adb}"
 ANDROID_SERIAL="${ANDROID_SERIAL:-}"
 ANDROID_API="${ANDROID_API:-24}"
 REMOTE_DIR="${ELIZA_CUTTLEFISH_REMOTE_DIR:-/data/local/tmp/eliza-x86_64-verify}"
-OUT_DIR="${ELIZA_CUTTLEFISH_OUT_DIR:-/tmp/android-x86_64-verify}"
+OUT_DIR="${ELIZA_CUTTLEFISH_OUT_DIR:-$OS_ROOT/reports/cuttlefish/kernel-parity}"
 EVIDENCE_OUT="${ELIZA_CUTTLEFISH_EVIDENCE_OUT:-$OS_ROOT/reports/cuttlefish/android-x86_64-cpu.json}"
 SKIP_VULKAN_DIAG="${ELIZA_CUTTLEFISH_SKIP_VULKAN:-0}"
 
@@ -81,12 +81,19 @@ fi
 ABI="$("$ADB" -s "$ANDROID_SERIAL" shell getprop ro.product.cpu.abi | tr -d '\r')"
 [[ "$ABI" != "x86_64" ]] && fail "selected device $ANDROID_SERIAL has abi=$ABI, expected x86_64. Set ANDROID_SERIAL to a cvd_x86_64 instance."
 
+[[ "$REMOTE_DIR" =~ ^/data/local/tmp/[a-zA-Z0-9_-]+(/[a-zA-Z0-9_-]+)*$ ]] || fail "remote fixture path must be beneath /data/local/tmp with safe characters"
+[[ ! -e "$EVIDENCE_OUT" && ! -L "$EVIDENCE_OUT" ]] || fail "evidence output already exists; choose a fresh run path"
+node "$SCRIPT_DIR/kernel-parity-evidence.mjs" begin "$ELIZA_ROOT" "$OUT_DIR"
+"$CC" --version > "$OUT_DIR/compiler-version.txt"
+cp "$NDK/source.properties" "$OUT_DIR/ndk.properties"
+
 log "cvd device=$ANDROID_SERIAL abi=$ABI"
 log "host=$(uname -a)"
 
 # 3. Generate canonical fixtures + build NDK x86_64 ELFs.
 log "generating canonical fixtures..."
-make reference-test >/dev/null
+make -B reference-test >/dev/null
+cp gen_fixture "$OUT_DIR/gen_fixture_host"
 mkdir -p "$OUT_DIR/spv" "$OUT_DIR/fixtures"
 
 log "compiling gen_fixture (x86_64-linux-android${ANDROID_API})..."
@@ -123,6 +130,13 @@ fi
 "${ADB_S[@]}" shell "chmod 755 '${REMOTE_DIR}/gen_fixture_android_x86_64'"
 [[ "$SKIP_VULKAN_DIAG" != "1" ]] && "${ADB_S[@]}" shell "chmod 755 '${REMOTE_DIR}/vulkan_verify'"
 
+# Bind the actual guest executable before and after the run.
+"${ADB_S[@]}" shell "sha256sum '${REMOTE_DIR}/gen_fixture_android_x86_64'" | tr -d '\r' > "$OUT_DIR/device-binary-before.txt"
+"${ADB_S[@]}" shell getprop ro.product.cpu.abi | tr -d '\r' > "$OUT_DIR/device-abi.txt"
+"${ADB_S[@]}" shell getprop ro.product.device | tr -d '\r' > "$OUT_DIR/device-product.txt"
+"${ADB_S[@]}" shell getprop ro.build.fingerprint | tr -d '\r' > "$OUT_DIR/device-fingerprint.txt"
+"${ADB_S[@]}" shell uname -a | tr -d '\r' > "$OUT_DIR/device-kernel.txt"
+
 # 5. Run gen_fixture --self-test (THE recordable gate).
 log "running gen_fixture --self-test on cvd..."
 SELFTEST_OUT="$("${ADB_S[@]}" shell "cd '${REMOTE_DIR}' && ./gen_fixture_android_x86_64 --self-test" | tr -d '\r')"
@@ -131,9 +145,12 @@ echo "$SELFTEST_OUT" | grep -Eq "all finite; fused-attn \+ tbq V-cache( \+ split
   fail "gen_fixture --self-test on cvd did not produce the expected success line"
 
 # Host baseline for parity check.
-HOST_OUT="$(./gen_fixture --self-test | tr -d '\r')"
+HOST_OUT="$("$OUT_DIR/gen_fixture_host" --self-test | tr -d '\r')"
 [[ "$SELFTEST_OUT" == "$HOST_OUT" ]] || \
   fail "cvd self-test output does not match host bit-for-bit (host: $HOST_OUT vs cvd: $SELFTEST_OUT)"
+printf '%s\n' "$SELFTEST_OUT" > "$OUT_DIR/device-selftest.txt"
+printf '%s\n' "$HOST_OUT" > "$OUT_DIR/host-selftest.txt"
+"${ADB_S[@]}" shell "sha256sum '${REMOTE_DIR}/gen_fixture_android_x86_64'" | tr -d '\r' > "$OUT_DIR/device-binary-after.txt"
 log "PASS — cvd self-test bit-identical to host."
 
 # 6. Vulkan fixture diagnostics. The verifier reports the actual guest GPU.
@@ -154,12 +171,7 @@ if [[ "$SKIP_VULKAN_DIAG" != "1" ]]; then
   [[ "$vulkan_failures" -eq 0 ]] || fail "CPU parity passed, but $vulkan_failures Vulkan fixture checks failed."
 fi
 
-# 7. Bookkeeping. Verify the evidence file points at this run.
-if [[ -f "$EVIDENCE_OUT" ]]; then
-  log "evidence file present: $EVIDENCE_OUT"
-  log "  (regeneration of the JSON is intentionally manual — edit the file directly to record any device/fork-commit changes)"
-else
-  log "WARN: evidence file missing — author it at $EVIDENCE_OUT (see PLATFORM_MATRIX.md for the schema)."
-fi
-
-log "OK — Android x86_64 CPU kernel-reference parity verified on Cuttlefish."
+# 7. Emit a fresh report only after every requested check has succeeded.
+ANDROID_SERIAL="$ANDROID_SERIAL" node "$SCRIPT_DIR/kernel-parity-evidence.mjs" \
+  finish "$ELIZA_ROOT" "$OUT_DIR" "$EVIDENCE_OUT"
+log "OK — Android x86_64 CPU kernel-reference parity verified; evidence: $EVIDENCE_OUT"

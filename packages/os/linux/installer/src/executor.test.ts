@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   authorizeInstallPlan,
@@ -7,11 +10,13 @@ import {
   type InstallJournal,
   InstallRecoveryRequiredError,
 } from "./executor";
+import { DurableFileInstallJournal } from "./file-journal";
 import {
   createDiskConfirmationToken,
   createDiskInventoryFingerprint,
   createInstallPlan,
 } from "./planner";
+import { applyTestInventoryAction } from "./test-inventory";
 import type {
   DiskInventory,
   InstallAuthorization,
@@ -147,10 +152,13 @@ function dependencies(
         sha256: "a".repeat(64),
       }),
       verifyPartitionTableBackup: async () => true,
-      apply: async (action) => ({
-        receiptId: `receipt-${action.type}`,
-        actionDigest: digestAction(action),
-      }),
+      apply: async (action) => {
+        applyTestInventoryAction(target, action);
+        return {
+          receiptId: `receipt-${action.type}`,
+          actionDigest: digestAction(action),
+        };
+      },
     },
     now: () => NOW,
     ...overrides,
@@ -259,6 +267,7 @@ describe("privileged installer execution boundary", () => {
         partitions: [{ ...targetPartition, mounted: true }],
       });
     deps.operations.apply = async (action) => {
+      applyTestInventoryAction(target, action);
       appliedCount += 1;
       return {
         receiptId: `receipt-${action.type}`,
@@ -278,6 +287,7 @@ describe("privileged installer execution boundary", () => {
     const deps = dependencies(target);
     let appliedCount = 0;
     deps.operations.apply = async (action) => {
+      applyTestInventoryAction(target, action);
       appliedCount += 1;
       return {
         receiptId: `receipt-${action.type}`,
@@ -311,6 +321,225 @@ describe("privileged installer execution boundary", () => {
     const resumed = await executeAuthorizedInstallPlan(authorized, deps);
     expect(resumed).toEqual(result);
     expect(appliedCount).toBe(plan.actions.length);
+  });
+
+  it.each(["healthy", "missing", "corrupt"] as const)(
+    "reopens a durable recovery checkpoint with a %s backup before resuming",
+    async (state) => {
+      const directory = await mkdtemp(join(tmpdir(), "installer-recovery-"));
+      try {
+        const location = join(directory, "gpt.backup");
+        const artifact = Buffer.from("fixture recovery bytes, not a real GPT");
+        const artifactDigest = createHash("sha256")
+          .update(artifact)
+          .digest("hex");
+        const target = disk();
+        const { request, plan } = reviewedPlan(target);
+        const deps = dependencies(target);
+        let checkpointInventory: DiskInventory | undefined;
+        const apply = deps.operations.apply;
+        deps.operations.apply = async (action, inventory) => {
+          const result = await apply(action, inventory);
+          checkpointInventory ??= structuredClone(target);
+          return result;
+        };
+        deps.operations.backupPartitionTable = async (inventory) => {
+          await writeFile(location, artifact, { mode: 0o600 });
+          return {
+            stableId: inventory.stableId,
+            storageStableId: "independent-recovery-media",
+            location,
+            sha256: artifactDigest,
+          };
+        };
+        const verify: typeof deps.operations.verifyPartitionTableBackup =
+          async (backup, inventory) => {
+            try {
+              return (
+                backup.stableId === inventory.stableId &&
+                backup.storageStableId === "independent-recovery-media" &&
+                backup.location === location &&
+                createHash("sha256")
+                  .update(await readFile(backup.location))
+                  .digest("hex") === backup.sha256
+              );
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code === "ENOENT")
+                return false;
+              throw error;
+            }
+          };
+        deps.operations.verifyPartitionTableBackup = verify;
+        const authorized = await authorizeInstallPlan(
+          request,
+          plan,
+          authorization(target, plan.planId),
+          deps,
+        );
+        await executeAuthorizedInstallPlan(authorized, deps);
+        if (!checkpointInventory)
+          throw new Error("Missing first completed action fixture");
+
+        // Persist a clean checkpoint prefix, then reopen it with new objects as
+        // a restarted service would. This is filesystem evidence, not a power-cut test.
+        const journal = new DurableFileInstallJournal(directory);
+        for (const entry of deps.journal.entries.slice(0, 4))
+          await journal.append(entry);
+        const restarted = dependencies(checkpointInventory, {
+          journal: new DurableFileInstallJournal(directory),
+        });
+        let writes = 0;
+        const resumeApply = restarted.operations.apply;
+        restarted.operations.apply = async (action, inventory) => {
+          writes += 1;
+          return resumeApply(action, inventory);
+        };
+        restarted.operations.backupPartitionTable = async () => {
+          throw new Error("Must not replace original recovery backup");
+        };
+        restarted.operations.verifyPartitionTableBackup = verify;
+        if (state === "missing") await rm(location);
+        if (state === "corrupt")
+          await writeFile(location, "changed recovery bytes");
+        if (state === "healthy") {
+          const result = await executeAuthorizedInstallPlan(
+            authorized,
+            restarted,
+          );
+          expect(result.completedActions).toBe(plan.actions.length);
+          expect(writes).toBe(plan.actions.length - 1);
+          expect(
+            (await journal.read(plan.planId))[1]?.partitionTableBackup,
+          ).toEqual({
+            stableId: target.stableId,
+            storageStableId: "independent-recovery-media",
+            location,
+            sha256: artifactDigest,
+          });
+        } else {
+          await expect(
+            executeAuthorizedInstallPlan(authorized, restarted),
+          ).rejects.toBeInstanceOf(InstallRecoveryRequiredError);
+          expect(writes).toBe(0);
+          expect((await journal.read(plan.planId)).at(-1)?.event).toBe(
+            "execution-failed",
+          );
+        }
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(["missing", "read error"])(
+    "stops after an action leaves a backup %s and cannot claim completion",
+    async (failure) => {
+      const target = disk();
+      const { request, plan } = reviewedPlan(target);
+      const deps = dependencies(target);
+      let available = true;
+      let writes = 0;
+      const apply = deps.operations.apply;
+      deps.operations.verifyPartitionTableBackup = async () => {
+        if (!available && failure === "read error")
+          throw new Error("recovery storage I/O failure");
+        return available;
+      };
+      deps.operations.apply = async (action, inventory) => {
+        writes += 1;
+        const result = await apply(action, inventory);
+        available = false;
+        return result;
+      };
+      const authorized = await authorizeInstallPlan(
+        request,
+        plan,
+        authorization(target, plan.planId),
+        deps,
+      );
+      await expect(
+        executeAuthorizedInstallPlan(authorized, deps),
+      ).rejects.toBeInstanceOf(InstallRecoveryRequiredError);
+      expect(writes).toBe(1);
+      expect(deps.journal.entries.at(-1)?.event).toBe("execution-failed");
+      expect(
+        deps.journal.entries.some(
+          (entry) => entry.event === "action-completed",
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it("requires the recovery artifact when resuming after the last action but before final completion", async () => {
+    const target = disk();
+    const { request, plan } = reviewedPlan(target);
+    const deps = dependencies(target);
+    const authorized = await authorizeInstallPlan(
+      request,
+      plan,
+      authorization(target, plan.planId),
+      deps,
+    );
+    await executeAuthorizedInstallPlan(authorized, deps);
+    expect(deps.journal.entries.pop()?.event).toBe("execution-completed");
+    deps.operations.verifyPartitionTableBackup = async () => false;
+    deps.operations.apply = async () => {
+      throw new Error("Completed actions must not replay");
+    };
+    await expect(
+      executeAuthorizedInstallPlan(authorized, deps),
+    ).rejects.toBeInstanceOf(InstallRecoveryRequiredError);
+    expect(deps.journal.entries.at(-1)?.event).toBe("action-completed");
+  });
+
+  it("rechecks inventory after asynchronous final recovery verification", async () => {
+    const target = disk();
+    const { request, plan } = reviewedPlan(target);
+    const deps = dependencies(target);
+    deps.operations.verifyPartitionTableBackup = async () => {
+      if (
+        deps.journal.entries.filter(
+          (entry) => entry.event === "action-completed",
+        ).length === plan.actions.length
+      ) {
+        const partition = target.partitions[0];
+        if (!partition) throw new Error("Missing completed partition fixture");
+        partition.id = "changed-during-backup-verification";
+      }
+      return true;
+    };
+    const authorized = await authorizeInstallPlan(
+      request,
+      plan,
+      authorization(target, plan.planId),
+      deps,
+    );
+    await expect(
+      executeAuthorizedInstallPlan(authorized, deps),
+    ).rejects.toThrow(/inventory drifted/);
+    expect(deps.journal.entries.at(-1)?.event).toBe("action-completed");
+  });
+
+  it("does not let a backup verifier rewrite the durable recovery descriptor", async () => {
+    const target = disk();
+    const { request, plan } = reviewedPlan(target);
+    const deps = dependencies(target);
+    deps.operations.verifyPartitionTableBackup = async (backup) => {
+      backup.location = "/changed-by-verifier";
+      backup.sha256 = "f".repeat(64);
+      return true;
+    };
+    const authorized = await authorizeInstallPlan(
+      request,
+      plan,
+      authorization(target, plan.planId),
+      deps,
+    );
+    await executeAuthorizedInstallPlan(authorized, deps);
+    expect(deps.journal.entries[1]?.partitionTableBackup).toMatchObject({
+      location: "/run/elizaos-installer/recovery/gpt.bin",
+      sha256: "a".repeat(64),
+    });
   });
 
   it("fails closed when the journal cannot durably persist a checkpoint", async () => {
@@ -439,6 +668,7 @@ describe("privileged installer execution boundary", () => {
       },
     });
     deps.operations.apply = async (action) => {
+      applyTestInventoryAction(target, action);
       applied += 1;
       return {
         receiptId: `receipt-${action.type}`,
@@ -480,6 +710,7 @@ describe("privileged installer execution boundary", () => {
       },
     });
     deps.operations.apply = async (action) => {
+      applyTestInventoryAction(target, action);
       applied += 1;
       return {
         receiptId: `receipt-${action.type}`,
@@ -532,6 +763,7 @@ describe("privileged installer execution boundary", () => {
       return verificationCount < 5;
     };
     deps.operations.apply = async (action) => {
+      applyTestInventoryAction(target, action);
       appliedCount += 1;
       return {
         receiptId: `receipt-${action.type}`,
@@ -584,6 +816,35 @@ describe("privileged installer execution boundary", () => {
         const completed = requiredJournalEntry(entries, 3);
         entries[2] = completed;
         entries[3] = started;
+      },
+    ],
+    [
+      "a legacy backup checkpoint without its recovery descriptor",
+      (entries: InstallJournalEntry[]) => {
+        delete requiredJournalEntry(entries, 1).partitionTableBackup;
+      },
+    ],
+    [
+      "a backup descriptor with the wrong target",
+      (entries: InstallJournalEntry[]) => {
+        const backup = requiredJournalEntry(entries, 1).partitionTableBackup;
+        if (!backup) throw new Error("Missing test backup");
+        backup.stableId = "another-physical-disk";
+      },
+    ],
+    [
+      "a backup descriptor with a different digest",
+      (entries: InstallJournalEntry[]) => {
+        const backup = requiredJournalEntry(entries, 1).partitionTableBackup;
+        if (!backup) throw new Error("Missing test backup");
+        backup.sha256 = "f".repeat(64);
+      },
+    ],
+    [
+      "a backup descriptor on an unrelated event",
+      (entries: InstallJournalEntry[]) => {
+        requiredJournalEntry(entries, 0).partitionTableBackup =
+          requiredJournalEntry(entries, 1).partitionTableBackup;
       },
     ],
     [
@@ -651,5 +912,127 @@ describe("privileged installer execution boundary", () => {
         dependencies(target),
       ),
     ).rejects.toThrow(/digest/);
+  });
+});
+
+describe("installer inventory readback enforcement", () => {
+  it.each([
+    "no-op erase",
+    "wrong geometry",
+    "wrong filesystem",
+    "changed GUID",
+    "replaced ESP",
+  ])(
+    "journals failure and forbids replay after %s with a valid receipt",
+    async (fault) => {
+      const target = disk();
+      const { request, plan } = reviewedPlan(target);
+      const deps = dependencies(target);
+      // Deliberately expose the same mutable object to prove the executor keeps
+      // an independent pre-operation snapshot rather than trusting its backend.
+      deps.inventory.inspect = async () => target;
+      const apply = deps.operations.apply;
+      let attempts = 0;
+      deps.operations.apply = async (action, observed) => {
+        attempts += 1;
+        if (fault === "no-op erase") {
+          return {
+            receiptId: "lying-receipt",
+            actionDigest: digestAction(action),
+          };
+        }
+        const receipt = await apply(action, observed);
+        if (action.type === "create-partition") {
+          const added = target.partitions.at(-1);
+          if (!added) throw new Error("Missing new partition fixture.");
+          if (fault === "wrong geometry") added.startBytes += MIB;
+          if (fault === "wrong filesystem") added.filesystem = "ntfs";
+          if (fault === "changed GUID")
+            target.hardwareIdentity.gptDiskGuid =
+              "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+        }
+        if (fault === "replaced ESP" && action.type === "install-system") {
+          const esp = target.partitions.find((item) => item.role === "esp");
+          if (!esp) throw new Error("Missing ESP fixture.");
+          esp.id = "unexpected-esp-identity";
+        }
+        return receipt;
+      };
+      const authorized = await authorizeInstallPlan(
+        request,
+        plan,
+        authorization(target, plan.planId),
+        deps,
+      );
+      await expect(
+        executeAuthorizedInstallPlan(authorized, deps),
+      ).rejects.toBeInstanceOf(InstallRecoveryRequiredError);
+      expect(deps.journal.entries.at(-1)?.event).toBe("execution-failed");
+      expect(
+        deps.journal.entries.some(
+          (entry) => entry.event === "execution-completed",
+        ),
+      ).toBe(false);
+      const stoppedAt = attempts;
+      await expect(
+        executeAuthorizedInstallPlan(authorized, deps),
+      ).rejects.toBeInstanceOf(InstallRecoveryRequiredError);
+      expect(attempts).toBe(stoppedAt);
+    },
+  );
+
+  it("initializes GPT on a blank disk and resumes only the verified final inventory", async () => {
+    const target = disk({
+      partitionTable: "none",
+      gptRedundancyVerified: undefined,
+      hardwareIdentity: { ...disk().hardwareIdentity, gptDiskGuid: undefined },
+      partitions: [],
+    });
+    const { request, plan } = reviewedPlan(target);
+    const deps = dependencies(target);
+    const authorized = await authorizeInstallPlan(
+      request,
+      plan,
+      authorization(target, plan.planId),
+      deps,
+    );
+    const result = await executeAuthorizedInstallPlan(authorized, deps);
+    expect(target.partitionTable).toBe("gpt");
+    expect(target.hardwareIdentity.gptDiskGuid).toBeTruthy();
+    expect(await executeAuthorizedInstallPlan(authorized, deps)).toEqual(
+      result,
+    );
+    target.hardwareIdentity.gptDiskGuid =
+      "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    await expect(
+      executeAuthorizedInstallPlan(authorized, deps),
+    ).rejects.toThrow(/differs from the last durable/);
+  });
+
+  it("preserves existing partitions through a complete alongside layout", async () => {
+    const target = disk();
+    const preserved = structuredClone(target.partitions);
+    const request: InstallRequest = {
+      mode: "alongside",
+      targetStableId: target.stableId,
+      expectedSizeBytes: target.sizeBytes,
+      confirmationToken: createDiskConfirmationToken(target),
+      freeExtentId: "free",
+    };
+    const plan = createInstallPlan(request, target);
+    const deps = dependencies(target);
+    const authorized = await authorizeInstallPlan(
+      request,
+      plan,
+      authorization(target, plan.planId),
+      deps,
+    );
+    const result = await executeAuthorizedInstallPlan(authorized, deps);
+    expect(result.completedActions).toBe(plan.actions.length);
+    for (const partition of preserved) {
+      expect(
+        target.partitions.find((item) => item.id === partition.id),
+      ).toEqual(partition);
+    }
   });
 });

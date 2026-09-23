@@ -67,7 +67,26 @@ connected, so the package never changes a partition table.
   target or admit a second attempt. None of those trusted
   values may come from renderer request data. Do not install the unit templates
   until those fail-closed native adapters are present.
-- **Implement recoverable GPT mutation.** Save and verify both GPT headers and
+- **Implement recoverable GPT mutation.** The journal now retains the exact
+  recovery artifact descriptor and re-verifies it before and after each action,
+  including resumed execution. Missing/corrupt artifacts and legacy hash-only
+  checkpoints fail closed; healthy filesystem-backed checkpoints resume without
+  replacing the original backup. Uninstalled native candidates now capture and
+  verify exact GPT artifacts, restore them with interruption checks, and refresh
+  and verify the kernel partition map in disposable VM qualification. A separate
+  uninstalled filesystem primitive exclusively persists and re-verifies artifacts
+  through a retained private directory, including file/directory syncs and
+  process-interruption checks. A local qualification also kills/reboots disposable
+  QEMU overlays at four storage checkpoints and requires a directory-synced
+  artifact to survive exact native verification. This discards the guest kernel;
+  physical power loss and host storage caches are not modeled. Required trusted
+  callbacks are not a production storage policy. Native kernel-ancestry checks
+  bind the filesystem to a retained partition and direct whole-disk parent,
+  reject the target as storage, and recheck disk generations. Physical alias
+  detection, configured-path/mount lifetime and qualified durable media remain
+  policy responsibilities. Production
+  backup storage/backend composition and power-loss proof remain unfinished.
+  Save and verify both GPT headers and
   partition entries to separate recovery media/state, perform typed operations,
   reread the kernel partition table, and prove rollback after every injected
   failure boundary.

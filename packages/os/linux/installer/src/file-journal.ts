@@ -217,7 +217,7 @@ export class DurableFileInstallJournal implements InstallJournal {
     try {
       handle = await open(
         descriptorPath(directory, journalName),
-        constants.O_RDONLY | constants.O_NOFOLLOW,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
       );
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
@@ -294,7 +294,8 @@ export class DurableFileInstallJournal implements InstallJournal {
             constants.O_CREAT |
               constants.O_APPEND |
               constants.O_RDWR |
-              constants.O_NOFOLLOW,
+              constants.O_NOFOLLOW |
+              constants.O_NONBLOCK,
             OWNER_FILE_MODE,
           );
         } catch {

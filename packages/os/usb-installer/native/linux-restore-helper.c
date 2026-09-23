@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #ifndef BLKGETDISKSEQ
@@ -24,6 +25,7 @@
 #define PLAN_ID_BYTES 32U
 #define BOOT_ID_BYTES 36U
 #define DEVICE_PATH_BYTES 128U
+#define MAX_AUTHORIZATION_NS UINT64_C(300000000000)
 #define STATE_ROOT "/run/elizaos-usb-restore"
 
 /* This binary is an identity-retention gate, not a mutation implementation. */
@@ -37,6 +39,13 @@ struct request {
   uint64_t expected_minor;
   uint64_t expected_diskseq;
   uint64_t expected_size_bytes;
+  uint64_t authorized_from_ns;
+  uint64_t authorized_until_ns; /* Trusted file only, never parsed from request. */
+};
+
+struct retained_authorization {
+  int directory;
+  int record;
 };
 
 struct sha256_context {
@@ -372,11 +381,29 @@ static bool request_matches_current_boot(const struct request *request) {
          memcmp(value, request->boot_id, BOOT_ID_BYTES) == 0;
 }
 
-static bool read_exact_binding(int descriptor, const char *expected) {
-  char value[66];
+static int authorization_clock_status(const struct request *request) {
+  struct timespec now;
+  if (clock_gettime(CLOCK_BOOTTIME, &now) != 0 || now.tv_sec < 0 ||
+      now.tv_nsec < 0 || now.tv_nsec >= 1000000000L) return -EIO;
+  const uint64_t seconds = (uint64_t)now.tv_sec;
+  const uint64_t nanos = (uint64_t)now.tv_nsec;
+  if (seconds > (UINT64_MAX - nanos) / UINT64_C(1000000000)) return -EIO;
+  const uint64_t elapsed = seconds * UINT64_C(1000000000) + nanos;
+  if (request->authorized_from_ns > elapsed || request->authorized_until_ns <= elapsed ||
+      request->authorized_until_ns <= request->authorized_from_ns ||
+      request->authorized_until_ns - request->authorized_from_ns > MAX_AUTHORIZATION_NS)
+    return -EKEYEXPIRED;
+  return 0;
+}
+
+static bool read_authorization(int descriptor, struct request *request) {
+  static const char prefix[] = "ELIZAOS_RESTORE_AUTHORIZATION_V1\n";
+  const size_t prefix_length = sizeof(prefix) - 1U;
+  const size_t deadline_offset = prefix_length + 65U;
+  char value[160];
   size_t used = 0U;
   while (used < sizeof(value)) {
-    const ssize_t amount = read(descriptor, value + used, sizeof(value) - used);
+    const ssize_t amount = pread(descriptor, value + used, sizeof(value) - used, (off_t)used);
     if (amount < 0) {
       if (errno == EINTR) continue;
       return false;
@@ -384,8 +411,46 @@ static bool read_exact_binding(int descriptor, const char *expected) {
     if (amount == 0) break;
     used += (size_t)amount;
   }
-  return used == 65U && value[64] == '\n' &&
-         memcmp(value, expected, 64U) == 0;
+  if (used < deadline_offset + 2U || used == sizeof(value) ||
+      memchr(value, '\0', used) != NULL || value[used - 1U] != '\n' ||
+      memcmp(value, prefix, prefix_length) != 0 ||
+      memcmp(value + prefix_length, request->plan_binding, 64U) != 0 ||
+      value[deadline_offset - 1U] != '\n') return false;
+  value[used - 1U] = '\0';
+  char *separator = strchr(value + deadline_offset, '\n');
+  if (separator == NULL) return false;
+  *separator = '\0';
+  return parse_uint64(value + deadline_offset, false, &request->authorized_from_ns) &&
+         parse_uint64(separator + 1, false, &request->authorized_until_ns);
+}
+
+/* Retain the original inode so replacement cannot become a renewed grant.
+ * The broker withdraws authorization by unlinking its exact record. These
+ * checks sample revocation between operations; they never interrupt a write. */
+static int authorization_status(const struct request *request,
+                                 const struct retained_authorization *grant) {
+  const int clock_status = authorization_clock_status(request);
+  if (clock_status != 0) return clock_status;
+  struct stat held, named;
+  struct request current = *request;
+  if (!trusted_state_directory(grant->directory) ||
+      !trusted_authorization_file(grant->record) ||
+      fstat(grant->record, &held) != 0 ||
+      fstatat(grant->directory, request->plan_id, &named, AT_SYMLINK_NOFOLLOW) != 0 ||
+      !S_ISREG(named.st_mode) || held.st_dev != named.st_dev || held.st_ino != named.st_ino ||
+      !read_authorization(grant->record, &current) ||
+      current.authorized_from_ns != request->authorized_from_ns ||
+      current.authorized_until_ns != request->authorized_until_ns ||
+      !trusted_authorization_file(grant->record)) return -EKEYREVOKED;
+  return 0;
+}
+
+static int close_authorization(struct retained_authorization *grant) {
+  const int record = close(grant->record);
+  const int directory = close(grant->directory);
+  grant->record = -1;
+  grant->directory = -1;
+  return record == 0 && directory == 0 ? 0 : -1;
 }
 
 /*
@@ -394,9 +459,12 @@ static bool read_exact_binding(int descriptor, const char *expected) {
  * mode-0600, single-link regular file. This helper intentionally ships with no
  * broker or policy entry, so ordinary callers cannot authorize mutation.
  */
-static int validate_authorized_plan(const struct request *request,
-                                    int *consumed_directory) {
+static int validate_authorized_plan(struct request *request,
+                                    int *consumed_directory,
+                                    struct retained_authorization *grant) {
   *consumed_directory = -1;
+  grant->directory = -1;
+  grant->record = -1;
   const int root = open(STATE_ROOT, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
   if (root < 0 || !trusted_state_directory(root)) {
     if (root >= 0) (void)close(root);
@@ -418,35 +486,46 @@ static int validate_authorized_plan(const struct request *request,
     return -1;
   }
 
+  /* Reject special files after opening without waiting for a FIFO writer or
+   * device readiness. Regular-file reads are unaffected by O_NONBLOCK. */
   const int authorization = openat(authorized, request->plan_id,
-                                   O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+                                   O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW);
   if (authorization < 0 || !trusted_authorization_file(authorization) ||
-      !read_exact_binding(authorization, request->plan_binding)) {
+      !read_authorization(authorization, request)) {
     if (authorization >= 0) (void)close(authorization);
     (void)close(consumed);
     (void)close(authorized);
     (void)close(root);
     return -2;
   }
-  (void)close(authorization);
+  if (authorization_clock_status(request) != 0) {
+    (void)close(authorization);
+    (void)close(consumed);
+    (void)close(authorized);
+    (void)close(root);
+    return -3;
+  }
 
   struct stat marker_metadata;
   if (fstatat(consumed, request->plan_id, &marker_metadata,
               AT_SYMLINK_NOFOLLOW) == 0) {
+    (void)close(authorization);
     (void)close(consumed);
     (void)close(authorized);
     (void)close(root);
     return 1;
   }
   if (errno != ENOENT) {
+    (void)close(authorization);
     (void)close(consumed);
     (void)close(authorized);
     (void)close(root);
     return -1;
   }
 
-  (void)close(authorized);
   (void)close(root);
+  grant->record = authorization;
+  grant->directory = authorized;
   *consumed_directory = consumed;
   return 0;
 }
@@ -458,7 +537,10 @@ static int validate_authorized_plan(const struct request *request,
  * disabled helper deliberately never consumes a plan.
  */
 static int consume_authorized_plan(const struct request *request,
-                                   int consumed_directory) {
+                                   int consumed_directory,
+                                   const struct retained_authorization *grant) {
+  const int authorization = authorization_status(request, grant);
+  if (authorization != 0) { errno = -authorization; return -1; }
   const int marker = openat(consumed_directory, request->plan_id,
                             O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
                             0600);
@@ -567,6 +649,98 @@ static bool validate_whole_device_fd(int descriptor,
   return valid;
 }
 
+static bool read_sysfs_uint64_at(int directory, const char *name,
+                                 uint64_t *value) {
+  char text[32];
+  size_t length = 0U;
+  if (!read_sysfs_value_at(directory, name, text, sizeof(text), &length) ||
+      length < 2U || text[length - 1U] != '\n') return false;
+  text[length - 1U] = '\0';
+  return parse_uint64(text, false, value);
+}
+
+/* The fixed restore GPT uses 128 entries of 128 bytes, a one-sector backup
+ * header, and a partition from 1 MiB through its last usable sector. Kernel
+ * partition state can differ from those disk bytes after a failed reread.
+ * Require BOTH ioctl geometry and the kernel sysfs extent to match that layout
+ * before returning any writable partition descriptor. This is not a substitute
+ * for the separate raw primary/backup GPT verifier. */
+static bool validate_partition_geometry(int partition, int partition_sysfs,
+                                         int whole, const struct request *request) {
+  int whole_sector = 0;
+  int partition_sector = 0;
+  int read_only = 1;
+  uint64_t size = 0U;
+  uint64_t start_units = 0U;
+  uint64_t size_units = 0U;
+  const uint64_t start_bytes = 1024U * 1024U;
+  const uint64_t array_bytes = 128U * 128U;
+  if (ioctl(whole, BLKSSZGET, &whole_sector) != 0 ||
+      (whole_sector != 512 && whole_sector != 4096) ||
+      ioctl(partition, BLKSSZGET, &partition_sector) != 0 ||
+      partition_sector != whole_sector ||
+      ioctl(partition, BLKROGET, &read_only) != 0 || read_only != 0 ||
+      ioctl(partition, BLKGETSIZE64, &size) != 0 ||
+      !read_sysfs_uint64_at(partition_sysfs, "start", &start_units) ||
+      !read_sysfs_uint64_at(partition_sysfs, "size", &size_units)) return false;
+  const uint64_t sector = (uint64_t)whole_sector;
+  if (request->expected_size_bytes % sector != 0U ||
+      request->expected_size_bytes <= start_bytes + array_bytes + sector)
+    return false;
+  const uint64_t expected_size =
+      request->expected_size_bytes - start_bytes - array_bytes - sector;
+  return size == expected_size && start_units == start_bytes / 512U &&
+         size_units == expected_size / 512U;
+}
+
+static bool validate_partition_fd(const struct request *request,
+                                   int whole_device_fd, int partition) {
+  if (!validate_whole_device_fd(whole_device_fd, request)) return false;
+  struct stat metadata;
+  uint64_t diskseq = 0U;
+  if (fstat(partition, &metadata) != 0 || !S_ISBLK(metadata.st_mode) ||
+      ioctl(partition, BLKGETDISKSEQ, &diskseq) != 0 ||
+      diskseq != request->expected_diskseq) {
+    return false;
+  }
+
+  const int partition_sysfs = open_sysfs_block_directory(metadata.st_rdev);
+  if (partition_sysfs < 0) {
+    return false;
+  }
+  char partition_number[8];
+  size_t partition_number_length = 0U;
+  if (!read_sysfs_value_at(partition_sysfs, "partition", partition_number,
+                           sizeof(partition_number),
+                           &partition_number_length) ||
+      partition_number_length != 2U || partition_number[0] != '1' ||
+      partition_number[1] != '\n') {
+    (void)close(partition_sysfs);
+    return false;
+  }
+  if (!validate_partition_geometry(partition, partition_sysfs, whole_device_fd,
+                                    request)) {
+    (void)close(partition_sysfs);
+    return false;
+  }
+  const int parent_sysfs =
+      openat(partition_sysfs, "..", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  (void)close(partition_sysfs);
+  if (parent_sysfs < 0) {
+    return false;
+  }
+  struct stat whole_metadata;
+  const bool parent_matches = fstat(whole_device_fd, &whole_metadata) == 0 &&
+                              S_ISBLK(whole_metadata.st_mode) &&
+                              sysfs_directory_has_dev(parent_sysfs,
+                                                      whole_metadata.st_rdev);
+  (void)close(parent_sysfs);
+  if (!parent_matches || !validate_whole_device_fd(whole_device_fd, request)) {
+    return false;
+  }
+  return true;
+}
+
 static int open_verified_partition(const struct request *request,
                                    int whole_device_fd) {
   if (!validate_whole_device_fd(whole_device_fd, request)) return -1;
@@ -577,50 +751,10 @@ static int open_verified_partition(const struct request *request,
                               request->device_path, needs_p ? "p" : "");
   if (length <= 0 || (size_t)length >= sizeof(partition_path)) return -1;
 
-  /* The retained whole-device O_EXCL claim already serializes this operation.
-   * A second, distinct exclusive claim for its partition would fail EBUSY. */
-  const int partition =
-      open(partition_path, O_RDWR | O_CLOEXEC | O_NOFOLLOW);
+  /* Retain the whole-device O_EXCL claim; a second partition claim fails EBUSY. */
+  const int partition = open(partition_path, O_RDWR | O_CLOEXEC | O_NOFOLLOW);
   if (partition < 0) return -1;
-  struct stat metadata;
-  uint64_t diskseq = 0U;
-  if (fstat(partition, &metadata) != 0 || !S_ISBLK(metadata.st_mode) ||
-      ioctl(partition, BLKGETDISKSEQ, &diskseq) != 0 ||
-      diskseq != request->expected_diskseq) {
-    (void)close(partition);
-    return -1;
-  }
-
-  const int partition_sysfs = open_sysfs_block_directory(metadata.st_rdev);
-  if (partition_sysfs < 0) {
-    (void)close(partition);
-    return -1;
-  }
-  char partition_number[8];
-  size_t partition_number_length = 0U;
-  if (!read_sysfs_value_at(partition_sysfs, "partition", partition_number,
-                           sizeof(partition_number),
-                           &partition_number_length) ||
-      partition_number_length != 2U || partition_number[0] != '1' ||
-      partition_number[1] != '\n') {
-    (void)close(partition_sysfs);
-    (void)close(partition);
-    return -1;
-  }
-  const int parent_sysfs =
-      openat(partition_sysfs, "..", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-  (void)close(partition_sysfs);
-  if (parent_sysfs < 0) {
-    (void)close(partition);
-    return -1;
-  }
-  struct stat whole_metadata;
-  const bool parent_matches = fstat(whole_device_fd, &whole_metadata) == 0 &&
-                              S_ISBLK(whole_metadata.st_mode) &&
-                              sysfs_directory_has_dev(parent_sysfs,
-                                                      whole_metadata.st_rdev);
-  (void)close(parent_sysfs);
-  if (!parent_matches) {
+  if (!validate_partition_fd(request, whole_device_fd, partition)) {
     (void)close(partition);
     return -1;
   }
@@ -651,11 +785,16 @@ int main(int argc, char **argv) {
                        4);
   }
   int consumed_directory = -1;
+  struct retained_authorization grant;
   const int authorized =
-      validate_authorized_plan(&request, &consumed_directory);
+      validate_authorized_plan(&request, &consumed_directory, &grant);
   if (authorized == 1) {
     return emit_result("blocked", "PLAN_ALREADY_CONSUMED",
                        "The single-use restore plan was already consumed.", 5);
+  }
+  if (authorized == -3) {
+    return emit_result("blocked", "PLAN_AUTHORIZATION_EXPIRED",
+                       "The exact restore authorization is expired or not current.", 10);
   }
   if (authorized == -2) {
     return emit_result("blocked", "PLAN_NOT_AUTHORIZED",
@@ -673,6 +812,7 @@ int main(int argc, char **argv) {
   if (whole_device < 0 || !validate_whole_device_fd(whole_device, &request)) {
     if (whole_device >= 0) (void)close(whole_device);
     (void)close(consumed_directory);
+    (void)close_authorization(&grant);
     return emit_result("blocked", "TARGET_IDENTITY_MISMATCH",
                        "The opened whole-device identity is not the authorized target.",
                        8);
@@ -690,6 +830,7 @@ int main(int argc, char **argv) {
   (void)open_verified_partition;
   (void)close(whole_device);
   (void)close(consumed_directory);
+  (void)close_authorization(&grant);
   return emit_result(
       "blocked", "NATIVE_FD_QUALIFICATION_REQUIRED",
       "Restore remains disabled until fixed native tools pass FD qualification.",

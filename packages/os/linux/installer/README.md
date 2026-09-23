@@ -20,6 +20,45 @@ requires a verified GPT backup, and writes a digest-chained durable journal
 before and after each operation. An interrupted or inconsistent journal stops
 with `InstallRecoveryRequiredError`; actions are never guessed or replayed.
 
+Each action also requires a fresh inventory readback before its completion
+checkpoint is written. Erasing must leave an empty, verified redundant GPT;
+that action alone may initialize GPT or replace its disk GUID. Creating a
+partition must produce exactly the reviewed byte extent and filesystem,
+including an unencrypted FAT32 ESP when requested. Shrinking must change only
+the reviewed partition end. Other actions must preserve the existing partition
+identities and layout, and image/boot operations require their expected root
+partition or ESP to exist. The comparison uses an independent pre-action
+snapshot even if a backend mutates its inventory argument. A valid operation
+receipt cannot override a failed postcondition: execution journals failure,
+requires recovery, and never proceeds to later actions or silently replays it.
+
+Physical disk identity remains bound to the reviewed plan throughout execution.
+GPT metadata and partition state are bound to the initial authorization or the
+last durable checkpoint, permitting reviewed table changes without accepting
+unrelated drift. These inventory checks do not prove payload bytes, filesystem
+health after a write, or bootability; those require the real backend and
+platform qualification.
+
+The verified backup checkpoint retains the complete recovery artifact descriptor:
+target stable ID, independent storage stable ID, location and exact SHA-256.
+Its digest and original inventory fingerprint remain bound into the journal.
+Resuming never generates a substitute backup from an already modified disk.
+The backend must reopen and verify those exact saved bytes and immutable
+target/storage bindings before and after every action, before the final completion record, and before
+returning a previously completed result. Current partition layout may already differ from
+the original, so the verifier must not mistake expected table changes for a
+new backup. Verification precedes the final owner and inventory revalidation
+before mutation; after mutation it precedes the inventory readback and durable
+completion receipt. Final completion also refreshes inventory after backup
+verification and requires the last durable partition state to match.
+
+Missing, changed or invalid recovery artifacts stop execution and require
+recovery. Legacy checkpoints containing only a hash also require explicit
+recovery; the executor cannot invent a location or storage identity for them.
+Filesystem-backed restart tests reopen a durable completed-action prefix with
+healthy, deleted and corrupted backup bytes. They prove the orchestration and
+journal boundary, not native GPT backup correctness or power-loss recovery.
+
 `DurableFileInstallJournal` is the Linux file-backed implementation for that
 boundary. It requires a pre-provisioned, canonical, owner-only directory; uses
 an exclusive per-plan writer lock; appends bounded JSONL records with `fsync`
@@ -211,3 +250,132 @@ accepted AF_UNIX connection and must prove peer PID/UID/GID and pidfd live,
 exited, and closed states without treating a denied syscall as a skip. A
 restricted local sandbox may therefore pass the compile gate while remaining
 explicitly non-qualified for the kernel boundary.
+
+
+## Native GPT snapshot qualification
+
+`native/gpt-snapshot.c` contains candidate primitives for the missing recovery backend.
+Its read-only capture operation records the protective MBR sector, primary header/array and backup
+array/header through one retained whole-device descriptor. It binds kernel
+device number, disk sequence, capacity, logical sector size and the trusted
+original plan/inventory binding. It re-reads all captured regions and rechecks
+the held identity before returning exact artifact bytes and their SHA-256.
+Capture never opens a device pathname, repairs a header or writes any device.
+
+Validation follows the relevant [UEFI GPT structures](https://uefi.org/specs/UEFI/2.11/05_GUID_Partition_Table_Format.html): both actual header and array CRCs,
+matching redundant metadata, protective-only MBR, bounded non-overlapping array
+locations and usable ranges, non-overlapping partitions, unique nonzero partition
+GUIDs and reserved entry bytes. Supported policy bounds are 512/4096-byte logical
+sectors, up to 4096 entries and 16 KiB through 4 MiB per declared array, with
+128-times-a-power-of-two entry sizes. Hybrid MBRs, invalid redundancy and layouts
+outside those bounds fail closed. Relocated arrays, larger entries and a partial
+last array sector are supported; no fixed single-partition Restore layout is
+assumed. The versioned envelope retains each region byte-for-byte, including
+its sector padding, and verification requires its exact trusted digest/binding.
+
+Both existing disposable Debian VM lanes now also qualify this reader on a
+separate named virtio disk. Three multi-partition layouts, checksum corruption,
+validly checksummed invalid layouts, identity drift, malformed artifacts and
+inappropriate descriptors are exercised. Full target and non-target canary
+hashes must stay unchanged across capture. The host compares the saved artifact
+regions directly with the final virtual disk, retains `gpt-snapshot.bin`, and
+binds the source, binary, artifact and transcript hashes into its report.
+
+The separate restore operation copies and verifies the trusted artifact, binding
+and expected identity before writing through an exclusively retained buffered
+whole-device descriptor. It restores, flushes and reads back the backup GPT copy
+before writing the primary array/header and protective MBR, then flushes and
+compares all five original regions. Required trusted authorization/cancellation
+checks and live descriptor identity checks run between bounded writes and
+operations. Results retain the last completed checkpoint, byte count and whether
+a write was attempted; an error after an attempted write is incomplete even
+when the reported byte count is zero.
+
+Both VM lanes damage only their dedicated GPT fixture disk, then exercise native
+restoration, cancellation and child-process termination at seven checkpoints,
+with explicit restoration and exact full-disk verification after each interruption.
+They also reject invalid artifacts, authorization and descriptor/identity states,
+stop after a real read-only transition following a partial write, and verify that
+callback mutation cannot replace the copied inputs. All three layouts are restored;
+the larger array also exercises cancellation between 64 KiB write chunks.
+Process interruption is not
+a guest or hardware power cut. Restore success proves restored on-disk metadata,
+not bootability or rollback of filesystem/payload writes.
+
+The separate `elizaos_install_refresh_gpt_map` candidate first verifies that the
+exact trusted artifact still matches disk bytes. It issues one `BLKRRPART` through
+the retained descriptor, checks every kernel partition number and extent against
+the original GPT, rejects missing or extra partitions, and rechecks the on-disk
+artifact and identity. It uses the kernel's [partition sysfs attributes](https://github.com/torvalds/linux/blob/v6.12/block/partitions/core.c),
+whose extents use 512-byte sectors even on a 4096-byte logical-sector disk.
+An open partition causing `EBUSY`, cancellation before or after reread, or any
+verification failure remains unverified; there is no retry or fallback. Both VM
+lanes establish a shifted map with an extra partition, restore GPT bytes while
+that stale map remains, and prove explicit refresh restores the exact original
+map without changing disk bytes. Success does not establish udev node settlement
+or authorize partition descriptors; callers must retain and validate those
+descriptors before using them. Additional kernel-only faults remove, shift,
+truncate or add a partition after a successful reread; all must fail verification
+while both GPT copies remain unchanged.
+
+`native/gpt-artifact-store.c` adds a separate filesystem persistence candidate.
+It requires a retained root-owned 0700 directory on an ext-family filesystem,
+uses a digest-derived filename, creates a 0600 regular file exclusively, writes
+bounded chunks, fsyncs the file and directory, and reopens/verifies the exact
+artifact. Verification also syncs the retained file and directory again. Existing
+files are never overwritten or silently removed, including after interruption.
+File identity, link count, ownership and permissions are checked through retained
+descriptors; special files, changed names and corrupt/truncated bytes fail closed.
+Required trusted callbacks repeat authorization, cancellation and storage-policy
+checks. These callbacks must come from the root backend, never renderer input.
+
+`elizaos_install_check_recovery_storage` supplies a read-only native check for
+kernel backing ancestry. It binds the directory's filesystem device to a retained
+partition, verifies that partition's direct sysfs parent against a retained whole
+disk, checks partition geometry and disk generation, and requires a different
+kernel whole-disk identity for the installation target. Both whole disks must have
+a direct device and no slave devices; stacked or unresolved storage is refused.
+The storage VM fixture invokes this check at each persistence guard and exercises
+same-target, wrong-partition/parent, stale-generation and directory-identity
+refusals, plus refusal of a real mounted ext4 loop partition. This checks kernel topology, not physical independence: production policy
+must still reject hardware aliases (such as two paths to one LUN), qualify the
+recovery medium, bind the configured pathname and retain locks/mount lifetime.
+
+The VM qualification stores artifacts on its separate ext4 root disk, exercises
+cancellation and child-process exit at four persistence checkpoints, explicitly
+reopens complete artifacts, rejects incomplete ones, and preserves interrupted
+files against replacement. It also exercises chunk cancellation, unsafe files and
+directories, tmpfs refusal, input mutation and replacement of an opened inode.
+These are filesystem/process-restart checks, not power-cut tests.
+
+`native/qualify-gpt-vm-interruption.py` separately starts four disposable overlays
+from a completed local VM qualification. It kills the exact QEMU process with
+SIGKILL after creation, writing, file sync, or directory sync, then boots each
+same overlay with a fresh kernel and re-verifies the artifact through the native
+reader. A directory-synced artifact must survive byte-for-byte. Earlier checkpoints
+may retain a valid artifact or fail closed with no usable output. The prepared
+image is read-only backing storage and its digest must remain unchanged.
+
+```sh
+python3 packages/os/linux/installer/native/qualify-gpt-vm-interruption.py \
+  --prepared /var/tmp/restore-fd-512 \
+  --output-dir /var/tmp/gpt-vm-interruption-512 \
+  --container-tools-image elizaos-usb-qualification-tools:local
+```
+
+This local KVM test requires the stopped prepared `guest.qcow2`, its original
+backing image, logs, report and artifact; downloaded CI reports alone are not
+enough. The container supplies only unprivileged image/ISO tools. No host block
+devices are attached. Run it for each prepared sector-size lane. Retain the
+per-boot logs, seeds, QEMU commands, native source/binary bindings and final
+`qualification.json`. SIGKILL discards the guest kernel and QEMU process but
+leaves host storage caches and the physical drive powered, so this cannot prove
+physical power-loss safety.
+
+The libraries are not installed or connected to the privileged installer.
+Filesystem identity and successful syncs alone do not prove independent durable
+recovery media: production must resolve and repeatedly verify the physical backing
+storage and configured location, retain the target/storage locks, and bind the
+artifact into the journal. Production recovery authorization and composition, power-loss
+recovery and physical-media qualification remain unfinished. OpenSSL libcrypto is used for artifact hashing
+in this candidate; the VM builds it with `libssl-dev` and links `-lcrypto`.

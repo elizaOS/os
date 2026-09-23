@@ -171,6 +171,7 @@ export type RestoreMutationStep =
   | "partition-retained"
   | "exfat-formatted"
   | "exfat-verified"
+  | "media-synced"
   | "complete";
 
 export type RestoreMutationTerminal =
@@ -191,16 +192,18 @@ const RESTORE_MUTATION_STEPS: readonly RestoreMutationStep[] = [
   "partition-retained",
   "exfat-formatted",
   "exfat-verified",
+  "media-synced",
   "complete",
 ];
 
 /**
  * Models the fail-closed native sequencing contract. Cancellation is checked
- * between bounded child operations. Once the durable replay marker exists,
+ * between bounded child operations. Once replay-marker creation is attempted,
  * cancellation or any failure is terminal `incomplete`, never success.
  */
 export class RestoreMutationSequence {
   #index = 0;
+  #consumptionAttempted = false;
   #terminal: RestoreMutationTerminal | undefined;
 
   get current(): RestoreMutationStep {
@@ -209,12 +212,19 @@ export class RestoreMutationSequence {
     return current;
   }
 
+  beginConsumption(): void {
+    if (this.#terminal || this.#index !== 0 || this.#consumptionAttempted)
+      throw new Error("Restore plan consumption cannot be attempted again.");
+    this.#consumptionAttempted = true;
+  }
+
   advance(next: RestoreMutationStep): void {
     if (this.#terminal)
       throw new Error("Restore mutation is already terminal.");
     if (next !== RESTORE_MUTATION_STEPS[this.#index + 1]) {
       throw new Error("Restore mutation step is out of order.");
     }
+    if (next === "plan-consumed") this.#consumptionAttempted = true;
     this.#index += 1;
     if (next === "complete") this.#terminal = { status: "complete" };
   }
@@ -225,10 +235,7 @@ export class RestoreMutationSequence {
     const lastCompletedStep = this.current;
     this.#terminal = {
       status,
-      mediaState:
-        this.#index < RESTORE_MUTATION_STEPS.indexOf("plan-consumed")
-          ? "untouched"
-          : "incomplete",
+      mediaState: this.#consumptionAttempted ? "incomplete" : "untouched",
       lastCompletedStep,
     };
     return this.#terminal;
