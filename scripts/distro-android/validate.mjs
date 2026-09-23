@@ -369,6 +369,27 @@ export function validateProductLayer(vendorDir, brand) {
     );
   }
   assertIncludes(common, "ro.setupwizard.mode=DISABLED", brand.commonMakefile);
+  const setupDefaultsPath = path.join(
+    vendorDir,
+    "overlays",
+    "frameworks",
+    "base",
+    "packages",
+    "SettingsProvider",
+    "res",
+    "values",
+    "defaults.xml",
+  );
+  assertFile(setupDefaultsPath, "SettingsProvider setup-completion defaults");
+  const setupDefaults = fs.readFileSync(setupDefaultsPath, "utf8");
+  for (const name of ["def_device_provisioned", "def_user_setup_complete"]) {
+    assertIncludes(
+      setupDefaults,
+      `<bool name="${name}">true</bool>`,
+      setupDefaultsPath,
+    );
+  }
+
   // Boot-time scaffolds.
   assertIncludes(
     common,
