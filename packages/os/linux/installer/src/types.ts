@@ -174,6 +174,8 @@ export interface InstallJournalEntry {
   actionIndex?: number;
   actionDigest?: string;
   receiptId?: string;
+  /** Exact recovery artifact, only on the verified backup checkpoint. */
+  partitionTableBackup?: PartitionTableBackup;
   previousDigest: string | null;
   digest: string;
 }

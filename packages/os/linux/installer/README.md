@@ -39,6 +39,26 @@ unrelated drift. These inventory checks do not prove payload bytes, filesystem
 health after a write, or bootability; those require the real backend and
 platform qualification.
 
+The verified backup checkpoint retains the complete recovery artifact descriptor:
+target stable ID, independent storage stable ID, location and exact SHA-256.
+Its digest and original inventory fingerprint remain bound into the journal.
+Resuming never generates a substitute backup from an already modified disk.
+The backend must reopen and verify those exact saved bytes and immutable
+target/storage bindings before and after every action, before the final completion record, and before
+returning a previously completed result. Current partition layout may already differ from
+the original, so the verifier must not mistake expected table changes for a
+new backup. Verification precedes the final owner and inventory revalidation
+before mutation; after mutation it precedes the inventory readback and durable
+completion receipt. Final completion also refreshes inventory after backup
+verification and requires the last durable partition state to match.
+
+Missing, changed or invalid recovery artifacts stop execution and require
+recovery. Legacy checkpoints containing only a hash also require explicit
+recovery; the executor cannot invent a location or storage identity for them.
+Filesystem-backed restart tests reopen a durable completed-action prefix with
+healthy, deleted and corrupted backup bytes. They prove the orchestration and
+journal boundary, not native GPT backup correctness or power-loss recovery.
+
 `DurableFileInstallJournal` is the Linux file-backed implementation for that
 boundary. It requires a pre-provisioned, canonical, owner-only directory; uses
 an exclusive per-plan writer lock; appends bounded JSONL records with `fsync`
