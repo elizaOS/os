@@ -460,8 +460,17 @@ jobs:
             adb devices -l > reports/cuttlefish/adb-devices.txt 2>&1 || true
           fi
 
+      - name: Record qualification boundary
+        if: always()
+        env:
+          CVD_LAUNCH: ${{ inputs.launch }}
+          CVD_JOB_STATUS: ${{ job.status }}
+        run: |
+          node scripts/android/record-cuttlefish-result.mjs \
+            reports/cuttlefish/workflow-result.json "$CVD_LAUNCH" "$CVD_JOB_STATUS" "$GITHUB_SHA"
+
       - name: Upload Cuttlefish Android validation evidence
-        if: always() && inputs.launch == true
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: cuttlefish-android-validation-${{ github.run_attempt }}

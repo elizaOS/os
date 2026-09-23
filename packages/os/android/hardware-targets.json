@@ -20,7 +20,8 @@
       "blockedReasons": [
         "The active Gemma ASR artifact is not yet published and digest-pinned in the application catalog.",
         "No retained Pixel 9a flash and post-boot validation evidence exists yet."
-      ]
+      ],
+      "labExperimentsEligible": false
     },
     {
       "targetId": "pixel11pro-grizzly",
@@ -44,7 +45,8 @@
         "A complete reproducible device-kernel and vendor-module integration is not yet verified; initial bring-up intentionally uses the stock kernel extracted from the pinned factory image.",
         "The generated vendor module has not yet completed an exact-source build and physical Pixel 11 Pro boot validation.",
         "No retained Pixel 11 Pro rollback, flash, post-boot hardware, launcher, local inference, or voice evidence bundle exists yet."
-      ]
+      ],
+      "labExperimentsEligible": false
     },
     {
       "targetId": "lightphone3-tlp301",
@@ -64,7 +66,8 @@
         "No kernel source or boot-image contract has been published.",
         "No licensed vendor-blob manifest has been published.",
         "No validated bootloader unlock, flash, or rollback procedure exists."
-      ]
+      ],
+      "labExperimentsEligible": false
     }
   ]
 }

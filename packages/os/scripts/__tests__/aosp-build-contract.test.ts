@@ -2135,7 +2135,7 @@ describe("AOSP build contracts", () => {
           "erase userdata",
         ),
       }),
-    ).toThrow("must not erase userdata or metadata");
+    ).toThrow("must not erase any partition");
     expect(() =>
       assertSafeFlashMetadata({
         androidInfo: "require board=grizzly\n",

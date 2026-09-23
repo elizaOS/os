@@ -1,219 +1,86 @@
-# ElizaOS Android installer helpers
+# elizaOS Android installer
 
-This folder contains host-side helpers for planning and, when explicitly
-confirmed, flashing ElizaOS Android build artifacts to a device through
-`adb` and `fastboot`.
+The Bash/PowerShell helpers retain legacy image planning and read-only
+discovery. All confirmed writes now delegate to the signed v2 installer.
+Current hardware and trust policy are unenrolled, so physical execution remains
+blocked. A candidate build is not installation authorization.
 
-The helper is intentionally conservative:
+Read the [shared contract and signing guide](../../../../scripts/android/README.md)
+for the complete format, trust enrollment, lab workflow and execution commands.
 
-- It defaults to `--dry-run` and only prints the command plan.
-- Flashing requires `--execute`, `--confirm-flash`, and a release manifest
-  whose artifact hashes match and whose device tier is `lab-validated`.
-- Confirmed flashing rejects ad-hoc `--image` overrides and `--skip-preflight`.
-- Bootloader unlocking is never automated. Unlock devices manually and only
-  after confirming the data-loss and warranty implications for that device.
-- Data wipe is never implied. Add `--wipe-data` only when you intend to run
-  `fastboot -w`.
+## Planning and discovery
 
-## Requirements
+From the repository root:
 
-- Android platform tools available in `PATH`:
-  - `adb`
-  - `fastboot`
-- USB debugging enabled on the device when starting from Android.
-- An unlocked bootloader before any image is flashed.
-- Image artifacts from an Android build, usually from
-  `out/target/product/<device>/`.
-- A validated release manifest for the exact artifact set and device codename.
-
-## Dry-run plan
-
-Use dry-run first. This validates image paths, detects platform tools, and
-prints the exact command plan without touching the device:
-
-```bash
-android/installer/install-elizaos-android.sh \
-  --artifact-dir out/target/product/tegu
+```sh
+packages/os/android/installer/install-elizaos-android.sh --artifact-dir /absolute/product-output
 ```
 
-If multiple Android devices are connected, pass the serial shown by
-`adb devices -l`:
+This legacy dry-run discovers loose filenames and prints a hypothetical plan.
+It does not establish that the images are coherent, bootable or authorized to
+flash. `--image`, `--allow-stale-artifacts` and `--skip-preflight` cannot bypass
+the signed execution path. `--execute` without `--confirm-flash` performs only
+read-only discovery, and never reboots, writes or switches slots.
 
-```bash
-android/installer/install-elizaos-android.sh \
-  --device ABC123 \
-  --artifact-dir out/target/product/tegu
+For an authorized v2 contract, dry-run validates signatures, policy, image
+hashes and generated metadata before displaying the qualified transitions:
+
+```sh
+node scripts/android/install-release.mjs --manifest /absolute/release.android-release.json --artifact-dir /absolute/bundle/flash --dry-run
 ```
 
-## Image inputs
+## Confirmed installation
 
-`--artifact-dir` discovers common image filenames:
+The current v2 physical executor supports the grizzly adapter on Linux only.
+It requires explicit device selection, exact qualified tools, recovery archive,
+new private journal and a signed contract. Start in bootloader mode after
+preserving incident evidence. The installer never automatically unlocks,
+relocks, upgrades firmware, cancels snapshots or enables MTE.
 
-- `boot.img`
-- `vendor_boot.img`
-- `vendor_kernel_boot.img`
-- `dtbo.img`
-- `pvmfw.img`
-- `vbmeta.img`
-- `vbmeta_system.img`
-- `vbmeta_vendor.img`
-- `init_boot.img`
-- `super.img`
-- `product.img`
-- `system.img`
-- `system_ext.img`
-- `system_dlkm.img`
-- `vendor.img`
-- `vendor_dlkm.img`
-- `odm.img`
-- `odm_dlkm.img`
-
-Use `--image PARTITION=PATH` for custom artifacts or to override a discovered
-image:
-
-```bash
-android/installer/install-elizaos-android.sh \
-  --image boot=out/target/product/tegu/boot.img \
-  --image vendor_boot=out/target/product/tegu/vendor_boot.img \
-  --image vendor_kernel_boot=out/target/product/tegu/vendor_kernel_boot.img \
-  --image super=out/target/product/tegu/super.img
+```sh
+packages/os/android/installer/install-elizaos-android.sh \
+  --manifest /absolute/release.android-release.json \
+  --artifact-dir /absolute/bundle/flash \
+  --device SERIAL \
+  --tool-dir /absolute/platform-tools \
+  --recovery-dir /absolute/recovery \
+  --journal /absolute/private/install.jsonl \
+  --execute --confirm-flash --reboot-after-flash
 ```
 
-For A/B devices that need an explicit slot, add `--slot a`, `--slot b`, or the
-slot value required by the device and artifact set.
+A required wipe must be explicitly selected with `--wipe-data`; a wipe that
+conflicts with the qualified transition is also rejected. The selected slot
+comes from that transition. `--slot` may confirm it, never override it.
 
-## Preflight checks
+Failure stops dependent commands. Do not resume by copying the remaining
+commands out of a journal. Re-inspect the device and use its qualified recovery
+procedure. Installation without `--reboot-after-flash` remains pending boot
+validation.
 
-When execution is requested, the helper checks:
+## Read-only post-boot validation
 
-1. `adb` and `fastboot` are present in `PATH`.
-2. Exactly one authorized ADB device is connected, unless `--device` is set.
-3. ADB reports the device in `device` state.
-4. USB debugging is enabled according to `settings get global adb_enabled`.
-5. After rebooting to bootloader, `fastboot getvar unlocked` reports an
-   unlocked bootloader.
+For v2, verify the same signed release, exact slot, APK digest, page size,
+SELinux and runtime/role state:
 
-If the device is already in bootloader mode, use `--assume-bootloader` so the
-helper skips ADB discovery and starts with fastboot preflight:
-
-```bash
-android/installer/install-elizaos-android.sh \
-  --assume-bootloader \
-  --device ABC123 \
-  --artifact-dir out/target/product/tegu
+```sh
+node scripts/android/verify-installed-release.mjs \
+  --manifest /absolute/release.android-release.json \
+  --artifact-dir /absolute/bundle/flash --device SERIAL \
+  --tool-dir /absolute/platform-tools --slot b --execute
 ```
 
-`--skip-preflight` is available only for non-flashing diagnostics. The helper
-refuses it whenever `--confirm-flash` is present.
+Omitting `--execute` is dry-run. The older `validate-post-flash.sh` remains a
+legacy diagnostic helper; its results cannot authorize v2 release promotion.
 
-## Flashing
+[Supported devices](docs/supported-devices.md) and
+[recovery guidance](docs/recovery-rollback.md) describe remaining qualification.
 
-Run the dry-run command first and inspect the plan. To flash, repeat the same
-inputs and add both execution flags:
+## Tests
 
-```bash
-android/installer/install-elizaos-android.sh \
-  --device ABC123 \
-  --artifact-dir out/target/product/tegu \
-  --manifest path/to/release-manifest.json \
-  --execute \
-  --confirm-flash
+```sh
+bash packages/os/android/installer/tests/run-tests.sh
+node --test packages/os/scripts/__tests__/android-release-safety.test.mjs
 ```
 
-Add post-flash boot validation when you expect the flashed image to boot into
-Android:
-
-```bash
-android/installer/install-elizaos-android.sh \
-  --device ABC123 \
-  --artifact-dir out/target/product/tegu \
-  --manifest path/to/release-manifest.json \
-  --execute \
-  --confirm-flash \
-  --reboot-after-flash
-```
-
-The validation plan waits for ADB and prints:
-
-- `ro.product.device`
-- `ro.build.fingerprint`
-- `sys.boot_completed`
-
-You can run the same checks separately with the post-flash validator. It is
-dry-run by default:
-
-```bash
-android/installer/scripts/validate-post-flash.sh \
-  --device ABC123 \
-  --manifest android/installer/manifests/android-release-manifest.example.json
-```
-
-Add `--execute` only when a booted Android device is attached and you want to
-query it through ADB.
-
-## Release readiness docs
-
-- [ADB setup](docs/adb-setup.md)
-- [Supported devices](docs/supported-devices.md)
-- [Recovery and rollback](docs/recovery-rollback.md)
-- [Release manifest schema](manifests/android-release-manifest.schema.json)
-- [Release manifest example](manifests/android-release-manifest.example.json)
-
-Validate a release manifest without device access:
-
-```bash
-node android/installer/scripts/validate-release-manifest.mjs \
-  android/installer/manifests/android-release-manifest.example.json
-```
-
-Checked-in pre-release draft manifests may still carry placeholder checksums or
-sentinel sizes while artifacts are being produced. That review-only state must
-be explicit:
-
-```bash
-node android/installer/scripts/validate-release-manifest.mjs \
-  release/beta-2026-05-16/android-release-manifest.json \
-  --allow-placeholders
-```
-
-If artifacts are available locally, pass `--artifact-dir` to verify declared
-file sizes and SHA-256 values:
-
-```bash
-node android/installer/scripts/validate-release-manifest.mjs \
-  path/to/release-manifest.json \
-  --artifact-dir out/target/product/tegu
-```
-
-On Windows, the PowerShell wrapper keeps the same dry-run default and forwards
-arguments to the Bash installer when Git Bash, WSL, or another Bash runtime is
-available:
-
-```powershell
-packages\os\android\installer\install-elizaos-android.ps1 `
-  -ArtifactDir out\target\product\tegu `
-  -Manifest path\to\release-manifest.json
-```
-
-Device-free checks for this folder live in `tests/run-tests.sh`.
-
-## Command plan shape
-
-The generated plan is intentionally simple and auditable:
-
-```text
-adb -s <serial> reboot bootloader
-fastboot -s <serial> devices
-fastboot -s <serial> getvar product
-fastboot -s <serial> getvar unlocked
-fastboot -s <serial> flashing get_unlock_ability
-fastboot -s <serial> flash <partition> <image>
-fastboot -s <serial> reboot
-adb -s <serial> wait-for-device
-adb -s <serial> shell getprop ro.product.device
-adb -s <serial> shell getprop ro.build.fingerprint
-adb -s <serial> shell getprop sys.boot_completed
-```
-
-Review the partition-to-image mapping before adding `--execute
---confirm-flash`.
+These suites use mock transports and temporary signing keys. Passing them does
+not prove a phone boots or that a recovery transition works.

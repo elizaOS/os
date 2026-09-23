@@ -1,85 +1,28 @@
-# Supported Devices
+# Supported devices
 
-Support is release-manifest driven. A device is supported only when the Android
-release manifest names its codename and the artifact set was validated for that
-codename.
+A marketing name or a legacy `lab-validated` label cannot authorize flashing.
+The signed v2 contract must match the exact model, SKU, storage capacity,
+firmware, layout, tools, source inputs and artifact digests, and bind current
+qualification evidence. The reviewed inventory independently controls
+production and lab eligibility.
 
-## Support Tiers
+| Target | Current status |
+| --- | --- |
+| Cuttlefish x86_64, ARM64, RISC-V, RISC-V E1 | Product definitions exist. Each release requires exact-image boot/runtime evidence. Build-only workflow success is unqualified. |
+| Pixel 11 Pro (`grizzly`) | Pinned generated candidate; signed installer adapter implemented but hardware qualification pending. Production and lab eligibility remain false. |
+| Pixel 9a (`tegu`) | Source-pinned candidate. No v2 execution adapter or retained hardware qualification yet. Planning-only. |
+| Light Phone III (`TLP301`) | No validated device/kernel/vendor/firmware/recovery image contract. Blocked. |
+| Other Pixel 11 models | Not covered by the grizzly adapter. Reject rather than cross-flash. |
 
-| Tier | Meaning | Flashing guidance |
-| --- | --- | --- |
-| `lab-validated` | A maintainer flashed the release on this codename and completed post-flash validation. | Eligible for normal installer use. |
-| `candidate` | Build artifacts exist and basic dry-run checks pass, but a full flash validation is pending. | Dry-run only unless a release owner approves lab testing. |
-| `manual` | Artifacts are useful for development but no automated support is promised. | Manual fastboot workflow only. |
-| `blocked` | Known incompatible, locked, or unsafe target. | Do not flash. |
+Add a target only with its own source lock, artifact/layout and firmware
+contract, execution adapter, negative tests and exact-device qualification.
+Keep shared application logic separate from hardware adapters. Never map a
+whole product family to a generic `pixel-arm64` release.
 
-## Minimum Device Criteria
+A scoped lab experiment is distinct from a public installable release. It
+requires independently signed exact-image authorization, known stock/recovery
+and rollback state, Cuttlefish and artifact-validation evidence, and explicit
+lab eligibility. It does not qualify a public release or permit relocking.
 
-A release may list stricter requirements, but supported devices generally need:
-
-- Unlockable bootloader.
-- ADB authorization from a booted Android state or a known bootloader serial.
-- Fastboot support for every partition in the manifest.
-- Slot behavior matching the manifest (`a`, `b`, or `none`).
-- Dynamic partition handling matching the artifact set.
-- Recovery path documented for stock images or a previous known-good release.
-
-Carrier-locked or enterprise-managed devices often fail the bootloader
-requirement even when their retail model name matches a supported device.
-
-## Current Target Status
-
-- **Cuttlefish:** checked-in x86_64, arm64, and riscv64 product definitions are
-  emulator targets. Release support still requires a completed build and boot
-  validation run for the exact source revisions.
-- **Pixel 9a (`tegu`):** source-pinned candidate. The Android 15 manifest,
-  Pixel device/kernel projects, and exact separately licensed Google vendor
-  archive are pinned by `pixel9a.lock.json`; the `eliza_tegu_phone` lunch target
-  is checked in. Installer eligibility remains blocked until a retained build,
-  flash, post-boot validation, and rollback evidence bundle passes on hardware.
-- **Pixel 11 Pro (`grizzly`):** generated, source-pinned candidate. Android 17,
-  exact GrapheneOS generation inputs, the current A9 factory/rollback image,
-  and required generated outputs are pinned by
-  `pixel11pro.lock.json`. The product remains installer-ineligible until a
-  retained build, stock rollback, exact-confirmation flash, and full post-boot
-  hardware/Eliza validation bundle pass on the lab phone.
-- **Light Phone III (`TLP301`):** Eliza's application repository has a direct
-  debug APK policy for this device. Light's official `light-sdk` now provides
-  a sandboxed LightOS tool/application surface and emulator, but it is not a
-  bootable LightOS/AOSP source, signing, or flash contract. This OS repository
-  still has no Light Phone III device tree, vendor-blob manifest, kernel/boot
-  image contract, or validated unlock/flash/rollback procedure. It is not an
-  elizaOS image target yet. `tegu` is the Pixel 9a target and must not be
-  treated as a Light Phone codename. The authoritative-source audit date and
-  links live in `hardware-targets.json`.
-
-## Manifest Entries
-
-Each release manifest should include one entry per supported codename:
-
-```json
-{
-  "targetId": "pixel9a-tegu",
-  "codename": "tegu",
-  "marketingName": "Pixel 9a",
-  "tier": "candidate",
-  "slots": ["a", "b"],
-  "dynamicPartitions": true,
-  "rollbackSupported": true,
-  "notes": "Example only. Promote to lab-validated after a real flash pass."
-}
-```
-
-Use codenames from `adb shell getprop ro.product.device` or
-`fastboot getvar product`, not marketing names, as the installer target key.
-
-## Adding a Device to a Release
-
-1. Add the codename to the release manifest.
-2. Confirm every required artifact is present and hashed.
-3. Run manifest validation.
-4. Run the installer dry-run with `--artifact-dir` or explicit `--image`
-   mappings.
-5. Flash only on lab hardware with an unlocked bootloader.
-6. Run post-flash validation and capture the property output.
-7. Promote the tier to `lab-validated` only after validation passes.
+See [the shared contract guide](../../../../../scripts/android/README.md) and
+[implementation status](../../docs/install-safety-implementation.md).

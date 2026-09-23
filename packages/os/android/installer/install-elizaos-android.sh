@@ -34,7 +34,7 @@ Usage:
   install-elizaos-android.sh --artifact-dir OUT_DIR [options]
   install-elizaos-android.sh --image partition=/path/to/image.img [--image ...] [options]
 
-Plans and optionally runs an ElizaOS Android image flash through adb/fastboot.
+Plans and optionally runs an elizaOS Android image flash through adb/fastboot.
 The default mode is dry-run: commands are printed and no device is modified.
 
 Required image input:
@@ -45,7 +45,10 @@ Required image input:
                               system_ext.img, and odm.img.
   --image PARTITION=PATH      Add an explicit image. May be repeated. Explicit
                               images override discovered artifact-dir images.
-  --manifest FILE             Validated release manifest. Required for flashing.
+  --manifest FILE             Signed v2 release contract required for flashing.
+  --tool-dir DIR              Digest-pinned adb/fastboot (Linux execution).
+  --recovery-dir DIR          Retained qualified recovery archive.
+  --journal FILE              New private JSONL file for durable command results.
 
 Device and safety options:
   --device SERIAL             adb/fastboot serial. Required if multiple devices
@@ -63,7 +66,7 @@ Device and safety options:
                               hour (a signature of mixed build generations).
   --skip-preflight            Skip USB debugging and bootloader unlock checks.
   --assume-bootloader         Do not plan or run adb reboot bootloader.
-  --wipe-data                 Add fastboot -w after flashing. Never implied.
+  --wipe-data                 Authorize qualified data wipes. Never implied.
                               Required the first time the userdata/encryption
                               contract changes (fstab stance, verity state).
   --reboot-after-flash        Reboot and run post-flash adb validation.
@@ -79,7 +82,10 @@ Examples:
     --artifact-dir out/target/product/tegu
 
   android/installer/install-elizaos-android.sh \
-    --device ABC123 --artifact-dir out/target/product/tegu \
+    --device ABC123 --artifact-dir /absolute/bundle/flash \
+    --manifest /absolute/release.android-release.json \
+    --tool-dir /absolute/platform-tools --recovery-dir /absolute/recovery \
+    --journal /absolute/private/install.jsonl \
     --execute --confirm-flash --reboot-after-flash
 EOF
 }
@@ -154,6 +160,10 @@ parse_args() {
       --image)
         [[ $# -ge 2 ]] || die "--image requires PARTITION=PATH"
         IMAGE_SPECS+=("$2")
+        shift 2
+        ;;
+      --journal|--tool-dir|--recovery-dir)
+        [[ $# -ge 2 ]] || die "$1 requires a value"
         shift 2
         ;;
       --device)
@@ -632,44 +642,28 @@ enforce_android_info() {
 }
 
 execute_plan() {
-  if [[ "$EXECUTE" -ne 1 ]]; then
-    return
-  fi
-
-  if [[ "$CONFIRM_FLASH" -ne 1 ]]; then
-    # --execute is documented to run non-flashing discovery/preflight; when
-    # the device is already in the bootloader the read-only fastboot checks
-    # (unlock state, product, android-info firmware requirements) still run
-    # so problems surface before anyone reaches for --confirm-flash.
-    if [[ "$ASSUME_BOOTLOADER" -eq 1 ]]; then
-      fastboot_preflight
-    fi
-    log "execution requested without --confirm-flash; stopping before bootloader/flashing commands"
-    return
-  fi
-
+  [[ "$EXECUTE" -eq 1 ]] || return 0
+  [[ "$CONFIRM_FLASH" -ne 1 ]] || die "confirmed flashing must use the signed v2 installer"
   if [[ "$ASSUME_BOOTLOADER" -eq 1 ]]; then
     fastboot_preflight
   fi
-
-  local command
-  for command in "${PLAN[@]}"; do
-    eval "run_cmd $command"
-    if [[ "$command" == *" reboot bootloader" ]]; then
-      sleep 3
-      fastboot_preflight
-    fi
-  done
-
-  if [[ "${#VALIDATION_PLAN[@]}" -gt 0 ]]; then
-    for command in "${VALIDATION_PLAN[@]}"; do
-      eval "run_cmd $command"
-    done
-  fi
+  log "execution requested without --confirm-flash; stopping before bootloader/flashing commands"
 }
 
 main() {
+  local original_args=("$@")
   parse_args "$@"
+  # The legacy path below is discovery/planning only. All writes use the shared
+  # authenticated contract and checked state machine; there is no legacy bypass.
+  local signed_contract=0
+  if [[ -n "$MANIFEST" && -f "$MANIFEST" ]]; then
+    require_tool node
+    signed_contract="$(node -e 'const m=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(m.schemaVersion===2?"1":"0")' "$MANIFEST")"
+  fi
+  if [[ "$CONFIRM_FLASH" -eq 1 || "$signed_contract" -eq 1 ]]; then
+    require_tool node
+    exec node "$ROOT/../../../../scripts/android/install-release.mjs" "${original_args[@]}"
+  fi
   require_tool adb
   require_tool fastboot
   collect_images

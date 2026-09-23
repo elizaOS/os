@@ -81,3 +81,45 @@ test("implicit final reboot does not relax dynamic ordering, wipes or complete-i
     assert.throws(() => validate(plan));
   }
 });
+
+// No partition, including future firmware/calibration names, is safe to erase
+// unconditionally. These are parser-only tests: no transport is involved.
+test("rejects every unconditional erase and unknown destructive instruction", () => {
+  for (const partition of [
+    "persist",
+    "bootloader",
+    "radio",
+    "frp",
+    "misc",
+    "super",
+    "boot_a",
+    "avb_custom_key",
+    "future_partition",
+  ]) {
+    assert.throws(
+      () => validate(`${fastbootInfo}erase ${partition}\n`),
+      /must not erase/,
+    );
+    assert.throws(
+      () => validate(`${fastbootInfo}if-wipe erase ${partition}\n`),
+      /invalid if-wipe/,
+    );
+  }
+  for (const command of [
+    "flashing lock",
+    "oem mte on",
+    "flash --force boot",
+    "snapshot-update cancel",
+  ]) {
+    assert.throws(() => validate(`${fastbootInfo}${command}\n`));
+  }
+});
+
+test("conditional wipes are target-specific, unique and last", () => {
+  for (const candidate of [
+    `${fastbootInfo}if-wipe erase cache\n`,
+    `${fastbootInfo}if-wipe erase metadata\n`,
+    fastbootInfo.replace("flash boot", "if-wipe erase userdata\nflash boot"),
+  ])
+    assert.throws(() => validate(candidate), /conditional erase/);
+});

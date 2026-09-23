@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { contractCandidate } from "../android/contract-candidate.mjs";
 import {
   assertGeneratedVendorTree,
   assertPinnedAospCheckout,
@@ -466,10 +467,27 @@ export function assertSafeFlashMetadata({ androidInfo, fastbootInfo }) {
   }
   const flashedDynamicPartitions = new Set();
   const flashedPartitions = new Set();
+  const conditionalErases = new Set();
+  const lastFlashIndex = commands.findLastIndex(
+    (entry) => entry.command === "flash",
+  );
   for (const [index, commandEntry] of commands.entries()) {
-    const { command, tokens } = commandEntry;
-    if (command === "erase" && ["userdata", "metadata"].includes(tokens[0])) {
-      fail("fastboot-info must not erase userdata or metadata unconditionally");
+    const { command } = commandEntry;
+    if (command === "erase") {
+      fail("fastboot-info must not erase any partition unconditionally");
+    }
+    if (command === "if-wipe") {
+      const partition = commandEntry.tokens[1];
+      if (
+        !["userdata", "metadata"].includes(partition) ||
+        conditionalErases.has(partition) ||
+        index <= lastFlashIndex
+      ) {
+        fail(
+          "conditional erase must be unique, limited to userdata/metadata and follow all image writes",
+        );
+      }
+      conditionalErases.add(partition);
     }
     if (command !== "flash") continue;
     const { partition, filename, flags } = commandEntry;
@@ -2312,6 +2330,10 @@ export function main(argv = process.argv.slice(2)) {
     };
     const manifestPath = path.join(staging, "grizzly-bundle-manifest.json");
     writeExclusiveFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    writeExclusiveFile(
+      path.join(staging, "android-contract-candidate.json"),
+      `${JSON.stringify(contractCandidate(manifest), null, 2)}\n`,
+    );
     const checksumEntries = [];
     const addTree = (directory, prefix = "") => {
       for (const entry of fs

@@ -203,7 +203,7 @@ if "$ROOT/install-elizaos-android.sh" \
   --execute --confirm-flash >"$CANDIDATE_REFUSAL_OUT" 2>&1; then
   fail "installer accepted a non-lab-validated device manifest"
 fi
-assert_contains "$CANDIDATE_REFUSAL_OUT" "no lab-validated device codename"
+assert_contains "$CANDIDATE_REFUSAL_OUT" "legacy manifests are planning-only"
 pass "installer refuses candidate-only hardware manifests"
 
 VALIDATE_OUT="$TMP_DIR/validate.out"
