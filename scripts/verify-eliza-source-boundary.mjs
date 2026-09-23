@@ -139,6 +139,7 @@ const allowedOsNamedAppPaths = new Set([
   "plugins/plugin-local-inference/src/services/vision/aosp-unavailable.ts",
   "plugins/plugin-native-inference/__tests__/aosp-abi-riscv64.test.ts",
   "plugins/plugin-native-inference/__tests__/aosp-audio-resample.test.ts",
+  "plugins/plugin-native-inference/__tests__/aosp-embedding-artifact.test.ts",
   "plugins/plugin-native-inference/__tests__/aosp-fused-text-binding.test.ts",
   "plugins/plugin-native-inference/__tests__/aosp-kokoro-tts-handler.test.ts",
   "plugins/plugin-native-inference/__tests__/aosp-llama-streaming.test.ts",
@@ -146,6 +147,8 @@ const allowedOsNamedAppPaths = new Set([
   "plugins/plugin-native-inference/__tests__/aosp-model-download-paths.test.ts",
   "plugins/plugin-native-inference/src/aosp-audio-resample.ts",
   "plugins/plugin-native-inference/src/aosp-debug-log.ts",
+  // App-runtime model admission and bundle staging; no OS image tooling.
+  "plugins/plugin-native-inference/src/aosp-embedding-artifact.ts",
   "plugins/plugin-native-inference/src/aosp-llama-paths.ts",
   "plugins/plugin-native-inference/src/aosp-llama-streaming.ts",
   "plugins/plugin-native-inference/src/aosp-local-inference-bootstrap.ts",
