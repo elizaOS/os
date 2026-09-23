@@ -162,7 +162,9 @@ def run_vm(qemu, output):
     with (output / "qemu.log").open("w") as log, (output / "qmp.log").open("w") as qmp_log:
         process = subprocess.Popen(qemu, cwd=output, stdout=log, stderr=log)
         try:
-            deadline = time.monotonic() + 900
+            # TCG CI reached the old 15-minute limit while still progressing
+            # through the expanded GPT and USB failure-path suite.
+            deadline = time.monotonic() + 1500
             while process.poll() is None:
                 if time.monotonic() >= deadline:
                     raise RuntimeError("qualification VM timed out")
@@ -331,6 +333,25 @@ exit "$status"
             len(artifact) != 128 + 3 * sector + 2 * span):
         raise RuntimeError("GPT snapshot geometry mismatch")
     cursor = 128
+    restoration = snapshot_report["restore"]
+    if (len(snapshot_report["layouts"]) != 3 or
+            not all(layout.get("restored") for layout in snapshot_report["layouts"]) or
+            not any(layout.get("chunkCancellation") for layout in snapshot_report["layouts"])):
+        raise RuntimeError("native GPT layout/chunk recovery proof incomplete")
+    if (restoration.get("complete") is not True or restoration.get("readOnlyAfterWrite") is not True or
+            restoration.get("copiedInputs") is not True or
+            restoration.get("metadataBytesWritten") != len(artifact) - 128 or
+            len(set(restoration["admissionRefusals"])) != 10):
+        raise RuntimeError("native GPT restoration/refusal proof incomplete")
+    written_by_step = [0, span, span + sector, 2 * span + sector,
+                       2 * span + 2 * sector, 2 * span + 3 * sector, 2 * span + 3 * sector]
+    expected_cancellations = [{"after": step, "error": -125, "bytesWritten": written,
+                               "writeAttempted": step > 0, "recovered": True}
+                              for step, written in enumerate(written_by_step)]
+    expected_interruptions = [{"after": step, "exitStatus": 73, "recovered": True} for step in range(7)]
+    if (restoration["cancellations"] != expected_cancellations or
+            restoration["processInterruptions"] != expected_interruptions):
+        raise RuntimeError("native GPT interrupted recovery proof incomplete")
     with (output / "gpt-snapshot.raw").open("rb") as disk:
         for lba, length in [(0, sector), (1, sector), (primary_array, span),
                             (secondary_array, span), (SIZE // sector - 1, sector)]:

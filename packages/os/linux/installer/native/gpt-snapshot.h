@@ -29,4 +29,45 @@ int elizaos_install_capture_gpt(int fd,
  * filesystem payloads or successful persistence. No device is written. */
 int elizaos_install_verify_gpt_snapshot(const unsigned char *data, size_t length,
     const unsigned char binding[32], const unsigned char digest[32]);
+
+enum elizaos_gpt_restore_step {
+  ELIZAOS_GPT_RESTORE_NOT_STARTED = -1,
+  ELIZAOS_GPT_RESTORE_VALIDATED = 0,
+  ELIZAOS_GPT_RESTORE_BACKUP_ARRAY_WRITTEN = 1,
+  ELIZAOS_GPT_RESTORE_BACKUP_SYNCED = 2,
+  ELIZAOS_GPT_RESTORE_PRIMARY_ARRAY_WRITTEN = 3,
+  ELIZAOS_GPT_RESTORE_PRIMARY_HEADER_WRITTEN = 4,
+  ELIZAOS_GPT_RESTORE_MBR_WRITTEN = 5,
+  ELIZAOS_GPT_RESTORE_MEDIA_SYNCED = 6,
+  ELIZAOS_GPT_RESTORE_VERIFIED = 7
+};
+struct elizaos_gpt_restore_result {
+  int error;
+  enum elizaos_gpt_restore_step last_completed;
+  uint64_t bytes_written;
+  int write_attempted;
+};
+struct elizaos_gpt_restore_control {
+  void *context;
+  /* Required trusted in-process authorization/cancellation check. Returns 0
+   * or negative errno, never derived directly from caller IPC. */
+  int (*check)(void *context);
+  void (*progress)(void *context, enum elizaos_gpt_restore_step step);
+};
+/* Internal candidate, not installed. Caller authenticates an explicit recovery
+ * against the original physical target, verifies independent durable storage,
+ * consumes the recovery authorization and retains its physical-target lock and
+ * exclusive buffered O_RDWR whole-device claim throughout settlement.
+ * Copy and verify the artifact before any write. Restore backup array/header
+ * first, fsync/read back, then primary array/header and MBR; fsync/read back all
+ * regions. Guards run between bounded chunks/operations. No pathname accepted.
+ * A failed attempted write is always incomplete, even with bytes_written == 0.
+ * Success covers on-disk GPT bytes only: caller must reread/verify the kernel
+ * partition map before using partitions. This cannot roll back payload writes,
+ * filesystem resizing or bootloader changes, and does not prove power-loss safety. */
+int elizaos_install_restore_gpt(int fd,
+    const struct elizaos_install_disk_identity *expected,
+    const unsigned char binding[32], const unsigned char *data, size_t length,
+    const unsigned char digest[32], const struct elizaos_gpt_restore_control *control,
+    struct elizaos_gpt_restore_result *result);
 #endif

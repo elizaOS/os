@@ -7,6 +7,7 @@
 #include <openssl/evp.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
@@ -266,4 +267,109 @@ int elizaos_install_capture_gpt(int fd,
       (rc = validate_fd(fd, expected)) || (rc = sha256(output, needed, digest))) return rc;
   *length = needed;
   return 0;
+}
+
+
+static int restore_guard(int fd, const struct elizaos_install_disk_identity *id,
+                          const struct elizaos_gpt_restore_control *control) {
+  int rc = control->check(control->context);
+  if (rc != 0) return rc < 0 ? rc : -EACCES;
+  if ((rc = validate_fd(fd, id))) return rc;
+  const int flags = fcntl(fd, F_GETFL);
+  if (flags < 0) return -errno;
+  if ((flags & O_ACCMODE) != O_RDWR || (flags & (O_APPEND | O_DIRECT)) != 0) return -EACCES;
+  int readonly = 0;
+  if (ioctl(fd, BLKROGET, &readonly) != 0) return -errno;
+  return readonly ? -EROFS : 0;
+}
+static void restore_completed(const struct elizaos_gpt_restore_control *control,
+                               struct elizaos_gpt_restore_result *result,
+                               enum elizaos_gpt_restore_step step) {
+  result->last_completed = step;
+  if (control->progress) control->progress(control->context, step);
+}
+static int restore_region(int fd, const struct elizaos_install_disk_identity *id,
+                           const struct elizaos_gpt_restore_control *control,
+                           const unsigned char *data, size_t length, uint64_t offset,
+                           struct elizaos_gpt_restore_result *result) {
+  size_t used = 0;
+  while (used < length) {
+    int rc = restore_guard(fd, id, control);
+    if (rc) return rc;
+    const size_t amount = length - used < 65536U ? length - used : 65536U;
+    result->write_attempted = 1;
+    const ssize_t count = pwrite(fd, data + used, amount, (off_t)(offset + used));
+    if (count < 0 && errno == EINTR) continue;
+    if (count <= 0) return count < 0 ? -errno : -EIO;
+    used += (size_t)count;
+    result->bytes_written += (uint64_t)count;
+  }
+  return restore_guard(fd, id, control);
+}
+int elizaos_install_restore_gpt(int fd,
+    const struct elizaos_install_disk_identity *expected,
+    const unsigned char binding[32], const unsigned char *data, size_t length,
+    const unsigned char digest[32], const struct elizaos_gpt_restore_control *control,
+    struct elizaos_gpt_restore_result *result) {
+  if (!result) return -EINVAL;
+  memset(result, 0, sizeof(*result));
+  result->last_completed = ELIZAOS_GPT_RESTORE_NOT_STARTED;
+  result->error = -EINVAL;
+  if (!expected || !binding || !data || !digest || !control || !control->check ||
+      length < ENVELOPE || length > ELIZAOS_GPT_SNAPSHOT_MAX) return result->error;
+  /* Neither callback activity nor caller-owned input mutation may replace the
+   * bytes/identity which were verified for this invocation. */
+  const struct elizaos_install_disk_identity id = *expected;
+  const struct elizaos_gpt_restore_control hooks = *control;
+  unsigned char saved_binding[32], saved_digest[32];
+  memcpy(saved_binding, binding, 32U); memcpy(saved_digest, digest, 32U);
+  unsigned char *copy = malloc(length);
+  if (!copy) { result->error = -ENOMEM; return result->error; }
+  memcpy(copy, data, length);
+  int rc = elizaos_install_verify_gpt_snapshot(copy, length, saved_binding, saved_digest);
+  if (rc) goto finish;
+  if (le32(copy + 16) != id.sector_bytes || le64(copy + 24) != id.size_bytes) {
+    rc = -ESTALE; goto finish;
+  }
+  if ((rc = restore_guard(fd, &id, &hooks))) goto finish;
+  restore_completed(&hooks, result, ELIZAOS_GPT_RESTORE_VALIDATED);
+  const uint32_t sector = id.sector_bytes, span = le32(copy + 20);
+  const uint64_t last = id.size_bytes / sector - 1U;
+  const uint64_t first_array = le64(copy + 32), last_array = le64(copy + 40);
+  const unsigned char *mbr = copy + ENVELOPE, *primary = mbr + sector;
+  const unsigned char *entries = primary + sector, *secondary_entries = entries + span;
+  const unsigned char *secondary = secondary_entries + span;
+#define WRITE_REGION(bytes, count, offset, step) do { \
+  rc = restore_region(fd, &id, &hooks, (bytes), (count), (offset), result); \
+  if (rc) goto finish; \
+  restore_completed(&hooks, result, (step)); \
+} while (0)
+  WRITE_REGION(secondary_entries, span, last_array * sector, ELIZAOS_GPT_RESTORE_BACKUP_ARRAY_WRITTEN);
+  rc = restore_region(fd, &id, &hooks, secondary, sector, last * sector, result);
+  if (rc) goto finish;
+  if (fsync(fd) != 0) { rc = -errno; goto finish; }
+  if ((rc = compare_region(fd, last_array * sector, secondary_entries, span)) ||
+      (rc = compare_region(fd, last * sector, secondary, sector)) ||
+      (rc = restore_guard(fd, &id, &hooks))) goto finish;
+  restore_completed(&hooks, result, ELIZAOS_GPT_RESTORE_BACKUP_SYNCED);
+  WRITE_REGION(entries, span, first_array * sector, ELIZAOS_GPT_RESTORE_PRIMARY_ARRAY_WRITTEN);
+  WRITE_REGION(primary, sector, sector, ELIZAOS_GPT_RESTORE_PRIMARY_HEADER_WRITTEN);
+  WRITE_REGION(mbr, sector, 0, ELIZAOS_GPT_RESTORE_MBR_WRITTEN);
+  if ((rc = restore_guard(fd, &id, &hooks))) goto finish;
+  if (fsync(fd) != 0) { rc = -errno; goto finish; }
+  if ((rc = restore_guard(fd, &id, &hooks))) goto finish;
+  restore_completed(&hooks, result, ELIZAOS_GPT_RESTORE_MEDIA_SYNCED);
+  if ((rc = restore_guard(fd, &id, &hooks)) ||
+      (rc = compare_region(fd, 0, mbr, sector)) ||
+      (rc = compare_region(fd, sector, primary, sector)) ||
+      (rc = compare_region(fd, first_array * sector, entries, span)) ||
+      (rc = compare_region(fd, last_array * sector, secondary_entries, span)) ||
+      (rc = compare_region(fd, last * sector, secondary, sector)) ||
+      (rc = restore_guard(fd, &id, &hooks))) goto finish;
+  restore_completed(&hooks, result, ELIZAOS_GPT_RESTORE_VERIFIED);
+finish:
+  free(copy);
+  result->error = rc;
+  return rc;
+#undef WRITE_REGION
 }

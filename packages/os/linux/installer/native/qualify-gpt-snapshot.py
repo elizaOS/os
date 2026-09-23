@@ -26,6 +26,19 @@ class Identity(ctypes.Structure):
                 ("sector_bytes", ctypes.c_uint32)]
 
 
+class RestoreResult(ctypes.Structure):
+    _fields_ = [("error", ctypes.c_int), ("last_completed", ctypes.c_int),
+                ("bytes_written", ctypes.c_uint64), ("write_attempted", ctypes.c_int)]
+
+
+Check = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p)
+Progress = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_int)
+
+
+class RestoreControl(ctypes.Structure):
+    _fields_ = [("context", ctypes.c_void_p), ("check", Check), ("progress", Progress)]
+
+
 def require(condition, message):
     if not condition:
         raise RuntimeError(message)
@@ -115,6 +128,11 @@ def main():
     verify = library.elizaos_install_verify_gpt_snapshot
     verify.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p, ctypes.c_void_p]
     verify.restype = ctypes.c_int
+    restore = library.elizaos_install_restore_gpt
+    restore.argtypes = [ctypes.c_int, ctypes.POINTER(Identity), ctypes.c_void_p,
+                        ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p,
+                        ctypes.POINTER(RestoreControl), ctypes.POINTER(RestoreResult)]
+    restore.restype = ctypes.c_int
     output, result_digest = ctypes.create_string_buffer(MAXIMUM), ctypes.create_string_buffer(32)
     fd = os.open("/dev/vdd", os.O_RDWR | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC)
     canary = os.open("/dev/vdc", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
@@ -122,6 +140,40 @@ def main():
     expected = identity(fd)
     require(expected.size_bytes == SIZE and expected.sector_bytes == args.sector_size, "wrong geometry")
     cases = []
+
+    def run_restore(artifact, check=None, observer=None, test_identity=None,
+                    descriptor=None, source=None, binding=BINDING, expected_digest=None):
+        steps, errors = [], []
+
+        @Check
+        def checked(_context):
+            if errors:
+                return -errno.EIO
+            try:
+                return check() if check else 0
+            except Exception as error:
+                errors.append(str(error))
+                return -errno.EIO
+
+        @Progress
+        def progress(_context, step):
+            steps.append(step)
+            try:
+                if observer:
+                    observer(step)
+            except Exception as error:
+                errors.append(str(error))
+
+        control = RestoreControl(None, checked, progress)
+        result = RestoreResult()
+        rc = restore(fd if descriptor is None else descriptor,
+                     ctypes.byref(test_identity or expected), binding,
+                     artifact if source is None else source, len(artifact),
+                     expected_digest or hashlib.sha256(artifact).digest(),
+                     ctypes.byref(control), ctypes.byref(result))
+        require(not errors, f"restore observer/check failed: {errors}")
+        require(result.error == rc, "restore result disagrees with its return value")
+        return rc, result, steps
 
     def snapshot(want=0, test_identity=None, capacity=MAXIMUM, descriptor=None):
         length = ctypes.c_size_t(123)
@@ -143,7 +195,7 @@ def main():
         os.fsync(fd)
 
     layouts = []
-    for count, stride, moved in [(128, 128, False), (256, 256, True), (129, 128, True)]:
+    for count, stride, moved in [(128, 128, False), (512, 256, True), (129, 128, True)]:
         regions = fixture(args.sector_size, count, stride, moved)
         write_regions(regions)
         before = digest(fd)
@@ -153,8 +205,33 @@ def main():
             require(artifact[cursor:cursor + len(data)] == data, "snapshot changed original GPT bytes")
             cursor += len(data)
         require(cursor == len(artifact) and digest(fd) == before, "capture changed target or artifact extent")
+        for offset, data in regions:
+            require(os.pwrite(fd, bytes(len(data)), offset) == len(data), "short layout damage write")
+        os.fsync(fd)
+        chunk_cancelled = len(regions[3][1]) > 65536
+        if chunk_cancelled:
+            checks = 0
+
+            def cancel_second_chunk():
+                nonlocal checks
+                checks += 1
+                # Initial admission, first chunk, then second chunk.
+                return -errno.ECANCELED if checks >= 3 else 0
+
+            rc, result, steps = run_restore(artifact, check=cancel_second_chunk)
+            require(rc == -errno.ECANCELED and result.last_completed == 0 and
+                    result.write_attempted and result.bytes_written == 65536 and steps == [0],
+                    "large array ignored cancellation between chunks")
+            for index, (offset, data) in enumerate(regions):
+                want = data[:65536] + bytes(len(data) - 65536) if index == 3 else bytes(len(data))
+                require(os.pread(fd, len(data), offset) == want, "chunk cancellation changed later bytes")
+        rc, result, steps = run_restore(artifact)
+        require(rc == 0 and result.last_completed == 7 and steps == list(range(8)) and
+                result.bytes_written == len(artifact) - 128 and snapshot() == artifact and digest(fd) == before,
+                "native restore failed layout recovery or changed other bytes")
         layouts.append({"entries": count, "entryBytes": stride, "relocatedArrays": moved,
-                        "artifactBytes": len(artifact), "unchanged": True})
+                        "artifactBytes": len(artifact), "unchanged": True, "restored": True,
+                        "chunkCancellation": chunk_cancelled})
     for fault in ["overlap", "outside-usable", "duplicate-guid", "different-disk-guid", "reserved-entry"]:
         write_regions(fixture(args.sector_size, 256, 256, True, fault))
         before = digest(fd)
@@ -205,10 +282,129 @@ def main():
     finally:
         os.close(partition)
     cases.append("partition-descriptor")
+    original_digest = digest(fd)
+    restore_refusals = []
+    admission_cases = [
+        ("digest", artifact, {"expected_digest": bytes(32)}, -errno.EBADMSG),
+        ("binding", artifact, {"binding": bytes(32)}, -errno.EINVAL),
+        ("truncated", artifact[:-1], {}, -errno.EINVAL),
+        ("authorization", artifact, {"check": lambda: -errno.EPERM}, -errno.EPERM),
+        ("invalid-check-result", artifact, {"check": lambda: 1}, -errno.EACCES),
+    ]
+    for field in ["diskseq", "sector_bytes"]:
+        wrong = Identity.from_buffer_copy(expected)
+        setattr(wrong, field, expected.diskseq + 1 if field == "diskseq" else
+                (4096 if args.sector_size == 512 else 512))
+        admission_cases.append((field, artifact, {"test_identity": wrong}, -errno.ESTALE))
+    for name, candidate, options, want in admission_cases:
+        rc, result, steps = run_restore(candidate, **options)
+        require(rc == want and not result.write_attempted and result.bytes_written == 0 and
+                result.last_completed == -1 and not steps, f"unsafe restore admission: {name}")
+        restore_refusals.append(name)
+    original_flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+    for flag, name in [(os.O_APPEND, "append-descriptor"), (os.O_DIRECT, "direct-descriptor")]:
+        fcntl.fcntl(fd, fcntl.F_SETFL, original_flags | flag)
+        try:
+            rc, result, steps = run_restore(artifact)
+            require(rc == -errno.EACCES and not result.write_attempted and not steps,
+                    f"unsafe descriptor accepted: {name}")
+        finally:
+            fcntl.fcntl(fd, fcntl.F_SETFL, original_flags)
+        restore_refusals.append(name)
+    require(digest(fd) == original_digest, "refused restore modified target")
+
+    def damage():
+        for offset, region in regions:
+            require(os.pwrite(fd, bytes(len(region)), offset) == len(region), "short damaged fixture write")
+        os.fsync(fd)
+
+    def restored():
+        rc, result, steps = run_restore(artifact)
+        require(rc == 0 and result.last_completed == 7 and result.write_attempted == 1 and
+                result.bytes_written == len(artifact) - 128 and steps == list(range(8)),
+                "native restore did not reach verified GPT success")
+        require(snapshot() == artifact and digest(fd) == original_digest,
+                "native restore changed bytes outside the original GPT or failed exact recovery")
+        return result
+
+    def partial_state(step):
+        written = {3: 1, 4: 2, 2: 3, 1: 4, 0: 5}
+        for index, (offset, region) in enumerate(regions):
+            want = bytes(region) if written[index] <= step else bytes(len(region))
+            require(os.pread(fd, len(region), offset) == want, f"unexpected partial GPT at step {step}")
+
+    cancellations, interruptions = [], []
+    for stop in range(7):
+        damage()
+        cancelled = False
+
+        def cancel(step):
+            nonlocal cancelled
+            if step == stop:
+                cancelled = True
+
+        rc, result, steps = run_restore(artifact, observer=cancel,
+                                       check=lambda: -errno.ECANCELED if cancelled else 0)
+        require(rc == -errno.ECANCELED and result.last_completed == stop and
+                result.write_attempted == (stop > 0) and steps == list(range(stop + 1)),
+                f"cancellation continued after step {stop}")
+        partial_state(stop)
+        restored()
+        cancellations.append({"after": stop, "error": rc, "bytesWritten": result.bytes_written,
+                              "writeAttempted": bool(result.write_attempted), "recovered": True})
+
+        damage()
+        child = os.fork()
+        if child == 0:
+            def terminate(step):
+                if step == stop:
+                    os._exit(73)
+            run_restore(artifact, observer=terminate)
+            os._exit(90)
+        _, status = os.waitpid(child, 0)
+        require(os.WIFEXITED(status) and os.WEXITSTATUS(status) == 73,
+                f"child did not terminate at checkpoint {stop}")
+        # Observe a process interruption, not a guest/physical power cut. Parent
+        # retains the whole-device claim; syncing here makes the observed bytes explicit.
+        os.fsync(fd)
+        partial_state(stop)
+        restored()
+        interruptions.append({"after": stop, "exitStatus": 73, "recovered": True})
+
+    damage()
+    def readonly_after_array(step):
+        if step == 1:
+            fcntl.ioctl(fd, 0x125d, struct.pack("i", 1))  # BLKROSET, fixture only.
+    try:
+        rc, result, steps = run_restore(artifact, observer=readonly_after_array)
+        require(rc == -errno.EROFS and result.last_completed == 1 and result.write_attempted and
+                result.bytes_written == len(regions[3][1]), "read-only transition did not stop after partial write")
+        partial_state(1)
+    finally:
+        fcntl.ioctl(fd, 0x125d, struct.pack("i", 0))
+    restored()
+    damage()
+    mutable_source = ctypes.create_string_buffer(artifact)
+    mutable_identity = Identity.from_buffer_copy(expected)
+    def mutate_inputs(step):
+        if step == 0:
+            ctypes.memset(mutable_source, 0, len(artifact))
+            mutable_identity.diskseq += 1
+    rc, result, steps = run_restore(artifact, source=mutable_source, test_identity=mutable_identity,
+                                   observer=mutate_inputs)
+    require(rc == 0 and result.last_completed == 7 and digest(fd) == original_digest,
+            "caller input changes replaced the verified native copy")
+    restore_report = {"complete": True, "cancellations": cancellations, "processInterruptions": interruptions,
+                      "admissionRefusals": restore_refusals, "readOnlyAfterWrite": True,
+                      "copiedInputs": True, "metadataBytesWritten": result.bytes_written,
+                      "limits": ["process interruption, not power loss", "no kernel map or boot recovery", "not installed"]}
     final = digest(fd)
     os.close(fd)
     fd = os.open("/dev/vdd", os.O_RDONLY | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC)
     require(snapshot() == artifact and digest(fd) == final, "read-only descriptor capture differs")
+    rc, result, steps = run_restore(artifact)
+    require(rc == -errno.EACCES and not result.write_attempted and not steps, "restore accepted read-only FD")
+    restore_report["admissionRefusals"].append("read-only-descriptor")
     os.close(fd)
     fd = os.open("/dev/vdd", os.O_WRONLY | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC)
     snapshot(want=-errno.EACCES)
@@ -218,11 +414,12 @@ def main():
     os.close(canary)
     print("ELIZAOS_GPT_SNAPSHOT_REPORT " + json.dumps({
         "status": "pass", "sectorBytes": args.sector_size, "layouts": layouts, "refusals": cases,
+        "restore": restore_report,
         "targetSha256": final, "canarySha256": before_canary,
         "artifactBase64": base64.b64encode(artifact).decode(),
         "artifactSha256": hashlib.sha256(artifact).hexdigest(),
         "binding": BINDING.hex(), "binarySha256": hashlib.sha256(Path("/root/gpt-snapshot.so").read_bytes()).hexdigest(),
-        "limits": ["read-only snapshot, not durable backup storage", "no restore or power-loss qualification", "not installed"]
+        "limits": ["read-only snapshot, not durable backup storage", "no production recovery or power-loss qualification", "not installed"]
     }, sort_keys=True), flush=True)
 
 
