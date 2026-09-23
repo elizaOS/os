@@ -69,9 +69,11 @@ and every physical validation item below.
 The reproducible operator handoff is produced with `make bundle-grizzly` as
 documented in the package README. Before flashing, independently verify
 `SHA256SUMS`, its offline release signature, and the adjacent resolved AOSP
-source manifest. Use the bundled `fastboot-info.txt`/flashall flow, including
-fastbootd dynamic-super updates; a standalone system partition flash is not a
-supported validation path.
+source manifest. Use only the signed v2 executor after a separately reviewed lab authorization.
+It validates the bundled `fastboot-info.txt` and executes qualified fastbootd
+dynamic-super transitions. Do not run bundled flashall scripts directly or
+flash a standalone system partition. See the
+[boot/recovery qualification review](boot-recovery-qualification.md).
 
 Verify the pinned source identities with
 `node scripts/aosp/verify-source-lock.mjs --profile pixel11pro --aosp-root "$AOSP_ROOT"`.
@@ -124,7 +126,7 @@ The signed physical check set also requires these explicit results:
 
 | Check | Evidence required |
 | --- | --- |
-| `encrypted-recovery` | Access to encrypted userdata after normal boot and recovery, on the exact firmware and lock credential configuration; actual restore verification if backup/restore is offered. Preserve the factory encryption contract. |
+| `encrypted-recovery` | Preserved encryption and successful credential unlock after the qualified recovery round trip, on the exact firmware and credential configuration. Recovery need not expose private files. If backup/restore is offered, verify restored data after authenticated unlock; raw encrypted copies are not proof. Preserve the factory encryption contract. |
 | `recovery-after-ota-slot` | Retain slot identity before OTA, after switching slots and after restarting recovery. Prove subsequent operations target the intended slot, including stale/missing slot-probe rejection. The current installer does not implement OTA or recovery sideload. |
 | `kernel-vendor-module-pair` | Bind kernel, boot/vendor-kernel images, module load lists, vendor drivers, firmware and security patch level to one tested build. Reject mixed artifacts and verify module loading and camera/radio operation on hardware. |
 
