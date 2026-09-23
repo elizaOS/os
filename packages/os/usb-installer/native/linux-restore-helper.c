@@ -569,6 +569,50 @@ static bool validate_whole_device_fd(int descriptor,
   return valid;
 }
 
+static bool read_sysfs_uint64_at(int directory, const char *name,
+                                 uint64_t *value) {
+  char text[32];
+  size_t length = 0U;
+  if (!read_sysfs_value_at(directory, name, text, sizeof(text), &length) ||
+      length < 2U || text[length - 1U] != '\n') return false;
+  text[length - 1U] = '\0';
+  return parse_uint64(text, false, value);
+}
+
+/* The fixed restore GPT uses 128 entries of 128 bytes, a one-sector backup
+ * header, and a partition from 1 MiB through its last usable sector. Kernel
+ * partition state can differ from those disk bytes after a failed reread.
+ * Require BOTH ioctl geometry and the kernel sysfs extent to match that layout
+ * before returning any writable partition descriptor. This is not a substitute
+ * for the separate raw primary/backup GPT verifier. */
+static bool validate_partition_geometry(int partition, int partition_sysfs,
+                                         int whole, const struct request *request) {
+  int whole_sector = 0;
+  int partition_sector = 0;
+  int read_only = 1;
+  uint64_t size = 0U;
+  uint64_t start_units = 0U;
+  uint64_t size_units = 0U;
+  const uint64_t start_bytes = 1024U * 1024U;
+  const uint64_t array_bytes = 128U * 128U;
+  if (ioctl(whole, BLKSSZGET, &whole_sector) != 0 ||
+      (whole_sector != 512 && whole_sector != 4096) ||
+      ioctl(partition, BLKSSZGET, &partition_sector) != 0 ||
+      partition_sector != whole_sector ||
+      ioctl(partition, BLKROGET, &read_only) != 0 || read_only != 0 ||
+      ioctl(partition, BLKGETSIZE64, &size) != 0 ||
+      !read_sysfs_uint64_at(partition_sysfs, "start", &start_units) ||
+      !read_sysfs_uint64_at(partition_sysfs, "size", &size_units)) return false;
+  const uint64_t sector = (uint64_t)whole_sector;
+  if (request->expected_size_bytes % sector != 0U ||
+      request->expected_size_bytes <= start_bytes + array_bytes + sector)
+    return false;
+  const uint64_t expected_size =
+      request->expected_size_bytes - start_bytes - array_bytes - sector;
+  return size == expected_size && start_units == start_bytes / 512U &&
+         size_units == expected_size / 512U;
+}
+
 static int open_verified_partition(const struct request *request,
                                    int whole_device_fd) {
   if (!validate_whole_device_fd(whole_device_fd, request)) return -1;
@@ -609,6 +653,12 @@ static int open_verified_partition(const struct request *request,
     (void)close(partition);
     return -1;
   }
+  if (!validate_partition_geometry(partition, partition_sysfs, whole_device_fd,
+                                    request)) {
+    (void)close(partition_sysfs);
+    (void)close(partition);
+    return -1;
+  }
   const int parent_sysfs =
       openat(partition_sysfs, "..", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
   (void)close(partition_sysfs);
@@ -622,7 +672,7 @@ static int open_verified_partition(const struct request *request,
                               sysfs_directory_has_dev(parent_sysfs,
                                                       whole_metadata.st_rdev);
   (void)close(parent_sysfs);
-  if (!parent_matches) {
+  if (!parent_matches || !validate_whole_device_fd(whole_device_fd, request)) {
     (void)close(partition);
     return -1;
   }
