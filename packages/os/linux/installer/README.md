@@ -318,9 +318,28 @@ descriptors before using them. Additional kernel-only faults remove, shift,
 truncate or add a partition after a successful reread; all must fail verification
 while both GPT copies remain unchanged.
 
-The library is not installed or connected to the privileged installer. Captured
-bytes are not yet a durable backup: production must independently verify the
-recovery storage, fsync the file and directory, and bind the artifact into the
-journal. Production recovery authorization and composition, power-loss
+`native/gpt-artifact-store.c` adds a separate filesystem persistence candidate.
+It requires a retained root-owned 0700 directory on an ext-family filesystem,
+uses a digest-derived filename, creates a 0600 regular file exclusively, writes
+bounded chunks, fsyncs the file and directory, and reopens/verifies the exact
+artifact. Verification also syncs the retained file and directory again. Existing
+files are never overwritten or silently removed, including after interruption.
+File identity, link count, ownership and permissions are checked through retained
+descriptors; special files, changed names and corrupt/truncated bytes fail closed.
+Required trusted callbacks repeat authorization, cancellation and storage-policy
+checks. These callbacks must come from the root backend, never renderer input.
+
+The VM qualification stores artifacts on its separate ext4 root disk, exercises
+cancellation and child-process exit at four persistence checkpoints, explicitly
+reopens complete artifacts, rejects incomplete ones, and preserves interrupted
+files against replacement. It also exercises chunk cancellation, unsafe files and
+directories, tmpfs refusal, input mutation and replacement of an opened inode.
+These are filesystem/process-restart checks, not power-cut tests.
+
+The libraries are not installed or connected to the privileged installer.
+Filesystem identity and successful syncs alone do not prove independent durable
+recovery media: production must resolve and repeatedly verify the physical backing
+storage and configured location, retain the target/storage locks, and bind the
+artifact into the journal. Production recovery authorization and composition, power-loss
 recovery and physical-media qualification remain unfinished. OpenSSL libcrypto is used for artifact hashing
 in this candidate; the VM builds it with `libssl-dev` and links `-lcrypto`.
