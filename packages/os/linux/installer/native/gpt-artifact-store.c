@@ -1,13 +1,18 @@
 #define _GNU_SOURCE
 #include "gpt-artifact-store.h"
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/magic.h>
+#include <linux/fs.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/statfs.h>
+#include <sys/sysmacros.h>
 #include <unistd.h>
 
 static void artifact_name(const unsigned char digest[32], char name[69]) {
@@ -182,5 +187,118 @@ finish_store:
   if (file >= 0 && close(file) != 0 && !rc) rc = -EIO;
   free(copy);
   result->error = rc;
+  return rc;
+}
+
+
+static int sysfs_disk(dev_t device) {
+  char path[96];
+  const int n = snprintf(path, sizeof(path), "/sys/dev/block/%u:%u", major(device), minor(device));
+  if (n < 0 || (size_t)n >= sizeof(path)) return -EINVAL;
+  const int fd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  return fd < 0 ? -errno : fd;
+}
+static int direct_disk(int node) {
+  /* Stacked/loop/network devices do not establish independent physical backing.
+   * A real device link is necessary but not sufficient; policy still excludes
+   * hardware aliases such as two paths to the same LUN. */
+  struct stat st;
+  if (fstatat(node, "device", &st, 0) != 0) return -errno;
+  if (!S_ISDIR(st.st_mode)) return -EINVAL;
+  int fd = openat(node, "slaves", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (fd < 0) return -errno;
+  DIR *directory = fdopendir(fd);
+  if (!directory) { const int rc = -errno; close(fd); return rc; }
+  int rc = 0;
+  struct dirent *entry;
+  errno = 0;
+  while ((entry = readdir(directory))) {
+    if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, "..")) { rc = -EOPNOTSUPP; break; }
+  }
+  if (!rc && errno) rc = -errno;
+  if (closedir(directory) != 0 && !rc) rc = -errno;
+  return rc;
+}
+static int positive_sysfs_number(int directory, const char *name, uint64_t *value) {
+  const int fd = openat(directory, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+  if (fd < 0) return -errno;
+  char text[32];
+  ssize_t count;
+  do { count = read(fd, text, sizeof(text)); } while (count < 0 && errno == EINTR);
+  const int read_error = errno;
+  const int closed = close(fd);
+  if (count < 0) return -read_error;
+  if (closed != 0) return -EIO;
+  if (count < 2 || count > 21 || text[0] == '0' || text[count - 1] != '\n') return -EINVAL;
+  uint64_t number = 0;
+  for (ssize_t index = 0; index < count - 1; ++index) {
+    if (text[index] < '0' || text[index] > '9') return -EINVAL;
+    uint64_t digit = (uint64_t)(text[index] - '0');
+    if (number > (UINT64_MAX - digit) / 10U) return -EOVERFLOW;
+    number = number * 10U + digit;
+  }
+  *value = number;
+  return 0;
+}
+int elizaos_install_check_recovery_storage(int directory,
+    const struct elizaos_gpt_store_identity *expected_directory,
+    int partition, int storage,
+    const struct elizaos_install_disk_identity *expected_storage,
+    int target, const struct elizaos_install_disk_identity *expected_target) {
+  if (!expected_directory || !expected_storage || !expected_target) return -EINVAL;
+  const struct elizaos_gpt_store_identity id = *expected_directory;
+  const struct elizaos_install_disk_identity storage_id = *expected_storage, target_id = *expected_target;
+  int rc = elizaos_install_check_whole_disk(storage, &storage_id);
+  if (rc || (rc = elizaos_install_check_whole_disk(target, &target_id))) return rc;
+  if (storage_id.major == target_id.major && storage_id.minor == target_id.minor) return -EXDEV;
+  struct stat dir, part;
+  if (fstat(directory, &dir) != 0 || fstat(partition, &part) != 0) return -errno;
+  if (geteuid() != 0 || !S_ISDIR(dir.st_mode) || dir.st_uid != 0 || dir.st_gid != 0 ||
+      (dir.st_mode & 07777U) != 0700U || !dir.st_nlink) return -EACCES;
+  if ((uint64_t)dir.st_dev != id.filesystem_device || (uint64_t)dir.st_ino != id.directory_inode ||
+      !S_ISBLK(part.st_mode) || part.st_rdev != dir.st_dev) return -ESTALE;
+  struct statfs filesystem;
+  if (fstatfs(directory, &filesystem) != 0) return -errno;
+  if (filesystem.f_type != EXT4_SUPER_MAGIC) return -EOPNOTSUPP;
+  const int flags = fcntl(partition, F_GETFL);
+  if (flags < 0) return -errno;
+  if ((flags & O_ACCMODE) == O_WRONLY) return -EACCES;
+  uint64_t bytes = 0, sequence = 0;
+  int sector = 0;
+  if (ioctl(partition, BLKGETSIZE64, &bytes) != 0 || ioctl(partition, BLKGETDISKSEQ, &sequence) != 0 ||
+      ioctl(partition, BLKSSZGET, &sector) != 0) return -errno;
+  if (sequence != storage_id.diskseq || sector != (int)storage_id.sector_bytes) return -ESTALE;
+  int storage_node = -1, target_node = -1, part_node = -1, parent = -1;
+  storage_node = sysfs_disk(makedev(storage_id.major, storage_id.minor));
+  if (storage_node < 0) { rc = storage_node; goto finish_storage; }
+  target_node = sysfs_disk(makedev(target_id.major, target_id.minor));
+  if (target_node < 0) { rc = target_node; goto finish_storage; }
+  part_node = sysfs_disk(part.st_rdev);
+  if (part_node < 0) { rc = part_node; goto finish_storage; }
+  parent = openat(part_node, "..", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (parent < 0) { rc = -errno; goto finish_storage; }
+  struct stat whole_stat, parent_stat;
+  if (fstat(storage_node, &whole_stat) != 0 || fstat(parent, &parent_stat) != 0) {
+    rc = -errno; goto finish_storage;
+  }
+  if (whole_stat.st_dev != parent_stat.st_dev || whole_stat.st_ino != parent_stat.st_ino) {
+    rc = -EXDEV; goto finish_storage;
+  }
+  uint64_t number = 0, start = 0, sectors = 0;
+  if ((rc = positive_sysfs_number(part_node, "partition", &number)) ||
+      (rc = positive_sysfs_number(part_node, "start", &start)) ||
+      (rc = positive_sysfs_number(part_node, "size", &sectors)) ||
+      (rc = direct_disk(storage_node)) || (rc = direct_disk(target_node))) goto finish_storage;
+  if (number > UINT32_MAX || sectors > UINT64_MAX / 512U || sectors * 512U != bytes ||
+      start > storage_id.size_bytes / 512U || sectors > storage_id.size_bytes / 512U - start) {
+    rc = -ESTALE; goto finish_storage;
+  }
+  rc = elizaos_install_check_whole_disk(storage, &storage_id);
+  if (!rc) rc = elizaos_install_check_whole_disk(target, &target_id);
+finish_storage:
+  if (parent >= 0 && close(parent) != 0 && !rc) rc = -EIO;
+  if (part_node >= 0 && close(part_node) != 0 && !rc) rc = -EIO;
+  if (target_node >= 0 && close(target_node) != 0 && !rc) rc = -EIO;
+  if (storage_node >= 0 && close(storage_node) != 0 && !rc) rc = -EIO;
   return rc;
 }

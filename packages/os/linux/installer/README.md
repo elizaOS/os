@@ -329,12 +329,48 @@ descriptors; special files, changed names and corrupt/truncated bytes fail close
 Required trusted callbacks repeat authorization, cancellation and storage-policy
 checks. These callbacks must come from the root backend, never renderer input.
 
+`elizaos_install_check_recovery_storage` supplies a read-only native check for
+kernel backing ancestry. It binds the directory's filesystem device to a retained
+partition, verifies that partition's direct sysfs parent against a retained whole
+disk, checks partition geometry and disk generation, and requires a different
+kernel whole-disk identity for the installation target. Both whole disks must have
+a direct device and no slave devices; stacked or unresolved storage is refused.
+The storage VM fixture invokes this check at each persistence guard and exercises
+same-target, wrong-partition/parent, stale-generation and directory-identity
+refusals, plus refusal of a real mounted ext4 loop partition. This checks kernel topology, not physical independence: production policy
+must still reject hardware aliases (such as two paths to one LUN), qualify the
+recovery medium, bind the configured pathname and retain locks/mount lifetime.
+
 The VM qualification stores artifacts on its separate ext4 root disk, exercises
 cancellation and child-process exit at four persistence checkpoints, explicitly
 reopens complete artifacts, rejects incomplete ones, and preserves interrupted
 files against replacement. It also exercises chunk cancellation, unsafe files and
 directories, tmpfs refusal, input mutation and replacement of an opened inode.
 These are filesystem/process-restart checks, not power-cut tests.
+
+`native/qualify-gpt-vm-interruption.py` separately starts four disposable overlays
+from a completed local VM qualification. It kills the exact QEMU process with
+SIGKILL after creation, writing, file sync, or directory sync, then boots each
+same overlay with a fresh kernel and re-verifies the artifact through the native
+reader. A directory-synced artifact must survive byte-for-byte. Earlier checkpoints
+may retain a valid artifact or fail closed with no usable output. The prepared
+image is read-only backing storage and its digest must remain unchanged.
+
+```sh
+python3 packages/os/linux/installer/native/qualify-gpt-vm-interruption.py \
+  --prepared /var/tmp/restore-fd-512 \
+  --output-dir /var/tmp/gpt-vm-interruption-512 \
+  --container-tools-image elizaos-usb-qualification-tools:local
+```
+
+This local KVM test requires the stopped prepared `guest.qcow2`, its original
+backing image, logs, report and artifact; downloaded CI reports alone are not
+enough. The container supplies only unprivileged image/ISO tools. No host block
+devices are attached. Run it for each prepared sector-size lane. Retain the
+per-boot logs, seeds, QEMU commands, native source/binary bindings and final
+`qualification.json`. SIGKILL discards the guest kernel and QEMU process but
+leaves host storage caches and the physical drive powered, so this cannot prove
+physical power-loss safety.
 
 The libraries are not installed or connected to the privileged installer.
 Filesystem identity and successful syncs alone do not prove independent durable
