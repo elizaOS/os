@@ -219,13 +219,63 @@ def main():
         require(partition >= 0 and bytes(identity(partition)) == bytes(part_identity),
                 "restored partition binding changed")
         os.close(partition)
+        # Change only the kernel partition map, leaving the verified GPT bytes
+        # unchanged. Parent identity and partition number must not authorize a
+        # stale extent after a failed or incomplete partition-table reread.
+        class KernelPartition(ctypes.Structure):
+            _fields_ = [("start", ctypes.c_longlong), ("length", ctypes.c_longlong),
+                        ("number", ctypes.c_int), ("devname", ctypes.c_char * 64),
+                        ("volname", ctypes.c_char * 64)]
+
+        class PartitionOperation(ctypes.Structure):
+            _fields_ = [("operation", ctypes.c_int), ("flags", ctypes.c_int),
+                        ("length", ctypes.c_int), ("data", ctypes.c_void_p)]
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.ioctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_void_p]
+        libc.ioctl.restype = ctypes.c_int
+
+        def kernel_partition(operation, start, length):
+            partition = KernelPartition(start=start, length=length, number=1)
+            argument = PartitionOperation(operation=operation, length=ctypes.sizeof(partition),
+                                          data=ctypes.cast(ctypes.pointer(partition), ctypes.c_void_p))
+            require(libc.ioctl(descriptor, 0x1269, ctypes.byref(argument)) == 0,
+                    f"BLKPG fixture failed: {ctypes.get_errno()}")
+
+        geometry_digest = digest(descriptor, expected.size_bytes)
+        geometry_cases = []
+        for name, start, length in (
+            ("shifted start", 2 * 1024**2, part_identity.size_bytes - 1024**2),
+            ("truncated length", 1024**2, part_identity.size_bytes - 4 * 1024**2),
+        ):
+            try:
+                kernel_partition(2, 0, 0)
+                kernel_partition(1, start, length)
+                fd_proof.command(["/usr/bin/udevadm", "settle", "--timeout=10"])
+                require(int(block.joinpath("sda1/start").read_text()) * 512 == start and
+                        int(block.joinpath("sda1/size").read_text()) * 512 == length,
+                        "kernel did not apply the stale geometry fixture")
+                partition = open_partition()
+                if partition >= 0:
+                    os.close(partition)
+                require(partition < 0, f"native partition binding accepted {name}")
+                geometry_cases.append(name + " refused")
+            finally:
+                fcntl.ioctl(descriptor, 0x125F)
+                fd_proof.command(["/usr/bin/udevadm", "settle", "--timeout=10"])
+            partition = open_partition()
+            require(partition >= 0 and bytes(identity(partition)) == bytes(part_identity),
+                    "GPT reread did not restore the valid partition")
+            os.close(partition)
+        require(digest(descriptor, expected.size_bytes) == geometry_digest,
+                "kernel geometry probes changed disk bytes")
         final_digest = digest(descriptor, expected.size_bytes)
     finally:
         os.close(descriptor)
     report = {"status": "pass", "sectorBytes": sector_bytes, "cases": cases, "gateSha256Before": before,
               "gateSha256After": after_gate, "finalUsbSha256": final_digest,
               "singleUseResults": {"accepted": results.count(0), "rejected": results.count(1)},
-              "partitionBinding": ["valid partition", "symlink refused", "wrong disk refused"],
+              "partitionBinding": ["valid partition", "symlink refused", "wrong disk refused", *geometry_cases],
               "binaries": {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
                            for path in (HELPER, SHIM)},
               "limits": ["emulated USB only", "no production authorization broker",

@@ -292,7 +292,18 @@ behavior, not persistence through a power cut.
 The test then creates a GPT on the disposable USB fixture and exercises the
 native partition opener under its held whole-device exclusive claim. It accepts
 the correct partition and rejects both a symlink and a replacement node pointing
-to another disk. The host independently inspects the resulting USB GPT and
+to another disk. It also requires matching 512-byte/4K logical sectors, a writable
+partition, an exact 1 MiB start, and the full fixed-GPT usable length. Both
+`BLKGETSIZE64` and the kernel sysfs start/size must agree. The whole-device
+identity is checked again before returning the partition descriptor.
+
+The fixture uses `BLKPG` to install a shifted start and a truncated length in the
+kernel partition map without changing any GPT bytes. Both stale maps must be
+rejected even though their parent device, disk sequence, and partition number
+still match. A partition-table reread must restore a valid accepted descriptor
+after each case; a full disk digest proves these kernel-map probes changed no
+disk bytes. These extent checks supplement the separate primary/backup GPT
+verification; they do not replace it. The host independently inspects the resulting USB GPT and
 matches its final full-disk digest to the guest report. Reports bind the helper
 and test-wrapper binary hashes and record each refusal case. `helper.trace` is
 included in the guest transcript. This still supplies no production broker,
