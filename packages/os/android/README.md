@@ -250,6 +250,19 @@ Any future SystemUI replacement must land as a build-resolvable, platform-signed
 module with a real surface host, keyguard integration, SELinux policy, and boot
 evidence—not as an unreferenced workspace package.
 
+The Cuttlefish CPU kernel parity gate now emits its own evidence report through
+`scripts/aosp/kernel-parity-evidence.mjs`. It requires the native source commit in
+`packages/os/release/eliza-source.lock.json`, refuses tracked kernel changes and
+source drift during the run, and hashes the source inputs, host/guest verifier
+binaries, fixtures, compiler/NDK metadata and captured guest properties. The guest
+binary must match the compiled verifier both before and after its self-test.
+Use fresh `ELIZA_CUTTLEFISH_OUT_DIR` and `ELIZA_CUTTLEFISH_EVIDENCE_OUT` paths for
+each run; existing evidence is refused rather than reused. Retain the output
+directory with the JSON report; the default output is under `reports/cuttlefish/`
+so the workflow retains the verifier binaries and raw proof files too. This proves Cuttlefish CPU kernel-reference parity,
+not full-engine ASR, assistant/IME routing, physical-device support or hardware
+Vulkan readiness.
+
 ## AOSP assistant/full-control contract
 
 The AOSP image makes `ai.elizaos.app` the device assistant, not just another
