@@ -97,6 +97,7 @@ def main():
 
     sources = {name: (NATIVE / name).read_bytes() for name in (
         "restore-gpt-fd.c", "restore-gpt-fd.h", "exfatprogs-fd.patch",
+        "restore-tool-runner.c", "restore-tool-runner.h", "restore-tool-runner.test.c",
         "build-exfat-fd.sh", "qualify-restore-fd.py",
     )}
     data = """#cloud-config
@@ -111,7 +112,10 @@ write_files:
     guest_script = """#!/bin/sh
 set -eu
 bash /root/build-exfat-fd.sh /root/exfat.tar.gz /root/exfat-tools
-cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 -shared -fPIC /root/restore-gpt-fd.c -lfdisk -o /root/restore-gpt-fd.so
+install -m 0755 /root/exfat-tools/elizaos-mkfs-exfat-fd /root/exfat-tools/elizaos-fsck-exfat-fd /usr/libexec/
+cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 -shared -fPIC /root/restore-gpt-fd.c /root/restore-tool-runner.c -lfdisk -o /root/restore-gpt-fd.so
+cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 /root/restore-tool-runner.test.c -o /root/restore-tool-runner-test
+/root/restore-tool-runner-test
 status=0
 strace -f -e trace=openat,fcntl,ioctl -o /root/restore.trace python3 /root/qualify-restore-fd.py --disposable-vm --library /root/restore-gpt-fd.so --tools /root/exfat-tools || status=$?
 cat /root/restore.trace

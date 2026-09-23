@@ -23,6 +23,11 @@ class Identity(ctypes.Structure):
                 ("diskseq", ctypes.c_uint64), ("size_bytes", ctypes.c_uint64)]
 
 
+class ToolResult(ctypes.Structure):
+    _fields_ = [("outcome", ctypes.c_int), ("detail", ctypes.c_int),
+                ("stdout_bytes", ctypes.c_size_t), ("stderr_bytes", ctypes.c_size_t)]
+
+
 def require(condition, message):
     if not condition:
         raise RuntimeError(message)
@@ -98,6 +103,19 @@ def main():
         for function in (create, verify):
             function.argtypes = [ctypes.c_int, ctypes.POINTER(Identity)]
             function.restype = ctypes.c_int
+        run_tool = library.elizaos_restore_run_tool
+        run_tool.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.POINTER(ToolResult)]
+        run_tool.restype = ctypes.c_int
+        supervised = []
+
+        def supervise(tool, fd):
+            result = ToolResult()
+            rc = run_tool(tool, fd, ctypes.byref(result))
+            require(rc == 0 and result.outcome == 0,
+                    f"native supervisor failed: {tool}, {rc}, {result.outcome}, {result.detail}")
+            supervised.append({"tool": tool, "stdoutBytes": result.stdout_bytes,
+                               "stderrBytes": result.stderr_bytes, "outcome": result.outcome})
+
         refused = []
         for field in ("major", "minor", "diskseq", "size_bytes"):
             wrong = Identity.from_buffer_copy(expected)
@@ -134,7 +152,7 @@ def main():
             require(verify(target, ctypes.byref(expected)) == 0, "failed repaired GPT verification")
             corruptions.append(offset)
         fcntl.ioctl(target, 0x125F)  # BLKRRPART on the original held disk.
-        command(["/usr/bin/udevadm", "settle", "--timeout=10"])
+        supervise(0, -1)
         partition = os.open("/dev/vdb1", os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC)
         require(partition == 4, "partition fixture must occupy FD 4")
         part_identity = identity(partition)
@@ -167,7 +185,12 @@ def main():
             require(whole.returncode != 0, "exFAT helper accepted a whole disk")
         require(digest(target, expected.size_bytes) == guard_before,
                 "rejected helper invocation wrote the disk")
-        command([formatter], partition)
+        for tool in (formatter, checker):
+            installed = Path("/usr/libexec") / Path(tool).name
+            require(installed.read_bytes() == Path(tool).read_bytes(),
+                    "fixed supervisor executable differs from built helper")
+        supervise(1, partition)
+        supervise(2, partition)
         verification = command([checker], partition)
         require("clean" in verification, "exFAT checker did not report clean")
         os.fsync(partition)
@@ -185,7 +208,7 @@ def main():
             "helperRefusals": ["missing FD", "caller pathname", "whole disk"],
             "readOnlyFdRefused": True,
             "canarySha256Before": canary_before, "canarySha256After": canary_after,
-            "exfatVerification": verification,
+            "exfatVerification": verification, "supervisedTools": supervised,
             "binaries": {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
                          for path in (args.library, Path(formatter), Path(checker))},
             "limits": ["not physical USB qualification", "not broker authorization",

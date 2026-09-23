@@ -173,6 +173,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
+      - name: Qualify native child supervision without privileges
+        run: |
+          cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 \
+            packages/os/usb-installer/native/restore-tool-runner.test.c \
+            -o "$RUNNER_TEMP/restore-tool-runner-test"
+          "$RUNNER_TEMP/restore-tool-runner-test"
+
       - name: Install unprivileged VM tools
         run: |
           sudo apt-get update -qq
