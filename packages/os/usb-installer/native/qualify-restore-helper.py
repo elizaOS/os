@@ -36,17 +36,28 @@ def main():
     args = parser.parse_args()
     require(os.geteuid() == 0, "guest root is required")
     require(Path("/sys/class/dmi/id/sys_vendor").read_text().strip() == "QEMU", "QEMU is required")
-    block = Path("/sys/class/block/sda")
-    require(block.joinpath("removable").read_text().strip() == "1", "fixture is not removable")
-    require(block.joinpath("size").read_text().strip() == "1048576", "wrong fixture capacity")
-    ancestors = list(block.resolve().parents)
-    require(any((p / "serial").is_file() and
-                (p / "serial").read_text().strip() == "ELIZAOS-HELPER-TEST"
-                for p in ancestors), "named USB fixture is missing")
-    require(any(p.name.startswith("usb") for p in ancestors), "fixture is not USB")
+    def usb_fixture(serial):
+        matches = []
+        for candidate in Path("/sys/class/block").iterdir():
+            if candidate.joinpath("partition").exists():
+                continue
+            ancestors = list(candidate.resolve().parents)
+            if any((p / "serial").is_file() and (p / "serial").read_text().strip() == serial
+                   for p in ancestors):
+                matches.append(candidate)
+        require(len(matches) == 1, f"unique named USB fixture is missing: {serial}")
+        block = matches[0]
+        require(block.joinpath("removable").read_text().strip() == "1", "fixture is not removable")
+        require(block.joinpath("size").read_text().strip() == "1048576", "wrong fixture capacity")
+        require(any(p.name.startswith("usb") for p in block.resolve().parents), "fixture is not USB")
+        return block, "/dev/" + block.name
+
+    block, device_path = usb_fixture("ELIZAOS-HELPER-TEST")
+    removal_block, removal_path = usb_fixture("ELIZAOS-TXN-TEST")
+    require(device_path != removal_path, "USB fixtures alias the same disk")
     require(fd_proof.command(["/usr/bin/findmnt", "-n", "-o", "SOURCE", "/"]).strip().startswith("/dev/vda"),
             "guest must use its separate OS disk")
-    descriptor = os.open("/dev/sda", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    descriptor = os.open(device_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
     expected = identity(descriptor)
     sector_bytes = struct.unpack("I", fcntl.ioctl(descriptor, 0x1268, bytes(4)))[0]
     require(sector_bytes == args.sector_size, "USB fixture logical sector size does not match the lane")
@@ -60,7 +71,7 @@ def main():
     def request(**overrides):
         nonlocal counter
         counter += 1
-        fields = {"plan_id": f"{counter:032x}", "boot_id": boot_id, "device_path": "/dev/sda",
+        fields = {"plan_id": f"{counter:032x}", "boot_id": boot_id, "device_path": device_path,
                   "expected_major": expected.major, "expected_minor": expected.minor,
                   "expected_diskseq": expected.diskseq, "expected_size_bytes": expected.size_bytes}
         fields.update(overrides)
@@ -146,7 +157,7 @@ def main():
     check("consumed-directory", plan, "PLAN_ALREADY_CONSUMED")
     marker.rmdir()
     alias = Path("/dev/elizaos-helper-alias")
-    alias.symlink_to("/dev/sda")
+    alias.symlink_to(device_path)
     alias_plan = request(device_path=str(alias))
     authorize(alias_plan)
     check("device-symlink", alias_plan, "TARGET_IDENTITY_MISMATCH")
@@ -159,7 +170,7 @@ def main():
     authorize(internal)
     check("non-removable-disk", internal, "TARGET_IDENTITY_MISMATCH")
     require(not list((STATE / "consumed").iterdir()), "disabled helper consumed a plan")
-    descriptor = os.open("/dev/sda", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    descriptor = os.open(device_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
     after_gate = digest(descriptor, expected.size_bytes)
     os.close(descriptor)
     require(after_gate == before, "identity gate changed the USB fixture")
@@ -203,7 +214,7 @@ def main():
                 time.sleep(0.05)
 
     # All disk mutations below target only the named disposable USB.
-    descriptor = os.open("/dev/sda", os.O_RDWR | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC)
+    descriptor = os.open(device_path, os.O_RDWR | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC)
     try:
         gpt = ctypes.CDLL("/root/restore-gpt-fd.so")
         create = gpt.elizaos_restore_create_gpt
@@ -218,14 +229,14 @@ def main():
         bind.restype = ctypes.c_int
 
         def open_partition():
-            return bind(descriptor, b"/dev/sda", expected.major, expected.minor,
+            return bind(descriptor, device_path.encode(), expected.major, expected.minor,
                         expected.diskseq, expected.size_bytes)
 
         partition = open_partition()
         require(partition >= 0, "native partition binding rejected the correct USB partition")
         part_identity = identity(partition)
         os.close(partition)
-        original = Path("/dev/sda1")
+        original = Path(device_path + "1")
         saved_node = Path("/dev/elizaos-helper-saved-partition")
         original.rename(saved_node)
         original.symlink_to(saved_node)
@@ -275,8 +286,8 @@ def main():
                 kernel_partition(2, 0, 0)
                 kernel_partition(1, start, length)
                 fd_proof.command(["/usr/bin/udevadm", "settle", "--timeout=10"])
-                require(int(block.joinpath("sda1/start").read_text()) * 512 == start and
-                        int(block.joinpath("sda1/size").read_text()) * 512 == length,
+                require(int(block.joinpath(f"{block.name}1/start").read_text()) * 512 == start and
+                        int(block.joinpath(f"{block.name}1/size").read_text()) * 512 == length,
                         "kernel did not apply the stale geometry fixture")
                 partition = open_partition()
                 if partition >= 0:
@@ -301,23 +312,24 @@ def main():
                     ("tool", fd_proof.ToolResult)]
 
     transaction_library = Path("/root/restore-transaction-qualification.so")
-    transaction = ctypes.CDLL(str(transaction_library)).elizaos_qualify_transaction
+    transaction_module = ctypes.CDLL(str(transaction_library))
+    transaction = transaction_module.elizaos_qualify_transaction
     transaction.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.c_int,
                             ctypes.POINTER(TransactionResult), ctypes.POINTER(ctypes.c_uint32)]
     transaction.restype = ctypes.c_int
     transaction_cases = []
 
-    def current_digest():
+    def current_digest(path=device_path, bound=expected):
         # Formatter writes use the partition address space. Read actual whole
         # device bytes with aligned O_DIRECT I/O, not a stale whole-disk cache.
-        fd = os.open("/dev/sda", os.O_RDONLY | os.O_DIRECT | os.O_NOFOLLOW | os.O_CLOEXEC)
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECT | os.O_NOFOLLOW | os.O_CLOEXEC)
         try:
-            require(bytes(identity(fd)) == bytes(expected), "transaction target changed identity")
+            require(bytes(identity(fd)) == bytes(bound), "transaction target changed identity")
             result = hashlib.sha256()
             with mmap.mmap(-1, 1024**2) as buffer:
                 view = memoryview(buffer)
                 try:
-                    for offset in range(0, expected.size_bytes, len(buffer)):
+                    for offset in range(0, bound.size_bytes, len(buffer)):
                         count = os.preadv(fd, [view], offset)
                         require(count == len(buffer), "short direct fixture read")
                         result.update(view)
@@ -399,15 +411,71 @@ def main():
             result.last_completed == 10 and steps == (1 << 11) - 1,
             "complete native transaction did not reach verified success")
     replay_refused(plan)
-    filesystem = fd_proof.command(["/usr/sbin/blkid", "-p", "-o", "export", "/dev/sda1"])
+    filesystem = fd_proof.command(["/usr/sbin/blkid", "-p", "-o", "export", device_path + "1"])
     require("TYPE=exfat" in filesystem.splitlines() and
             "LABEL=ELIZAOS-USB" in filesystem.splitlines(), "restored exFAT label/type is invalid")
     final_digest = current_digest()
+    removal_fd = os.open(removal_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        removal_identity = identity(removal_fd)
+        require(struct.unpack("I", fcntl.ioctl(removal_fd, 0x1268, bytes(4)))[0] == args.sector_size,
+                "transaction removal fixture sector size differs")
+    finally:
+        os.close(removal_fd)
+    removal_plan = request(device_path=removal_path, **{
+        f"expected_{field}": getattr(removal_identity, field) for field, _ in Identity._fields_})
+    authorize(removal_plan)
+    observer_type = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int)
+    observer_errors = []
+    removal_evidence = {}
+
+    @observer_type
+    def observe(step, whole, partition):
+        if step != 6:
+            return 0
+        try:
+            require(bytes(identity(whole)) == bytes(removal_identity), "observer received wrong whole FD")
+            part = identity(partition)
+            require(part.diskseq == removal_identity.diskseq, "observer received wrong partition FD")
+            removal_evidence["sha256BeforeRemoval"] = current_digest(removal_path, removal_identity)
+            print("ELIZAOS_RESTORE_TRANSACTION_READY_FOR_REMOVAL", flush=True)
+            whole_sysfs = Path(f"/sys/dev/block/{removal_identity.major}:{removal_identity.minor}")
+            part_sysfs = Path(f"/sys/dev/block/{part.major}:{part.minor}")
+            deadline = time.monotonic() + 30
+            while whole_sysfs.exists() or part_sysfs.exists():
+                require(time.monotonic() < deadline, "transaction USB removal timed out")
+                time.sleep(0.05)
+            removal_evidence["sysfsRemoved"] = True
+            return 0
+        except Exception as error:
+            observer_errors.append(str(error))
+            return 1
+
+    observed = transaction_module.elizaos_qualify_transaction_observed
+    observed.argtypes = [ctypes.c_char_p, ctypes.c_size_t, observer_type,
+                         ctypes.POINTER(TransactionResult), ctypes.POINTER(ctypes.c_uint32)]
+    observed.restype = ctypes.c_int
+    removal_result, removal_steps = TransactionResult(), ctypes.c_uint32()
+    removal_rc = observed(removal_plan[2], len(removal_plan[2]), observe,
+                          ctypes.byref(removal_result), ctypes.byref(removal_steps))
+    require(not observer_errors, f"removal observer failed: {observer_errors}")
+    require(removal_rc == -errno.ESTALE and removal_result.error == removal_rc and
+            removal_result.outcome == 0 and removal_result.media == 1 and
+            removal_result.last_completed == 6 and removal_steps.value == (1 << 7) - 1 and
+            removal_evidence.get("sysfsRemoved"), "transaction continued or misreported after unplug")
+    require((STATE / "consumed" / removal_plan[0]).read_bytes() == b"consumed\n",
+            "unplugged transaction lost its consumed marker")
+    rc, result, steps = execute(removal_plan)
+    require(rc == -errno.EALREADY and steps == 0, "unplugged transaction replay was accepted")
+    removal_evidence.update({"error": removal_rc, "lastCompleted": removal_result.last_completed,
+                             "media": "incomplete", "replayRefused": True})
+    require(current_digest() == final_digest, "unplug test changed the completed restore disk")
     report = {"status": "pass", "sectorBytes": sector_bytes, "cases": cases, "gateSha256Before": before,
               "gateSha256After": after_gate, "finalUsbSha256": final_digest,
               "fixtureBusyRetries": fixture_busy_retries,
               "transaction": {"cases": transaction_cases, "complete": True, "filesystem": filesystem,
-                              "admissionRefusals": ["missing authorization", "wrong kernel generation"]},
+                              "admissionRefusals": ["missing authorization", "wrong kernel generation"],
+                              "deviceRemoval": removal_evidence},
               "singleUseResults": {"accepted": results.count(0), "rejected": results.count(1)},
               "partitionBinding": ["valid partition", "symlink refused", "wrong disk refused", *geometry_cases],
               "binaries": {str(path): hashlib.sha256(path.read_bytes()).hexdigest()

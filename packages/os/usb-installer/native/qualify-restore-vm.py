@@ -128,12 +128,14 @@ class Qmp:
             return reply["return"]
         raise RuntimeError(f"QMP {name} acknowledgement timed out")
 
-    def remove_restore_device(self):
-        self.execute("device_del", {"id": "restore-device"})
+    def remove_restore_device(self, device="restore-device"):
+        if device not in {"restore-device", "transaction-uas"}:
+            raise RuntimeError("QMP removal is restricted to named disposable targets")
+        self.execute("device_del", {"id": device})
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             for message in self.messages:
-                if message.get("data", {}).get("device") != "restore-device":
+                if message.get("data", {}).get("device") != device:
                     continue
                 if message.get("event") == "DEVICE_UNPLUG_GUEST_ERROR":
                     raise RuntimeError("guest refused virtual device removal")
@@ -149,9 +151,12 @@ class Qmp:
 
 
 def run_vm(qemu, output):
-    # No host disk is exposed; QMP can remove only the named disposable fixture.
-    removal = None
-    target_before = None
+    # These are the only devices removable through this local QMP connection.
+    fixtures = {
+        "transaction-uas": ("ELIZAOS_RESTORE_TRANSACTION_READY_FOR_REMOVAL", "transaction-usb.raw"),
+        "restore-device": ("ELIZAOS_RESTORE_READY_FOR_REMOVAL", "target.raw"),
+    }
+    removals = {}
     control = None
     with (output / "qemu.log").open("w") as log, (output / "qmp.log").open("w") as qmp_log:
         process = subprocess.Popen(qemu, cwd=output, stdout=log, stderr=log)
@@ -161,22 +166,27 @@ def run_vm(qemu, output):
                 if time.monotonic() >= deadline:
                     raise RuntimeError("qualification VM timed out")
                 proof_log = output / "proof.log"
-                if removal is None and proof_log.exists():
-                    transcript = proof_log.read_text(errors="replace")
-                    if "ELIZAOS_RESTORE_READY_FOR_REMOVAL" in transcript.splitlines():
-                        target_before = file_hash(output / "target.raw")
-                        control = Qmp(output / "qmp.sock", qmp_log)
-                        removal = control.remove_restore_device()
+                if proof_log.exists():
+                    lines = proof_log.read_text(errors="replace").splitlines()
+                    for device, (marker, disk) in fixtures.items():
+                        if device not in removals and marker in lines:
+                            before = file_hash(output / disk)
+                            if control is None:
+                                control = Qmp(output / "qmp.sock", qmp_log)
+                            event = control.remove_restore_device(device)
+                            removals[device] = {"event": event, "targetSha256Before": before}
                 time.sleep(0.1)
             if process.returncode != 0:
                 raise RuntimeError(f"qualification VM exited {process.returncode}")
-            if removal is None or target_before is None:
-                raise RuntimeError("VM never completed the device-removal handshake")
-            target_after = file_hash(output / "target.raw")
-            if target_before != target_after:
-                raise RuntimeError("removed target changed during stale-FD refusal checks")
-            return {"event": removal, "targetSha256Before": target_before,
-                    "targetSha256After": target_after}
+            lines = (output / "proof.log").read_text(errors="strict").splitlines()
+            for device, (marker, disk) in fixtures.items():
+                if device not in removals or lines.count(marker) != 1:
+                    raise RuntimeError(f"VM did not complete exactly one removal handshake: {device}")
+                after = file_hash(output / disk)
+                if removals[device]["targetSha256Before"] != after:
+                    raise RuntimeError(f"removed target changed during refusal checks: {device}")
+                removals[device]["targetSha256After"] = after
+            return removals["restore-device"], removals["transaction-uas"]
         finally:
             if control is not None:
                 control.close()
@@ -257,7 +267,7 @@ exit "$status"
                 str(output / "guest.qcow2"), "8G"])
     image_tool(["genisoimage", "-quiet", "-output", str(output / "seed.iso"),
                 "-volid", "cidata", "-joliet", "-rock", "user-data", "meta-data"])
-    for disk in ("target.raw", "canary.raw", "helper-usb.raw"):
+    for disk in ("target.raw", "canary.raw", "helper-usb.raw", "transaction-usb.raw"):
         with (output / disk).open("xb") as stream:
             stream.truncate(SIZE)
     before = file_hash(output / "canary.raw")
@@ -280,10 +290,15 @@ exit "$status"
             "-device", ("scsi-hd,bus=helper-uas.0,drive=helper-usb,removable=on,"
                         "serial=ELIZAOS-HELPER-TEST,"
                         f"logical_block_size={args.sector_size},physical_block_size={args.sector_size}"),
+            "-drive", "file=transaction-usb.raw,if=none,id=transaction-usb,format=raw",
+            "-device", "usb-uas,id=transaction-uas,bus=helper-xhci.0,serial=ELIZAOS-TXN-TEST",
+            "-device", ("scsi-hd,bus=transaction-uas.0,drive=transaction-usb,removable=on,"
+                        "serial=ELIZAOS-TXN-TEST,"
+                        f"logical_block_size={args.sector_size},physical_block_size={args.sector_size}"),
             "-drive", "file=seed.iso,media=cdrom,readonly=on", "-netdev", "user,id=n0",
             "-device", "virtio-net-pci,netdev=n0"]
     print(f"Booting isolated {args.sector_size}-byte sector qualification VM: {output}", flush=True)
-    removal = run_vm(qemu, output)
+    removal, transaction_removal = run_vm(qemu, output)
     transcript = (output / "proof.log").read_text(errors="strict")
     reports = [json.loads(line.split("ELIZAOS_RESTORE_FD_REPORT ", 1)[1])
                for line in transcript.splitlines() if line.startswith("ELIZAOS_RESTORE_FD_REPORT ")]
@@ -298,6 +313,13 @@ exit "$status"
             helper_report["gateSha256Before"] != helper_report["gateSha256After"] or
             helper_report["finalUsbSha256"] != file_hash(output / "helper-usb.raw")):
         raise RuntimeError("native helper USB digest mismatch")
+    transaction_proof = helper_report["transaction"]["deviceRemoval"]
+    if (not transaction_proof.get("sysfsRemoved") or
+            transaction_proof["sha256BeforeRemoval"] != transaction_removal["targetSha256Before"] or
+            transaction_proof["media"] != "incomplete" or transaction_proof["lastCompleted"] != 6 or
+            not transaction_proof.get("replayRefused")):
+        raise RuntimeError("native transaction removal proof does not match the host snapshot")
+    transaction_parts = inspect_target(output, args.sector_size, "transaction-usb.raw")
     helper_parts = inspect_target(output, args.sector_size, "helper-usb.raw")
     after = file_hash(output / "canary.raw")
     if before != after or reports[0].get("sectorBytes") != args.sector_size:
@@ -307,7 +329,8 @@ exit "$status"
         raise RuntimeError("guest did not prove stale-FD rejection after removal")
     if file_hash(Path(__file__)) != host_runner_sha256:
         raise RuntimeError("host runner changed during qualification")
-    result = {"deviceRemoval": removal, "hostRunnerSha256": host_runner_sha256,
+    result = {"deviceRemoval": removal, "transactionDeviceRemoval": transaction_removal,
+              "transactionPartitions": transaction_parts, "hostRunnerSha256": host_runner_sha256,
               "guest": reports[0], "partitions": parts,
               "nativeHelper": helper_report, "helperPartitions": helper_parts,
               "canarySha256Before": before, "canarySha256After": after,
