@@ -359,6 +359,15 @@ jobs:
           set -euo pipefail
           evidence="$GITHUB_WORKSPACE/reports/cuttlefish/assistant"
           mkdir -p "$evidence"
+          # cmd voiceinteraction show requires ACCESS_VOICE_INTERACTION_SERVICE.
+          # Scope root ADB to the selected disposable Cuttlefish userdebug guest.
+          export ANDROID_SERIAL="$(adb get-serialno)"
+          device=$(adb shell getprop ro.product.device | tr -d '\r')
+          case "$device" in vsoc_x86_64|vsoc_x86_64_only) ;; *) exit 1 ;; esac
+          test "$(adb shell getprop ro.build.type | tr -d '\r')" = userdebug
+          adb root | tee "$evidence/adb-root.txt"
+          adb wait-for-device
+          test "$(adb shell id -u | tr -d '\r')" = 0
           adb logcat -c
           adb shell screenrecord --time-limit 45 /data/local/tmp/eliza-assistant.mp4 &
           recorder=$!
