@@ -215,6 +215,7 @@ def main():
         "restore-tool-runner.c", "restore-tool-runner.h", "restore-tool-runner.test.c",
         "build-exfat-fd.sh", "qualify-restore-fd.py", "qualify-restore-helper.py",
         "linux-restore-helper.c", "linux-restore-helper.qualify.c",
+        "restore-transaction.c", "restore-transaction.h", "restore-transaction.qualify.c",
     )}
     data = """#cloud-config
 hostname: elizaos-restore-qualification
@@ -236,6 +237,7 @@ cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 /root/res
 /root/restore-tool-runner-test
 cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 /root/linux-restore-helper.c -o /usr/libexec/elizaos-restore-helper-test
 cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 -shared -fPIC /root/linux-restore-helper.qualify.c -o /root/linux-restore-helper-qualification.so
+cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 -shared -fPIC /root/restore-transaction.qualify.c /root/restore-transaction.c /root/restore-gpt-fd.c /root/restore-tool-runner.c -lfdisk -o /root/restore-transaction-qualification.so
 helper_status=0
 strace -f -e trace=openat,fcntl,ioctl,fsync -o /root/helper.trace python3 /root/qualify-restore-helper.py --disposable-vm --sector-size SECTOR_BYTES > /dev/ttyS1 || helper_status=$?
 cat /root/helper.trace
