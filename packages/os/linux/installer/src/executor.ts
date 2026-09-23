@@ -23,6 +23,25 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function validBackupDescriptor(value: unknown): value is PartitionTableBackup {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return false;
+  const backup = value as Record<string, unknown>;
+  return (
+    Object.keys(backup).length === 4 &&
+    ["stableId", "storageStableId", "location"].every(
+      (key) =>
+        typeof backup[key] === "string" &&
+        backup[key].trim().length > 0 &&
+        backup[key].length <= 4096 &&
+        !backup[key].includes("\0"),
+    ) &&
+    backup.stableId !== backup.storageStableId &&
+    typeof backup.sha256 === "string" &&
+    SHA256_PATTERN.test(backup.sha256)
+  );
+}
+
 function actionDigest(action: InstallerAction): string {
   return sha256(JSON.stringify(action));
 }
@@ -138,6 +157,8 @@ export interface InstallJournal {
 
 export interface PrivilegedInstallOperations {
   backupPartitionTable(inventory: DiskInventory): Promise<PartitionTableBackup>;
+  /** Reopen and verify the exact saved bytes/digest and immutable target/storage
+   * binding. Current partition layout may already differ from the original. */
   verifyPartitionTableBackup(
     backup: PartitionTableBackup,
     inventory: DiskInventory,
@@ -265,6 +286,14 @@ function validateJournal(planId: string, entries: InstallJournalEntry[]): void {
         "Install journal contains records after a terminal event.",
       );
     }
+    if (
+      entry.event !== "partition-table-backup-verified" &&
+      entry.partitionTableBackup !== undefined
+    ) {
+      throw new InstallRecoveryRequiredError(
+        "Install journal backup descriptor is on the wrong event.",
+      );
+    }
     const hasActionFields =
       entry.actionIndex !== undefined || entry.actionDigest !== undefined;
     switch (entry.event) {
@@ -284,7 +313,9 @@ function validateJournal(planId: string, entries: InstallJournalEntry[]): void {
         if (
           phase !== "backup" ||
           hasActionFields ||
-          !SHA256_PATTERN.test(entry.receiptId ?? "")
+          !validBackupDescriptor(entry.partitionTableBackup) ||
+          entry.receiptId !== entry.partitionTableBackup.sha256 ||
+          entry.inventoryFingerprint !== entries[0]?.inventoryFingerprint
         ) {
           throw new InstallRecoveryRequiredError(
             "Install journal partition-table backup event is out of order or malformed.",
@@ -464,11 +495,38 @@ export async function executeAuthorizedInstallPlan(
   assertTargetIdentity(plan, inventory, false);
   let fingerprint = createDiskInventoryFingerprint(inventory);
 
+  let recoveryBackup: PartitionTableBackup | undefined;
+  const verifyRecoveryBackup = async (target: DiskInventory): Promise<void> => {
+    if (!recoveryBackup || recoveryBackup.stableId !== plan.target.stableId) {
+      throw new InstallRecoveryRequiredError(
+        "The retained recovery backup is not bound to this target.",
+      );
+    }
+    let verified: boolean;
+    try {
+      verified = await dependencies.operations.verifyPartitionTableBackup(
+        { ...recoveryBackup },
+        structuredClone(target),
+      );
+    } catch (error) {
+      throw new InstallRecoveryRequiredError(
+        `Recovery backup verification failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (verified !== true) {
+      throw new InstallRecoveryRequiredError(
+        "The retained partition-table recovery backup is missing, changed, or invalid.",
+      );
+    }
+    dependencies.signal?.throwIfAborted();
+  };
+
   const revalidateImmediatelyBeforeMutation = async (
     kind: "partition-table-backup" | "installer-action",
     expectedInventoryFingerprint: string,
   ): Promise<DiskInventory> => {
     dependencies.signal?.throwIfAborted();
+    if (kind === "installer-action") await verifyRecoveryBackup(inventory);
     await dependencies.beforePrivilegedMutation?.(kind);
     if (
       assertIsoDate("authorization.expiresAt", plan.authorization.expiresAt) <=
@@ -520,19 +578,18 @@ export async function executeAuthorizedInstallPlan(
       plan.authorization.inventoryFingerprint,
     );
     fingerprint = createDiskInventoryFingerprint(inventory);
-    const backup =
-      await dependencies.operations.backupPartitionTable(inventory);
+    const suppliedBackup = await dependencies.operations.backupPartitionTable(
+      structuredClone(inventory),
+    );
+    const backup = { ...suppliedBackup };
     dependencies.signal?.throwIfAborted();
     if (
+      !validBackupDescriptor(backup) ||
       backup.stableId !== inventory.stableId ||
-      !backup.storageStableId.trim() ||
-      backup.storageStableId === inventory.stableId ||
-      !backup.location.trim() ||
-      !SHA256_PATTERN.test(backup.sha256) ||
-      !(await dependencies.operations.verifyPartitionTableBackup(
-        backup,
-        inventory,
-      ))
+      (await dependencies.operations.verifyPartitionTableBackup(
+        { ...backup },
+        structuredClone(inventory),
+      )) !== true
     ) {
       throw new Error("Partition-table backup verification failed.");
     }
@@ -541,6 +598,7 @@ export async function executeAuthorizedInstallPlan(
       timestamp: now().toISOString(),
       inventoryFingerprint: fingerprint,
       receiptId: backup.sha256,
+      partitionTableBackup: backup,
     });
   } else if (
     !entries.some((entry) => entry.event === "partition-table-backup-verified")
@@ -550,6 +608,18 @@ export async function executeAuthorizedInstallPlan(
     );
   }
 
+  const backupCheckpoint = entries.find(
+    (entry) => entry.event === "partition-table-backup-verified",
+  );
+  if (
+    !backupCheckpoint?.partitionTableBackup ||
+    backupCheckpoint.partitionTableBackup.stableId !== plan.target.stableId
+  ) {
+    throw new InstallRecoveryRequiredError(
+      "Install journal recovery backup is not bound to this target.",
+    );
+  }
+  recoveryBackup = { ...backupCheckpoint.partitionTableBackup };
   const completed = completedActionCount(plan, entries);
   let expectedFingerprint =
     [...entries]
@@ -564,12 +634,24 @@ export async function executeAuthorizedInstallPlan(
       "Disk inventory differs from the last durable install checkpoint.",
     );
   }
+  const verifyCompletionBoundary = async (): Promise<void> => {
+    await verifyRecoveryBackup(inventory);
+    const current = await dependencies.inventory.inspect(plan.target.stableId);
+    assertTargetIdentity(plan, current, false);
+    if (createDiskInventoryFingerprint(current) !== expectedFingerprint) {
+      throw new InstallRecoveryRequiredError(
+        "Disk inventory drifted during final recovery verification.",
+      );
+    }
+    dependencies.signal?.throwIfAborted();
+  };
   if (entries.some((entry) => entry.event === "execution-completed")) {
     if (completed !== plan.actions.length) {
       throw new InstallRecoveryRequiredError(
         "Install journal completed before every planned action finished.",
       );
     }
+    await verifyCompletionBoundary();
     return {
       planId: plan.planId,
       completedActions: completed,
@@ -611,6 +693,7 @@ export async function executeAuthorizedInstallPlan(
           "Privileged operation returned an invalid action receipt.",
         );
       }
+      await verifyRecoveryBackup(beforeAction);
       inventory = await dependencies.inventory.inspect(plan.target.stableId);
       assertTargetIdentity(plan, inventory, false);
       try {
@@ -647,6 +730,9 @@ export async function executeAuthorizedInstallPlan(
     }
   }
 
+  // A restart may land after the last action receipt but before the terminal
+  // record. That zero-action resume must still verify the recovery artifact.
+  await verifyCompletionBoundary();
   dependencies.signal?.throwIfAborted();
   entries = await appendDurably(dependencies.journal, plan.planId, entries, {
     event: "execution-completed",

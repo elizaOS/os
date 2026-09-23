@@ -67,7 +67,12 @@ connected, so the package never changes a partition table.
   target or admit a second attempt. None of those trusted
   values may come from renderer request data. Do not install the unit templates
   until those fail-closed native adapters are present.
-- **Implement recoverable GPT mutation.** Save and verify both GPT headers and
+- **Implement recoverable GPT mutation.** The journal now retains the exact
+  recovery artifact descriptor and re-verifies it before and after each action,
+  including resumed execution. Missing/corrupt artifacts and legacy hash-only
+  checkpoints fail closed; healthy filesystem-backed checkpoints resume without
+  replacing the original backup. The actual native GPT backup/restore backend
+  and power-loss proof remain unfinished. Save and verify both GPT headers and
   partition entries to separate recovery media/state, perform typed operations,
   reread the kernel partition table, and prove rollback after every injected
   failure boundary.
