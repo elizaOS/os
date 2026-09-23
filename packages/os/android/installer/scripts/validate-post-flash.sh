@@ -2,6 +2,8 @@
 set -euo pipefail
 
 DRY_RUN=1
+EXPLICIT_DRY_RUN=0
+EXECUTE=0
 DEVICE_SERIAL=""
 MANIFEST=""
 BOOT_TIMEOUT=""
@@ -113,10 +115,12 @@ parse_args() {
         shift 2
         ;;
       --execute)
+        EXECUTE=1
         DRY_RUN=0
         shift
         ;;
       --dry-run)
+        EXPLICIT_DRY_RUN=1
         DRY_RUN=1
         shift
         ;;
@@ -129,6 +133,8 @@ parse_args() {
         ;;
     esac
   done
+  [[ "$EXPLICIT_DRY_RUN" -eq 0 || "$EXECUTE" -eq 0 ]] || die "--dry-run conflicts with --execute"
+  [[ -z "$DEVICE_SERIAL" || "$DEVICE_SERIAL" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]*$ ]] || die "invalid device serial"
 }
 
 load_manifest_expectations() {
@@ -329,9 +335,11 @@ validate_launcher_agent_liveness() {
     || die "agent health probe did not return HTTP 200: $AGENT_HEALTH_URL"
   grep -Ei '"status"[[:space:]]*:[[:space:]]*"(ready|ok|healthy)"' <<<"$health_response" >/dev/null \
     || die "agent health probe body did not return ready/ok/healthy: $AGENT_HEALTH_URL"
-  ! "${adb_cmd[@]}" logcat -d | grep -Ei 'FATAL EXCEPTION|AndroidRuntime|crash' >/dev/null \
+  local device_log
+  device_log="$("${adb_cmd[@]}" logcat -d)" || die "could not read device logcat"
+  ! grep -Ei 'FATAL EXCEPTION|AndroidRuntime|crash' <<<"$device_log" >/dev/null \
     || die "fatal Android runtime/crash log entries were found"
-  ! "${adb_cmd[@]}" logcat -d | grep -i 'avc: denied' >/dev/null \
+  ! grep -i 'avc: denied' <<<"$device_log" >/dev/null \
     || die "SELinux avc: denied log entries were found"
 }
 
@@ -349,6 +357,15 @@ execute_plan() {
 
 parse_args "$@"
 load_manifest_expectations
+# adb shell joins its arguments into a remote shell command. Validate tokens
+# after reading the manifest too: local quoting alone does not protect Android.
+[[ "$LAUNCHER_PACKAGE" =~ ^[A-Za-z][A-Za-z0-9_.]*$ ]] || die "invalid launcher package"
+for expected in "${EXPECTED_PROPS[@]}"; do
+  [[ "$expected" == *=* ]] || die "expected property must be KEY=VALUE or KEY^=PREFIX"
+  key="${expected%%=*}"
+  key="${key%\^}"
+  [[ "$key" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || die "invalid property key"
+done
 build_agent_health_command
 build_plan
 print_plan
