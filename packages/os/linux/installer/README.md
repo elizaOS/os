@@ -144,8 +144,14 @@ actually settles, even after the client socket is destroyed.
 The package now contains a Linux N-API `SO_PEERCRED`/`SO_PEERPIDFD` provider and
 a bounded `busctl`-based logind D-Bus resolver. Packaging must still build,
 install, and qualify the native module, and supply dedicated group membership,
-an OS credential verifier, AbortSignal-aware lock-retaining root-service
-composition, and an entry point. Until all are supplied,
+an OS credential verifier, production root-service composition, and an entry
+point. `PrivilegedInstallService` now accepts the transport's AbortSignal and
+declares `confirmed-stop-or-lock-retained`. It checks cancellation before
+admission and privileged operations, awaits any in-flight backend operation
+instead of racing it, and rejects after cancellation so the durable target
+serializer retains its lock for explicit recovery. An interrupted action is
+journaled as failed; cancellation never claims rollback or safe replay. The
+trusted pre-mutation hook remains enforced. Until all production adapters are supplied,
 `/usr/libexec/elizaos-installer-service` and these unit templates must not be
 installed. The package intentionally does not yet provide the OS
 credential verifier, filesystem tools, GPT writer, image extractor, or

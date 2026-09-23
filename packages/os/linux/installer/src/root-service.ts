@@ -63,6 +63,7 @@ export interface InstallAuthorizationReplayStore {
 }
 
 export interface InstallTargetSerializer {
+  /** Await the operation to settlement and retain a durable lock on failure. */
   runExclusive<T>(
     physicalIdentity: string,
     kernelDeviceIdentity: string | undefined,
@@ -274,6 +275,7 @@ async function assertActiveOwnerCaller(
  * adapter must use parseLocalInstallExecutionFrame before calling execute.
  */
 export class PrivilegedInstallService {
+  readonly abortSemantics = "confirmed-stop-or-lock-retained" as const;
   readonly dependencies: PrivilegedInstallServiceDependencies;
 
   constructor(dependencies: PrivilegedInstallServiceDependencies) {
@@ -283,7 +285,9 @@ export class PrivilegedInstallService {
   async execute(
     input: unknown,
     peer: LocalInstallPeerCredentials,
+    signal?: AbortSignal,
   ): Promise<InstallExecutionResult> {
+    signal?.throwIfAborted();
     if (process.geteuid?.() !== 0) {
       throw new Error("Privileged installer service must run as root.");
     }
@@ -294,6 +298,7 @@ export class PrivilegedInstallService {
       message.authorization,
       this.dependencies.activeOwner,
     );
+    signal?.throwIfAborted();
 
     const ownerBoundVerifier: OwnerAuthorizationVerifier = {
       verify: async (authorization) => {
@@ -310,16 +315,19 @@ export class PrivilegedInstallService {
       },
     };
     const executionDependencies: InstallExecutionDependencies = {
+      signal,
       inventory: this.dependencies.inventory,
       authorization: ownerBoundVerifier,
       journal: this.dependencies.journal,
       operations: this.dependencies.operations,
-      beforePrivilegedMutation: async () => {
+      beforePrivilegedMutation: async (kind) => {
         await assertActiveOwnerCaller(
           peer,
           message.authorization,
           this.dependencies.activeOwner,
         );
+        signal?.throwIfAborted();
+        await this.dependencies.beforePrivilegedMutation?.(kind);
       },
       now: this.dependencies.now,
     };
@@ -345,14 +353,23 @@ export class PrivilegedInstallService {
       );
     }
     const physicalIdentity = createDiskExecutionIdentity(executionInventory);
+    signal?.throwIfAborted();
     if (!(await this.dependencies.replay.claim(message.authorization))) {
       throw new Error("Installer owner authorization nonce was already used.");
     }
+    signal?.throwIfAborted();
     return this.dependencies.targets.runExclusive(
       physicalIdentity,
       executionInventory.kernelDeviceIdentity,
       authorized.planId,
-      () => executeAuthorizedInstallPlan(authorized, executionDependencies),
+      async () => {
+        const result = await executeAuthorizedInstallPlan(
+          authorized,
+          executionDependencies,
+        );
+        signal?.throwIfAborted();
+        return result;
+      },
     );
   }
 }

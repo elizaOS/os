@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
+import { lstat, mkdir, mkdtemp, readdir, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { InstallExecutionDependencies, InstallJournal } from "./executor";
+import { DurableFileInstallServiceState } from "./file-service-state";
 import {
   createDiskConfirmationToken,
   createDiskExecutionIdentity,
@@ -26,6 +30,13 @@ const GIB = 1024 ** 3;
 const MIB = 1024 ** 2;
 const NOW = new Date("2026-08-26T02:00:00.000Z");
 const PROCESS_TOKEN = {};
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve = () => {};
+  const promise = new Promise<void>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
 const PEER = {
   transport: "unix" as const,
   uid: 1000,
@@ -191,6 +202,182 @@ function dependencies(
 }
 
 describe("privileged installer root-service core", () => {
+  it("rejects an already cancelled request before inspecting or consuming state", async () => {
+    const { message, target } = fixture();
+    const deps = dependencies(target);
+    const inspect = vi.spyOn(deps.inventory, "inspect");
+    await expect(
+      new PrivilegedInstallService(deps).execute(
+        message,
+        PEER,
+        AbortSignal.abort(new Error("cancelled")),
+      ),
+    ).rejects.toThrow("cancelled");
+    expect(inspect).not.toHaveBeenCalled();
+    expect(deps.claimed).toHaveLength(0);
+  });
+
+  it.each(["owner", "credential", "inventory", "replay"] as const)(
+    "stops cancellation during %s admission before acquiring a target lock",
+    async (boundary) => {
+      const { message, target } = fixture();
+      const deps = dependencies(target);
+      const controller = new AbortController();
+      const cancel = () => controller.abort(new Error("cancelled"));
+      if (boundary === "owner") {
+        const inspect = deps.activeOwner.inspectForProcess;
+        deps.activeOwner.inspectForProcess = async (process) => {
+          const owner = await inspect(process);
+          cancel();
+          return owner;
+        };
+      } else if (boundary === "credential") {
+        deps.authorization.verify = async () => {
+          cancel();
+          return true;
+        };
+      } else if (boundary === "inventory") {
+        deps.inventory.inspect = async () => {
+          cancel();
+          return target;
+        };
+      } else {
+        deps.replay.claim = async () => {
+          cancel();
+          return true;
+        };
+      }
+      const lock = vi.spyOn(deps.targets, "runExclusive");
+      await expect(
+        new PrivilegedInstallService(deps).execute(
+          message,
+          PEER,
+          controller.signal,
+        ),
+      ).rejects.toThrow("cancelled");
+      expect(lock).not.toHaveBeenCalled();
+      expect(deps.applied).toHaveLength(0);
+    },
+  );
+
+  it("honors the trusted mutation hook and rechecks cancellation before backup", async () => {
+    const { message, target } = fixture();
+    const controller = new AbortController();
+    const hook = vi.fn(async () => controller.abort(new Error("cancelled")));
+    const deps = dependencies(target, { beforePrivilegedMutation: hook });
+    const backup = vi.spyOn(deps.operations, "backupPartitionTable");
+    await expect(
+      new PrivilegedInstallService(deps).execute(
+        message,
+        PEER,
+        controller.signal,
+      ),
+    ).rejects.toThrow("cancelled");
+    expect(hook).toHaveBeenCalledWith("partition-table-backup");
+    expect(backup).not.toHaveBeenCalled();
+    expect(deps.applied).toHaveLength(0);
+  });
+
+  it.each(["backup", "action", "completion"] as const)(
+    "waits for an in-flight %s and retains the real durable target lock after cancellation",
+    async (boundary) => {
+      const root = await mkdtemp(
+        join(await realpath(tmpdir()), "installer-abort-"),
+      );
+      try {
+        await mkdir(join(root, "authorizations"), { mode: 0o700 });
+        await mkdir(join(root, "targets"), { mode: 0o700 });
+        // Only the request entry's root check is mocked. Filesystem state uses
+        // the test process's actual UID and real durable lock implementation.
+        const uid = (await lstat(root)).uid;
+        vi.spyOn(process, "geteuid")
+          .mockReturnValue(uid)
+          .mockReturnValueOnce(0);
+        const state = new DurableFileInstallServiceState(root);
+        const { message, target } = fixture();
+        const deps = dependencies(target, { targets: state, replay: state });
+        const controller = new AbortController();
+        const entered = deferred();
+        const release = deferred();
+        if (boundary === "backup") {
+          const backup = deps.operations.backupPartitionTable;
+          deps.operations.backupPartitionTable = async (inventory) => {
+            entered.resolve();
+            await release.promise;
+            return backup(inventory);
+          };
+        } else if (boundary === "action") {
+          const apply = deps.operations.apply;
+          deps.operations.apply = async (action, inventory) => {
+            entered.resolve();
+            await release.promise;
+            return apply(action, inventory);
+          };
+        } else {
+          const journal = deps.journal;
+          deps.journal = {
+            read: (planId) => journal.read(planId),
+            append: async (entry) => {
+              if (entry.event === "execution-completed") {
+                entered.resolve();
+                await release.promise;
+              }
+              await journal.append(entry);
+            },
+          };
+        }
+        let settled = false;
+        const result = new PrivilegedInstallService(deps)
+          .execute(message, PEER, controller.signal)
+          .then(
+            () => {
+              settled = true;
+              return null;
+            },
+            (error: unknown) => {
+              settled = true;
+              return error;
+            },
+          );
+        await entered.promise;
+        controller.abort(new Error("cancelled"));
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(settled).toBe(false);
+        expect(await readdir(join(root, "targets"))).toHaveLength(1);
+        release.resolve();
+        const error = await result;
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toContain("lock is retained");
+        expect((error as Error).cause).toEqual(new Error("cancelled"));
+        expect(deps.applied).toHaveLength(
+          boundary === "completion"
+            ? message.plan.actions.length
+            : boundary === "action"
+              ? 1
+              : 0,
+        );
+        expect(await readdir(join(root, "targets"))).toHaveLength(1);
+        await expect(
+          state.runExclusive(
+            createDiskExecutionIdentity(target),
+            undefined,
+            message.plan.planId,
+            async () => "must not run",
+          ),
+        ).rejects.toThrow("target lock already exists");
+        const journal = await deps.journal.read(message.plan.planId);
+        expect(
+          journal.some((entry) => entry.event === "execution-completed"),
+        ).toBe(boundary === "completion");
+        if (boundary === "action") {
+          expect(journal.at(-1)?.event).toBe("execution-failed");
+        }
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("executes only the exact reviewed plan for an authenticated active owner", async () => {
     const { message, target } = fixture();
     let lockedIdentity: [string, string] | undefined;

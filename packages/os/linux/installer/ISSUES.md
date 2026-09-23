@@ -59,8 +59,12 @@ connected, so the package never changes a partition table.
   logind D-Bus resolver are implemented here; packaging must build, install,
   and qualify them and
   supply dedicated socket-group provisioning/membership,
-  AbortSignal-aware root-service composition that retains target locks until
-  cancellation is confirmed, and OS credential verifier. None of those trusted
+  production root-service composition and OS credential verifier. The service
+  core now consumes the transport AbortSignal, stops before further privileged
+  operations, awaits in-flight backends, and leaves the durable physical-target
+  lock in place on cancellation for explicit recovery. Filesystem-backed tests
+  prove cancellation during backup and action execution cannot release the
+  target or admit a second attempt. None of those trusted
   values may come from renderer request data. Do not install the unit templates
   until those fail-closed native adapters are present.
 - **Implement recoverable GPT mutation.** Save and verify both GPT headers and
