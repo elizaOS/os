@@ -18,6 +18,7 @@ import {
   type PrivilegedInstallServiceDependencies,
   parseLocalInstallExecutionFrame,
 } from "./root-service";
+import { applyTestInventoryAction } from "./test-inventory";
 import type {
   DiskInventory,
   InstallAuthorization,
@@ -163,6 +164,7 @@ function dependencies(
       }),
       verifyPartitionTableBackup: async () => true,
       apply: async (action) => {
+        applyTestInventoryAction(target, action);
         applied.push(structuredClone(action));
         return {
           receiptId: `receipt-${action.type}`,
@@ -276,6 +278,48 @@ describe("privileged installer root-service core", () => {
     expect(hook).toHaveBeenCalledWith("partition-table-backup");
     expect(backup).not.toHaveBeenCalled();
     expect(deps.applied).toHaveLength(0);
+  });
+
+  it("retains the durable physical lock when a valid receipt fails readback", async () => {
+    const root = await mkdtemp(
+      join(await realpath(tmpdir()), "installer-readback-"),
+    );
+    try {
+      await mkdir(join(root, "authorizations"), { mode: 0o700 });
+      await mkdir(join(root, "targets"), { mode: 0o700 });
+      const uid = (await lstat(root)).uid;
+      vi.spyOn(process, "geteuid").mockReturnValue(uid).mockReturnValueOnce(0);
+      const state = new DurableFileInstallServiceState(root);
+      const { message, target } = fixture();
+      const deps = dependencies(target, { targets: state, replay: state });
+      let calls = 0;
+      deps.operations.apply = async (action) => {
+        calls += 1;
+        return { receiptId: "no-op", actionDigest: actionDigest(action) };
+      };
+      await expect(
+        new PrivilegedInstallService(deps).execute(message, PEER),
+      ).rejects.toThrow("lock is retained");
+      expect(calls).toBe(1);
+      const entries = await deps.journal.read(message.plan.planId);
+      expect(entries.at(-1)?.event).toBe("execution-failed");
+      expect(entries.some((entry) => entry.event === "action-completed")).toBe(
+        false,
+      );
+      expect(await readdir(join(root, "targets"))).toHaveLength(1);
+      await expect(
+        state.runExclusive(
+          createDiskExecutionIdentity(target),
+          undefined,
+          message.plan.planId,
+          async () => {
+            throw new Error("must not run");
+          },
+        ),
+      ).rejects.toThrow("target lock already exists");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it.each(["backup", "action", "completion"] as const)(

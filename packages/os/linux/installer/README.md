@@ -20,6 +20,25 @@ requires a verified GPT backup, and writes a digest-chained durable journal
 before and after each operation. An interrupted or inconsistent journal stops
 with `InstallRecoveryRequiredError`; actions are never guessed or replayed.
 
+Each action also requires a fresh inventory readback before its completion
+checkpoint is written. Erasing must leave an empty, verified redundant GPT;
+that action alone may initialize GPT or replace its disk GUID. Creating a
+partition must produce exactly the reviewed byte extent and filesystem,
+including an unencrypted FAT32 ESP when requested. Shrinking must change only
+the reviewed partition end. Other actions must preserve the existing partition
+identities and layout, and image/boot operations require their expected root
+partition or ESP to exist. The comparison uses an independent pre-action
+snapshot even if a backend mutates its inventory argument. A valid operation
+receipt cannot override a failed postcondition: execution journals failure,
+requires recovery, and never proceeds to later actions or silently replays it.
+
+Physical disk identity remains bound to the reviewed plan throughout execution.
+GPT metadata and partition state are bound to the initial authorization or the
+last durable checkpoint, permitting reviewed table changes without accepting
+unrelated drift. These inventory checks do not prove payload bytes, filesystem
+health after a write, or bootability; those require the real backend and
+platform qualification.
+
 `DurableFileInstallJournal` is the Linux file-backed implementation for that
 boundary. It requires a pre-provisioned, canonical, owner-only directory; uses
 an exclusive per-plan writer lock; appends bounded JSONL records with `fsync`

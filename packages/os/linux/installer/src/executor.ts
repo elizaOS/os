@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { assertInstallActionTransition } from "./action-transition";
 import {
   createDiskInventoryFingerprint,
   createInstallPlan,
@@ -80,6 +81,7 @@ function authorizationDigest(authorization: InstallAuthorization): string {
 function assertTargetIdentity(
   plan: InstallPlan | AuthorizedInstallPlan,
   inventory: DiskInventory,
+  comparePartitionTable = true,
 ): void {
   validateDiskInventory(inventory);
   if (
@@ -88,16 +90,25 @@ function assertTargetIdentity(
     inventory.kernelDeviceIdentity !== plan.target.kernelDeviceIdentity ||
     inventory.sizeBytes !== plan.target.sizeBytes ||
     inventory.logicalSectorBytes !== plan.target.logicalSectorBytes ||
-    inventory.gptRedundancyVerified !== plan.target.gptRedundancyVerified ||
+    (comparePartitionTable &&
+      inventory.gptRedundancyVerified !== plan.target.gptRedundancyVerified) ||
     inventory.bootAncestryResolved !== plan.target.bootAncestryResolved ||
     inventory.hardwareIdentity.serial !== plan.target.hardwareIdentity.serial ||
     inventory.hardwareIdentity.wwn !== plan.target.hardwareIdentity.wwn ||
     inventory.hardwareIdentity.firmwarePath !==
       plan.target.hardwareIdentity.firmwarePath ||
-    inventory.hardwareIdentity.gptDiskGuid !==
-      plan.target.hardwareIdentity.gptDiskGuid
+    (comparePartitionTable &&
+      inventory.hardwareIdentity.gptDiskGuid !==
+        plan.target.hardwareIdentity.gptDiskGuid)
   ) {
     throw new Error("Target disk identity changed after plan authorization.");
+  }
+  for (const id of plan.preservedPartitionIds) {
+    if (!inventory.partitions.some((partition) => partition.id === id)) {
+      throw new InstallRecoveryRequiredError(
+        `Preserved partition ${id} is missing.`,
+      );
+    }
   }
   if (inventory.currentBootSource) {
     throw new Error("Refusing to mutate the disk that booted the installer.");
@@ -450,7 +461,7 @@ export async function executeAuthorizedInstallPlan(
     );
   }
   let inventory = await dependencies.inventory.inspect(plan.target.stableId);
-  assertTargetIdentity(plan, inventory);
+  assertTargetIdentity(plan, inventory, false);
   let fingerprint = createDiskInventoryFingerprint(inventory);
 
   const revalidateImmediatelyBeforeMutation = async (
@@ -474,7 +485,7 @@ export async function executeAuthorizedInstallPlan(
     // write, so drift while a session/credential provider is consulted cannot
     // reach a stale device path or kernel-device incarnation.
     const current = await dependencies.inventory.inspect(plan.target.stableId);
-    assertTargetIdentity(plan, current);
+    assertTargetIdentity(plan, current, false);
     if (
       createDiskInventoryFingerprint(current) !== expectedInventoryFingerprint
     ) {
@@ -569,7 +580,7 @@ export async function executeAuthorizedInstallPlan(
   for (let index = completed; index < plan.actions.length; index += 1) {
     const action = plan.actions[index] as InstallerAction;
     inventory = await dependencies.inventory.inspect(plan.target.stableId);
-    assertTargetIdentity(plan, inventory);
+    assertTargetIdentity(plan, inventory, false);
     fingerprint = createDiskInventoryFingerprint(inventory);
     if (fingerprint !== expectedFingerprint) {
       throw new InstallRecoveryRequiredError(
@@ -590,6 +601,9 @@ export async function executeAuthorizedInstallPlan(
         expectedFingerprint,
       );
       fingerprint = createDiskInventoryFingerprint(inventory);
+      // The backend may mutate its input object. Preserve an independent
+      // pre-operation snapshot for the inventory readback comparison.
+      const beforeAction = structuredClone(inventory);
       const receipt = await dependencies.operations.apply(action, inventory);
       dependencies.signal?.throwIfAborted();
       if (!receipt.receiptId.trim() || receipt.actionDigest !== digest) {
@@ -598,7 +612,14 @@ export async function executeAuthorizedInstallPlan(
         );
       }
       inventory = await dependencies.inventory.inspect(plan.target.stableId);
-      assertTargetIdentity(plan, inventory);
+      assertTargetIdentity(plan, inventory, false);
+      try {
+        assertInstallActionTransition(action, beforeAction, inventory);
+      } catch (error) {
+        throw new InstallRecoveryRequiredError(
+          `Privileged action postcondition failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
       fingerprint = createDiskInventoryFingerprint(inventory);
       expectedFingerprint = fingerprint;
       entries = await appendDurably(

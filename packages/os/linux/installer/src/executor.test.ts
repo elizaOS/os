@@ -12,6 +12,7 @@ import {
   createDiskInventoryFingerprint,
   createInstallPlan,
 } from "./planner";
+import { applyTestInventoryAction } from "./test-inventory";
 import type {
   DiskInventory,
   InstallAuthorization,
@@ -147,10 +148,13 @@ function dependencies(
         sha256: "a".repeat(64),
       }),
       verifyPartitionTableBackup: async () => true,
-      apply: async (action) => ({
-        receiptId: `receipt-${action.type}`,
-        actionDigest: digestAction(action),
-      }),
+      apply: async (action) => {
+        applyTestInventoryAction(target, action);
+        return {
+          receiptId: `receipt-${action.type}`,
+          actionDigest: digestAction(action),
+        };
+      },
     },
     now: () => NOW,
     ...overrides,
@@ -259,6 +263,7 @@ describe("privileged installer execution boundary", () => {
         partitions: [{ ...targetPartition, mounted: true }],
       });
     deps.operations.apply = async (action) => {
+      applyTestInventoryAction(target, action);
       appliedCount += 1;
       return {
         receiptId: `receipt-${action.type}`,
@@ -278,6 +283,7 @@ describe("privileged installer execution boundary", () => {
     const deps = dependencies(target);
     let appliedCount = 0;
     deps.operations.apply = async (action) => {
+      applyTestInventoryAction(target, action);
       appliedCount += 1;
       return {
         receiptId: `receipt-${action.type}`,
@@ -439,6 +445,7 @@ describe("privileged installer execution boundary", () => {
       },
     });
     deps.operations.apply = async (action) => {
+      applyTestInventoryAction(target, action);
       applied += 1;
       return {
         receiptId: `receipt-${action.type}`,
@@ -480,6 +487,7 @@ describe("privileged installer execution boundary", () => {
       },
     });
     deps.operations.apply = async (action) => {
+      applyTestInventoryAction(target, action);
       applied += 1;
       return {
         receiptId: `receipt-${action.type}`,
@@ -532,6 +540,7 @@ describe("privileged installer execution boundary", () => {
       return verificationCount < 5;
     };
     deps.operations.apply = async (action) => {
+      applyTestInventoryAction(target, action);
       appliedCount += 1;
       return {
         receiptId: `receipt-${action.type}`,
@@ -651,5 +660,127 @@ describe("privileged installer execution boundary", () => {
         dependencies(target),
       ),
     ).rejects.toThrow(/digest/);
+  });
+});
+
+describe("installer inventory readback enforcement", () => {
+  it.each([
+    "no-op erase",
+    "wrong geometry",
+    "wrong filesystem",
+    "changed GUID",
+    "replaced ESP",
+  ])(
+    "journals failure and forbids replay after %s with a valid receipt",
+    async (fault) => {
+      const target = disk();
+      const { request, plan } = reviewedPlan(target);
+      const deps = dependencies(target);
+      // Deliberately expose the same mutable object to prove the executor keeps
+      // an independent pre-operation snapshot rather than trusting its backend.
+      deps.inventory.inspect = async () => target;
+      const apply = deps.operations.apply;
+      let attempts = 0;
+      deps.operations.apply = async (action, observed) => {
+        attempts += 1;
+        if (fault === "no-op erase") {
+          return {
+            receiptId: "lying-receipt",
+            actionDigest: digestAction(action),
+          };
+        }
+        const receipt = await apply(action, observed);
+        if (action.type === "create-partition") {
+          const added = target.partitions.at(-1);
+          if (!added) throw new Error("Missing new partition fixture.");
+          if (fault === "wrong geometry") added.startBytes += MIB;
+          if (fault === "wrong filesystem") added.filesystem = "ntfs";
+          if (fault === "changed GUID")
+            target.hardwareIdentity.gptDiskGuid =
+              "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+        }
+        if (fault === "replaced ESP" && action.type === "install-system") {
+          const esp = target.partitions.find((item) => item.role === "esp");
+          if (!esp) throw new Error("Missing ESP fixture.");
+          esp.id = "unexpected-esp-identity";
+        }
+        return receipt;
+      };
+      const authorized = await authorizeInstallPlan(
+        request,
+        plan,
+        authorization(target, plan.planId),
+        deps,
+      );
+      await expect(
+        executeAuthorizedInstallPlan(authorized, deps),
+      ).rejects.toBeInstanceOf(InstallRecoveryRequiredError);
+      expect(deps.journal.entries.at(-1)?.event).toBe("execution-failed");
+      expect(
+        deps.journal.entries.some(
+          (entry) => entry.event === "execution-completed",
+        ),
+      ).toBe(false);
+      const stoppedAt = attempts;
+      await expect(
+        executeAuthorizedInstallPlan(authorized, deps),
+      ).rejects.toBeInstanceOf(InstallRecoveryRequiredError);
+      expect(attempts).toBe(stoppedAt);
+    },
+  );
+
+  it("initializes GPT on a blank disk and resumes only the verified final inventory", async () => {
+    const target = disk({
+      partitionTable: "none",
+      gptRedundancyVerified: undefined,
+      hardwareIdentity: { ...disk().hardwareIdentity, gptDiskGuid: undefined },
+      partitions: [],
+    });
+    const { request, plan } = reviewedPlan(target);
+    const deps = dependencies(target);
+    const authorized = await authorizeInstallPlan(
+      request,
+      plan,
+      authorization(target, plan.planId),
+      deps,
+    );
+    const result = await executeAuthorizedInstallPlan(authorized, deps);
+    expect(target.partitionTable).toBe("gpt");
+    expect(target.hardwareIdentity.gptDiskGuid).toBeTruthy();
+    expect(await executeAuthorizedInstallPlan(authorized, deps)).toEqual(
+      result,
+    );
+    target.hardwareIdentity.gptDiskGuid =
+      "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    await expect(
+      executeAuthorizedInstallPlan(authorized, deps),
+    ).rejects.toThrow(/differs from the last durable/);
+  });
+
+  it("preserves existing partitions through a complete alongside layout", async () => {
+    const target = disk();
+    const preserved = structuredClone(target.partitions);
+    const request: InstallRequest = {
+      mode: "alongside",
+      targetStableId: target.stableId,
+      expectedSizeBytes: target.sizeBytes,
+      confirmationToken: createDiskConfirmationToken(target),
+      freeExtentId: "free",
+    };
+    const plan = createInstallPlan(request, target);
+    const deps = dependencies(target);
+    const authorized = await authorizeInstallPlan(
+      request,
+      plan,
+      authorization(target, plan.planId),
+      deps,
+    );
+    const result = await executeAuthorizedInstallPlan(authorized, deps);
+    expect(result.completedActions).toBe(plan.actions.length);
+    for (const partition of preserved) {
+      expect(
+        target.partitions.find((item) => item.id === partition.id),
+      ).toEqual(partition);
+    }
   });
 });
