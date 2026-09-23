@@ -265,6 +265,14 @@ Vulkan readiness.
 
 ## AOSP assistant/full-control contract
 
+The product removes Android's stock provisioning applications. Its SettingsProvider
+overlay therefore seeds `device_provisioned` and `user_setup_complete` to `1` for
+fresh settings databases; otherwise Android suppresses assist-key routing even
+when the assistant role and service are correct. Boot validation requires both
+settings. These defaults leave existing userdata unchanged and do not complete
+Eliza's application-level account/provider onboarding. Qualify this image change
+with fresh disposable userdata, not shell-written settings on an older image.
+
 The AOSP image makes `ai.elizaos.app` the device assistant, not just another
 app that can answer an intent. The product overlay sets
 `config_defaultAssistant`, the APK declares `ElizaAssistActivity` for both

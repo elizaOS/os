@@ -42,6 +42,7 @@ import {
   parseSmokeArgs,
 } from "../../../../scripts/aosp/smoke-cuttlefish.mjs";
 import {
+  assertAndroidSetupState,
   parseAdbDevicesOutput,
   selectBrandDeviceSerial,
 } from "../../../../scripts/distro-android/boot-validate.mjs";
@@ -1702,7 +1703,9 @@ describe("AOSP build contracts", () => {
         ELIZA_CUTTLEFISH_GPU_RENDERER_FEATURES:
           "VulkanAllocateHostMemory:enabled;VulkanDisableCoherentMemoryAndEmulate:enabled",
       }),
-    ).toContain("--gpu_renderer_features='VulkanAllocateHostMemory:enabled;VulkanDisableCoherentMemoryAndEmulate:enabled'");
+    ).toContain(
+      "--gpu_renderer_features='VulkanAllocateHostMemory:enabled;VulkanDisableCoherentMemoryAndEmulate:enabled'",
+    );
     expect(() =>
       cuttlefishLaunchCommand(brand, {
         ELIZA_CUTTLEFISH_GPU_RENDERER_FEATURES:
@@ -2202,4 +2205,16 @@ describe("AOSP build contracts", () => {
       "missing its version",
     );
   });
+});
+
+test("boot validation requires completed Android setup when stock provisioning is removed", () => {
+  const ready = { device_provisioned: "1", user_setup_complete: "1" };
+  expect(assertAndroidSetupState(ready)).toEqual(ready);
+  for (const name of ["device_provisioned", "user_setup_complete"]) {
+    for (const value of ["0", "null", "", "true"]) {
+      expect(() =>
+        assertAndroidSetupState({ ...ready, [name]: value }),
+      ).toThrow(name);
+    }
+  }
 });
