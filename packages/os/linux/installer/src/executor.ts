@@ -138,6 +138,8 @@ export interface PrivilegedInstallOperations {
 }
 
 export interface InstallExecutionDependencies {
+  /** Stop at operation boundaries; never race an in-flight backend write. */
+  signal?: AbortSignal;
   inventory: InstallInventoryProvider;
   authorization: OwnerAuthorizationVerifier;
   journal: InstallJournal;
@@ -168,9 +170,10 @@ export async function authorizeInstallPlan(
   authorization: InstallAuthorization,
   dependencies: Pick<
     InstallExecutionDependencies,
-    "inventory" | "authorization" | "now"
+    "inventory" | "authorization" | "now" | "signal"
   >,
 ): Promise<AuthorizedInstallPlan> {
+  dependencies.signal?.throwIfAborted();
   assertPlanIntegrity(plan);
   if (plan.executable !== false) {
     throw new Error("Only a non-executable reviewed plan can be authorized.");
@@ -200,6 +203,7 @@ export async function authorizeInstallPlan(
   if (!(await dependencies.authorization.verify(authorization))) {
     throw new Error("Owner authorization credential verification failed.");
   }
+  dependencies.signal?.throwIfAborted();
   return { ...plan, executable: true, authorization };
 }
 
@@ -414,6 +418,7 @@ export async function executeAuthorizedInstallPlan(
   plan: AuthorizedInstallPlan,
   dependencies: InstallExecutionDependencies,
 ): Promise<InstallExecutionResult> {
+  dependencies.signal?.throwIfAborted();
   assertPlanIntegrity(plan);
   if (plan.executable !== true) {
     throw new Error("Install plan has not been authorized for execution.");
@@ -452,6 +457,7 @@ export async function executeAuthorizedInstallPlan(
     kind: "partition-table-backup" | "installer-action",
     expectedInventoryFingerprint: string,
   ): Promise<DiskInventory> => {
+    dependencies.signal?.throwIfAborted();
     await dependencies.beforePrivilegedMutation?.(kind);
     if (
       assertIsoDate("authorization.expiresAt", plan.authorization.expiresAt) <=
@@ -484,6 +490,7 @@ export async function executeAuthorizedInstallPlan(
         `Owner authorization expired immediately before ${kind}.`,
       );
     }
+    dependencies.signal?.throwIfAborted();
     return current;
   };
 
@@ -504,6 +511,7 @@ export async function executeAuthorizedInstallPlan(
     fingerprint = createDiskInventoryFingerprint(inventory);
     const backup =
       await dependencies.operations.backupPartitionTable(inventory);
+    dependencies.signal?.throwIfAborted();
     if (
       backup.stableId !== inventory.stableId ||
       !backup.storageStableId.trim() ||
@@ -583,6 +591,7 @@ export async function executeAuthorizedInstallPlan(
       );
       fingerprint = createDiskInventoryFingerprint(inventory);
       const receipt = await dependencies.operations.apply(action, inventory);
+      dependencies.signal?.throwIfAborted();
       if (!receipt.receiptId.trim() || receipt.actionDigest !== digest) {
         throw new Error(
           "Privileged operation returned an invalid action receipt.",
@@ -617,6 +626,7 @@ export async function executeAuthorizedInstallPlan(
     }
   }
 
+  dependencies.signal?.throwIfAborted();
   entries = await appendDurably(dependencies.journal, plan.planId, entries, {
     event: "execution-completed",
     timestamp: now().toISOString(),
