@@ -97,15 +97,17 @@ settings than the build environment:
   `/dev/kmsg` breadcrumbs, and non-blocking module/storage waits. The probe
   init file is installed through an explicit `PRODUCT_COPY_FILES` rule.
 - `ELIZAOS_GRIZZLY_CONSERVATIVE_F2FS=1` applies the diagnostic userdata fstab
-  rewrite. It strips the factory encryption contract from `/data`; the first
-  flash after changing this stance must pair with `fastboot -w`.
+  rewrite. It strips the factory encryption contract from `/data` and is not
+  eligible for public release. Any lab transition changing this stance must
+  have its wipe requirement, recovery path and starting state independently
+  qualified in the signed v2 contract; never issue an ad hoc `fastboot -w`.
 
 A generated tree carrying gated edits whose flag is now unset is deleted and
 regenerated, so a default build cannot inherit an earlier diagnostic image.
 
 ## Promotion matrix
 
-Before setting a release-manifest tier to `lab-validated`, retain all of:
+Before requesting independently signed v2 qualification, retain all of:
 
 - clean source checkout identities and signed artifact SHA-256 values;
 - boot, display, touch, Wi-Fi, Bluetooth, cellular/SIM, audio/mic, camera,
@@ -116,8 +118,10 @@ Before setting a release-manifest tier to `lab-validated`, retain all of:
   review, including a deliberate failure canary;
 - verified boot, recovery, OTA, both-slot boot, and rollback results.
 
-The installer independently rechecks artifact bytes and `fastboot product` and
-refuses every manifest below `lab-validated`.
+A legacy `lab-validated` label cannot authorize installation. The installer
+requires signed v2 qualification, reviewed target eligibility, current trust
+and revocations, exact artifacts/tools, and a qualified firmware/slot/recovery
+starting state. See [supported devices](../installer/docs/supported-devices.md).
 
 ## Light Phone III
 
