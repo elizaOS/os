@@ -71,8 +71,11 @@ connected, so the package never changes a partition table.
   recovery artifact descriptor and re-verifies it before and after each action,
   including resumed execution. Missing/corrupt artifacts and legacy hash-only
   checkpoints fail closed; healthy filesystem-backed checkpoints resume without
-  replacing the original backup. The actual native GPT backup/restore backend
-  and power-loss proof remain unfinished. Save and verify both GPT headers and
+  replacing the original backup. Uninstalled native candidates now capture and
+  verify exact GPT artifacts, restore them with interruption checks, and refresh
+  and verify the kernel partition map in disposable VM qualification. Production
+  backup storage/backend composition and power-loss proof remain unfinished.
+  Save and verify both GPT headers and
   partition entries to separate recovery media/state, perform typed operations,
   reread the kernel partition table, and prove rollback after every injected
   failure boundary.

@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "gpt-snapshot.h"
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/fs.h>
@@ -372,4 +373,130 @@ finish:
   result->error = rc;
   return rc;
 #undef WRITE_REGION
+}
+
+
+static int decimal_at(int directory, const char *name, uint64_t *value) {
+  const int fd = openat(directory, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  if (fd < 0) return -errno;
+  char text[32];
+  ssize_t count;
+  do { count = read(fd, text, sizeof(text)); } while (count < 0 && errno == EINTR);
+  const int saved = errno;
+  const int closed = close(fd);
+  if (count < 0) return -saved;
+  if (closed != 0) return -EIO;
+  if (count < 2 || count > 21 || text[count - 1] != '\n' ||
+      (count > 2 && text[0] == '0')) return -ESTALE;
+  uint64_t number = 0;
+  for (ssize_t i = 0; i < count - 1; ++i) {
+    if (text[i] < '0' || text[i] > '9') return -ESTALE;
+    const uint64_t digit = (uint64_t)(text[i] - '0');
+    if (number > (UINT64_MAX - digit) / 10U) return -ESTALE;
+    number = number * 10U + digit;
+  }
+  *value = number;
+  return 0;
+}
+static int exact_snapshot(int fd, const struct elizaos_install_disk_identity *id,
+                          const unsigned char *original, size_t length,
+                          const unsigned char binding[32], const unsigned char digest[32]) {
+  unsigned char *actual = malloc(length), actual_digest[32];
+  if (!actual) return -ENOMEM;
+  size_t actual_length = 0;
+  int rc = elizaos_install_capture_gpt(fd, id, binding, actual, length, &actual_length, actual_digest);
+  if (!rc && (actual_length != length || CRYPTO_memcmp(actual_digest, digest, 32U) != 0 ||
+              memcmp(actual, original, length) != 0)) rc = -ESTALE;
+  free(actual);
+  return rc;
+}
+static int exact_kernel_map(int fd, const struct elizaos_install_disk_identity *id,
+                            const struct elizaos_gpt_restore_control *control,
+                            const unsigned char *artifact, uint32_t *partitions) {
+  char path[64];
+  const int n = snprintf(path, sizeof(path), "/sys/dev/block/%u:%u", id->major, id->minor);
+  if (n < 0 || (size_t)n >= sizeof(path)) return -EINVAL;
+  DIR *directory = opendir(path);
+  if (!directory) return -errno;
+  const unsigned char *header = artifact + ENVELOPE + id->sector_bytes;
+  const unsigned char *entries = header + id->sector_bytes;
+  const uint32_t count = le32(header + 80), stride = le32(header + 84);
+  bool seen[4096] = { false };
+  uint32_t matched = 0, visited = 0;
+  int rc = 0;
+  for (;;) {
+    errno = 0;
+    const struct dirent *child = readdir(directory);
+    if (!child) { if (errno) rc = -errno; break; }
+    if (strcmp(child->d_name, ".") == 0 || strcmp(child->d_name, "..") == 0) continue;
+    if (++visited > 8192U) { rc = -E2BIG; break; }
+    if ((rc = restore_guard(fd, id, control))) break;
+    struct stat st;
+    if (fstatat(dirfd(directory), child->d_name, &st, AT_SYMLINK_NOFOLLOW) != 0) { rc = -errno; break; }
+    if (!S_ISDIR(st.st_mode)) continue;
+    const int part = openat(dirfd(directory), child->d_name, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (part < 0) { rc = -errno; break; }
+    uint64_t index = 0, start = 0, size = 0;
+    rc = decimal_at(part, "partition", &index);
+    if (rc == -ENOENT) { rc = close(part) == 0 ? 0 : -EIO; if (rc) break; continue; }
+    if (!rc && (!index || index > count || seen[index - 1U])) rc = -ESTALE;
+    if (!rc) rc = decimal_at(part, "start", &start);
+    if (!rc) rc = decimal_at(part, "size", &size);
+    if (!rc) {
+      const unsigned char *entry = entries + (size_t)(index - 1U) * stride;
+      /* Kernel sysfs extents are always in 512-byte sectors. */
+      const uint64_t scale = id->sector_bytes / 512U;
+      if (zeroes(entry, 16U) || start != le64(entry + 32) * scale ||
+          size != (le64(entry + 40) - le64(entry + 32) + 1U) * scale) rc = -ESTALE;
+      else { seen[index - 1U] = true; ++matched; }
+    }
+    struct stat current;
+    if (!rc && (fstatat(dirfd(directory), child->d_name, &current, AT_SYMLINK_NOFOLLOW) != 0 ||
+                current.st_dev != st.st_dev || current.st_ino != st.st_ino)) rc = -ESTALE;
+    if (close(part) != 0 && !rc) rc = -EIO;
+    if (rc) break;
+  }
+  if (closedir(directory) != 0 && !rc) rc = -EIO;
+  for (uint32_t i = 0; !rc && i < count; ++i)
+    if (seen[i] == zeroes(entries + (size_t)i * stride, 16U)) rc = -ESTALE;
+  if (!rc) *partitions = matched;
+  return rc;
+}
+int elizaos_install_refresh_gpt_map(int fd,
+    const struct elizaos_install_disk_identity *expected,
+    const unsigned char binding[32], const unsigned char *data, size_t length,
+    const unsigned char digest[32], const struct elizaos_gpt_restore_control *control,
+    struct elizaos_gpt_map_result *result) {
+  if (!result) return -EINVAL;
+  memset(result, 0, sizeof(*result)); result->error = -EINVAL;
+  if (!expected || !binding || !data || !digest || !control || !control->check ||
+      length < ENVELOPE || length > ELIZAOS_GPT_SNAPSHOT_MAX) return result->error;
+  const struct elizaos_install_disk_identity id = *expected;
+  const struct elizaos_gpt_restore_control hooks = *control;
+  unsigned char saved_binding[32], saved_digest[32];
+  memcpy(saved_binding, binding, 32U); memcpy(saved_digest, digest, 32U);
+  unsigned char *copy = malloc(length);
+  if (!copy) { result->error = -ENOMEM; return result->error; }
+  memcpy(copy, data, length);
+  int rc = elizaos_install_verify_gpt_snapshot(copy, length, saved_binding, saved_digest);
+  if (rc) goto finish_map;
+  if (le32(copy + 16) != id.sector_bytes || le64(copy + 24) != id.size_bytes) {
+    rc = -ESTALE; goto finish_map;
+  }
+  if ((rc = restore_guard(fd, &id, &hooks)) ||
+      (rc = exact_snapshot(fd, &id, copy, length, saved_binding, saved_digest)) ||
+      (rc = restore_guard(fd, &id, &hooks))) goto finish_map;
+  result->reread_attempted = 1;
+  if (ioctl(fd, BLKRRPART) != 0) { rc = -errno; goto finish_map; }
+  uint32_t partitions = 0;
+  if ((rc = restore_guard(fd, &id, &hooks)) ||
+      (rc = exact_kernel_map(fd, &id, &hooks, copy, &partitions)) ||
+      (rc = exact_snapshot(fd, &id, copy, length, saved_binding, saved_digest)) ||
+      (rc = restore_guard(fd, &id, &hooks))) goto finish_map;
+  result->partitions = partitions;
+  result->verified = 1;
+finish_map:
+  free(copy);
+  result->error = rc;
+  return rc;
 }
