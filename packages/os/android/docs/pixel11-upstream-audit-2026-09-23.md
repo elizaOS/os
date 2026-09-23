@@ -160,6 +160,15 @@ adopt that script as our safe installer. Its AVB-footer/KeyMint explanation is
 an important hypothesis to verify against actual image metadata and encrypted
 hardware boot; it is not a diagnosis of our incidents.
 
+Read-only inspection with the local AOSP `avbtool` found the boot image's AVB
+properties identify Android 17, patch `2026-09-01`, B1 fingerprint and rollback
+index `1788220800`. The vendor-kernel image also names B1 but has AVB algorithm
+`NONE`; this does not independently establish its trust chain. The executable
+AK3 setting `supported.patchlevels=- 2026-09` is an upper-bound range, not an
+exact September firmware check: its parser uses `0000-00` as the lower bound.
+Thus the downloaded script does not substantiate the release notes' assertion
+that older firmware is refused. Preserve our exact bootloader/baseband checks.
+
 The inspected `espada` source head was
 `3e7ca981eb24cdaa5874f613f92cf39eafafe12b`; `espada-magisk` was
 `bd5c0c1aaf29fa140b53556cc653f03dcca7f1a3`. The README still describes A9
