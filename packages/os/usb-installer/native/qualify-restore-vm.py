@@ -231,7 +231,8 @@ def main():
         "restore-transaction.c", "restore-transaction.h", "restore-transaction.qualify.c",
     )}
     installer_sources = {name: (INSTALLER_NATIVE / name).read_bytes() for name in (
-        "gpt-snapshot.c", "gpt-snapshot.h", "qualify-gpt-snapshot.py",
+        "gpt-snapshot.c", "gpt-snapshot.h", "gpt-artifact-store.c", "gpt-artifact-store.h",
+        "qualify-gpt-snapshot.py", "qualify_gpt_store.py",
     )}
     data = """#cloud-config
 hostname: elizaos-restore-qualification
@@ -254,7 +255,7 @@ cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 /root/res
 cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 /root/linux-restore-helper.c -o /usr/libexec/elizaos-restore-helper-test
 cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 -shared -fPIC /root/linux-restore-helper.qualify.c -o /root/linux-restore-helper-qualification.so
 cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 -shared -fPIC /root/restore-transaction.qualify.c /root/restore-transaction.c /root/restore-gpt-fd.c /root/restore-tool-runner.c -lfdisk -o /root/restore-transaction-qualification.so
-cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 -shared -fPIC /root/gpt-snapshot.c -lcrypto -o /root/gpt-snapshot.so
+cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 -shared -fPIC /root/gpt-snapshot.c /root/gpt-artifact-store.c -lcrypto -o /root/gpt-snapshot.so
 python3 /root/qualify-gpt-snapshot.py --disposable-vm --sector-size SECTOR_BYTES > /dev/ttyS1
 helper_status=0
 strace -f -e trace=openat,fcntl,ioctl,fsync -o /root/helper.trace python3 /root/qualify-restore-helper.py --disposable-vm --sector-size SECTOR_BYTES > /dev/ttyS1 || helper_status=$?
@@ -333,6 +334,16 @@ exit "$status"
             len(artifact) != 128 + 3 * sector + 2 * span):
         raise RuntimeError("GPT snapshot geometry mismatch")
     cursor = 128
+    storage = snapshot_report["storage"]
+    expected_store_stops = [{"after": step, "readable": step > 0} for step in range(4)]
+    if (not all(storage.get(key) is True for key in ["verified", "exclusiveCreate", "chunkCancellation",
+                                                    "copiedInputs", "replacementRefused"]) or
+            storage["storageDevice"] == storage["targetDevice"] or storage["filesystem"] != "ext4 VM root" or
+            storage["cancellations"] != expected_store_stops or
+            storage["processInterruptions"] != expected_store_stops or
+            storage["refusals"] != ["digest", "authorization", "directory-mode", "directory-identity", "tmpfs",
+                                    "fifo", "symlink", "hardlink", "file-mode", "owner", "truncated", "corrupt"]):
+        raise RuntimeError("native GPT artifact persistence proof incomplete")
     restoration = snapshot_report["restore"]
     original_map = {"1": [2048, 131072], "2": [262144, 262144]}
     alternate_map = {"1": [2048, 131072], "2": [327680, 327680], "3": [786432, 131072]}

@@ -73,7 +73,11 @@ connected, so the package never changes a partition table.
   checkpoints fail closed; healthy filesystem-backed checkpoints resume without
   replacing the original backup. Uninstalled native candidates now capture and
   verify exact GPT artifacts, restore them with interruption checks, and refresh
-  and verify the kernel partition map in disposable VM qualification. Production
+  and verify the kernel partition map in disposable VM qualification. A separate
+  uninstalled filesystem primitive exclusively persists and re-verifies artifacts
+  through a retained private directory, including file/directory syncs and
+  process-interruption checks. Its required trusted storage-policy callbacks are
+  not a production backing-device resolver. Production
   backup storage/backend composition and power-loss proof remain unfinished.
   Save and verify both GPT headers and
   partition entries to separate recovery media/state, perform typed operations,

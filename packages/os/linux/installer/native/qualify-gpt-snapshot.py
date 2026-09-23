@@ -14,6 +14,7 @@ import subprocess
 import time
 import uuid
 import zlib
+from qualify_gpt_store import qualify_store
 
 MAXIMUM = 128 + 3 * 4096 + 2 * 4194304
 SIZE = 512 * 1024 * 1024
@@ -210,6 +211,7 @@ def main():
         os.fsync(fd)
 
     layouts = []
+    large_store_artifact = None
     for count, stride, moved in [(128, 128, False), (512, 256, True), (129, 128, True)]:
         regions = fixture(args.sector_size, count, stride, moved)
         write_regions(regions)
@@ -225,6 +227,7 @@ def main():
         os.fsync(fd)
         chunk_cancelled = len(regions[3][1]) > 65536
         if chunk_cancelled:
+            large_store_artifact = artifact
             checks = 0
 
             def cancel_second_chunk():
@@ -531,6 +534,8 @@ def main():
                                    "staleMapRecovered": True, "diskUnchanged": True,
                                    "mismatchRefusals": mismatch_refusals, "before": stale_map,
                                    "after": kernel_map(), "mismatchMaps": mismatch_maps}
+    storage_report = qualify_store(library, artifact, large_store_artifact, BINDING, fd, expected, identity)
+    require(digest(fd) == original_digest, "artifact persistence modified the target disk")
     final = digest(fd)
     os.close(fd)
     fd = os.open("/dev/vdd", os.O_RDONLY | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC)
@@ -547,7 +552,7 @@ def main():
     os.close(canary)
     print("ELIZAOS_GPT_SNAPSHOT_REPORT " + json.dumps({
         "status": "pass", "sectorBytes": args.sector_size, "layouts": layouts, "refusals": cases,
-        "restore": restore_report,
+        "restore": restore_report, "storage": storage_report,
         "targetSha256": final, "canarySha256": before_canary,
         "artifactBase64": base64.b64encode(artifact).decode(),
         "artifactSha256": hashlib.sha256(artifact).hexdigest(),
