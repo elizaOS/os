@@ -365,6 +365,32 @@ function validateBootProperties(adb, serial, brand) {
   return properties;
 }
 
+export function assertAndroidSetupState(settings) {
+  for (const name of ["device_provisioned", "user_setup_complete"]) {
+    if (settings[name] !== "1") {
+      throw new Error(
+        `${name} must be 1 when the stock provisioning apps are removed; found ${settings[name] || "<empty>"}`,
+      );
+    }
+  }
+  return settings;
+}
+
+function validateAndroidSetupState(adb, serial) {
+  return assertAndroidSetupState({
+    device_provisioned: shell(
+      adb,
+      serial,
+      "settings get global device_provisioned",
+    ).trim(),
+    user_setup_complete: shell(
+      adb,
+      serial,
+      "settings --user current get secure user_setup_complete",
+    ).trim(),
+  });
+}
+
 function validatePackagePath(adb, serial, brand) {
   const pmPath = shell(adb, serial, `pm path ${brand.packageName}`);
   assertIncludes(
@@ -541,6 +567,7 @@ export async function validateBootedDevice(options, brand) {
     serial,
     product: validateProductProperty(adb, serial, brand),
     bootProperties: validateBootProperties(adb, serial, brand),
+    setupState: validateAndroidSetupState(adb, serial),
     packagePath: validatePackagePath(adb, serial, brand),
     homeResolution: validateHomeResolution(adb, serial, brand),
     replacementIntents: validateReplacementIntents(adb, serial, brand),
