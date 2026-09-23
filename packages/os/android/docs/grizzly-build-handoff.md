@@ -140,8 +140,10 @@ production key onto the builder or into CI.
 
 Before any destructive operation, verify the signed checksum file and capture
 the phone serial, `fastboot getvar product`, bootloader version, active slot,
-boot reason, lock state, and current stock-build identity. Keep the verified A9
-factory archive available as the recovery path.
+boot reason, lock state, and current stock-build identity. Retain the recovery archive authorized for that exact measured starting state.
+The pinned A9 archive is a build input, not permission to downgrade a phone
+with newer firmware or rollback indexes. See the
+[current readiness review](pixel11-readiness-2026-09-23.md).
 
 Pixel 11 uses dynamic partitions. Drive flashing from the bundled
 `fastboot-info.txt`/flashall flow, including `reboot fastboot` and
