@@ -1,105 +1,69 @@
-# Recovery and Rollback
+# Recovery and rollback
 
-This installer does not automate rollback. Rollback is a release-owner
-procedure because it depends on bootloader state, anti-rollback policy, slot
-layout, and which partitions were flashed.
+Recovery depends on the current device, firmware, rollback indices, snapshot
+merge status and partitions already changed. A retained old ZIP or a formerly
+bootable inactive slot does not prove a downgrade is safe.
 
-## Before Flashing
+## Preserve evidence first
 
-Prepare these items before any `--execute --confirm-flash` run:
+Record the original flashing log, artifact hashes, exact model/SKU, firmware
+build and whether the bootloader was relocked. Query inventory before choosing
+a serial:
 
-- Stock or previous known-good images for the exact device codename.
-- The release manifest used for the current flash attempt.
-- The current active slot:
-
-```bash
-adb shell getprop ro.boot.slot_suffix
-fastboot getvar current-slot
-```
-
-- ADB and fastboot serials for the device.
-- Confirmation that user data is backed up when a wipe may be needed.
-
-## Non-Destructive Recovery Checks
-
-If a device fails to boot, start with read-only checks:
-
-```bash
+```sh
+adb devices -l
 fastboot devices
-fastboot getvar product
-fastboot getvar current-slot
-fastboot getvar unlocked
-fastboot getvar all
 ```
 
-Capture the output before changing slots or flashing replacement images.
+If normal bootloader fastboot is available, these are read-only checks:
 
-## Slot Rollback
-
-For A/B devices, the least invasive rollback is often switching to the previous
-slot when that slot still contains a known-good system:
-
-```bash
-fastboot --set-active=a
-fastboot reboot
+```sh
+fastboot -s SERIAL getvar product
+fastboot -s SERIAL getvar unlocked
+fastboot -s SERIAL getvar current-slot
+fastboot -s SERIAL getvar version-bootloader
+fastboot -s SERIAL getvar version-baseband
+fastboot -s SERIAL getvar snapshot-update-status
 ```
 
-or:
+For an identified grizzly, collect private evidence with:
 
-```bash
-fastboot --set-active=b
-fastboot reboot
+```sh
+node scripts/distro-android/grizzly-evidence.mjs --device SERIAL --out /absolute/private/evidence
 ```
 
-Only switch to a slot when you know it contains a bootable build for the same
-device. Slot switching can still fail if shared partitions were changed.
+The collector verifies product identity before grizzly-specific diagnostics.
+Unsupported probes retain failures; no reset, flash or MTE toggle is performed.
+A reset can destroy useful logs. Missing ADB does not establish a hard brick.
 
-## Reflash Previous Images
+## Choose recovery from observed state
 
-If slot rollback is not enough, reflash the previous known-good artifact set
-with the same dry-run-first installer flow:
+- Running Android with an app/kiosk problem: investigate provisioning and app
+  logs first. OS reinstallation is not the default diagnostic.
+- Unlocked bootloader: compare the captured state with the qualified recovery
+  contract and OEM instructions for that model and firmware.
+- Working recovery: evaluate the correct signed OEM full OTA where applicable.
+- Locked bootloader rejecting an image: establish OEM unlock/recovery state and
+  the signing-key mismatch before attempting changes.
+- No normal USB/display response: document power/cable/host checks and use the
+  manufacturer's repair procedure if normal recovery remains unavailable.
 
-```bash
-android/installer/install-elizaos-android.sh \
-  --device SERIAL \
-  --artifact-dir path/to/previous-known-good \
-  --assume-bootloader
-```
+Do not guess a slot, cancel snapshots, erase persist/calibration, downgrade
+bootloaders, or relock to fix a failed boot. Anti-rollback may prohibit the old
+slot even if it used to work. Shared partitions can also invalidate fallback.
+There is deliberately no generic slot-switch or old-image execution recipe.
 
-Inspect the plan. Execute only when the mapping is correct:
+[Google's factory/rollback advisories](https://developers.google.com/android/images)
+and [full OTA guidance](https://developers.google.com/android/ota) describe OEM
+procedures; determine applicability to the captured state before using them.
+Firmware recovery is not performed by the elizaOS OS-install adapter.
 
-```bash
-android/installer/install-elizaos-android.sh \
-  --device SERIAL \
-  --artifact-dir path/to/previous-known-good \
-  --assume-bootloader \
-  --execute \
-  --confirm-flash \
-  --reboot-after-flash
-```
+## Qualified elizaOS reinstallation
 
-Add `--wipe-data` only when the release owner confirms it is required.
-
-## Stock Recovery
-
-When custom rollback images are not available, use the OEM factory image or
-rescue process for the exact model and codename. Do not cross-flash images from
-a different codename, carrier variant, or bootloader generation.
-
-## Validation After Recovery
-
-After recovery boots, run:
-
-```bash
-android/installer/scripts/validate-post-flash.sh \
-  --device SERIAL \
-  --execute
-```
-
-Record:
-
-- `ro.product.device`
-- `ro.build.fingerprint`
-- `ro.boot.slot_suffix`
-- `sys.boot_completed`
-- Any release-manifest property expectations that failed
+Legacy manifests are planning-only. A retained signed v2 release is usable only
+if its current signatures/revocation policy and exact firmware/SKU/storage/
+rollback/recovery qualification still match. See
+[the signed installer contract](../../../../../scripts/android/README.md).
+Execution requires a new journal and revalidates state; failed operations are
+not replayed automatically. Never edit eligibility or evidence to bypass a
+recovery refusal.

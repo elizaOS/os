@@ -46,78 +46,25 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
-      - name: Download AOSP artifacts
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+
+      - name: Validate signed Android releases and publish index
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          gh release view "${{ inputs.tag }}" >/dev/null
-          mkdir -p /tmp/aosp
-          gh release download "${{ inputs.tag }}" \
-            --pattern "elizaos-*-android-*.zip" \
-            --dir /tmp/aosp/
-          if ! find /tmp/aosp -maxdepth 1 -type f -name "elizaos-*-android-*.zip" -size +0c -print -quit | grep -q .; then
-            echo "::error::release ${{ inputs.tag }} contains no nonempty AOSP image artifacts"
-            exit 1
-          fi
-
-      - name: Generate AOSP update manifest
-        run: |
-          set -euo pipefail
-          VERSION="${{ inputs.version }}"
-          CHANNEL="${{ inputs.channel }}"
-          TAG="${{ inputs.tag }}"
-          RELEASE_DATE=$(date -u +%Y-%m-%d)
-          BASE_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}"
-          ARTIFACTS="[]"
-
-          for f in /tmp/aosp/*.zip; do
-            [[ -f "$f" ]] || continue
-            NAME=$(basename "$f")
-            SHA=$(sha256sum "$f" | awk '{print $1}')
-            SIZE=$(stat -c%s "$f")
-
-            if [[ "$NAME" == *pixel-arm64* ]]; then
-              TARGET="pixel-arm64"; UNLOCK=true
-            elif [[ "$NAME" == *cf_x86_64* || "$NAME" == *cuttlefish* ]]; then
-              TARGET="cuttlefish-x86_64"; UNLOCK=false
-            else
-              TARGET="${NAME%.zip}"; UNLOCK=true
-            fi
-
-            ENTRY="{\"target\":\"$TARGET\",\"filename\":\"$NAME\",\"downloadUrl\":\"$BASE_URL/$NAME\",\"sha256\":\"$SHA\",\"sizeBytes\":$SIZE,\"requiredUnlockedBootloader\":$UNLOCK,\"minimumAndroidVersion\":\"14\"}"
-            if [[ "$ARTIFACTS" == "[]" ]]; then
-              ARTIFACTS="[$ENTRY]"
-            else
-              ARTIFACTS="${ARTIFACTS%]}, $ENTRY]"
-            fi
-          done
-
-          python3 -c "
-          import json, sys
-          m = {
-            'schemaVersion': 1,
-            'channel': '$CHANNEL',
-            'version': '$VERSION',
-            'releaseDate': '$RELEASE_DATE',
-            'artifacts': json.loads('''$ARTIFACTS'''),
-            'releaseNotesUrl': 'https://github.com/${{ github.repository }}/releases/tag/$TAG',
-            'flashingInstructions': 'https://elizaos.ai/docs/aosp-install'
-          }
-          print(json.dumps(m, indent=2))
-          " > /tmp/aosp-update-manifest.json
-
-          echo "Generated manifest:"
-          cat /tmp/aosp-update-manifest.json
-
-      - name: Upload manifests to release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          TAG="${{ inputs.tag }}"
-          CHANNEL="${{ inputs.channel }}"
-          gh release view "$TAG" >/dev/null
-          cp /tmp/aosp-update-manifest.json "aosp-update-manifest-${CHANNEL}.json"
-          gh release upload "$TAG" "aosp-update-manifest-${CHANNEL}.json" --clobber
-          echo "Uploaded aosp-update-manifest-${CHANNEL}.json"
+          stage=$(mktemp -d "$RUNNER_TEMP/android-release.XXXXXX")
+          trap 'rm -rf -- "$stage"' EXIT
+          gh release view "$RELEASE_TAG" >/dev/null
+          gh release download "$RELEASE_TAG" --pattern "elizaos-*-android-*.zip" --dir "$stage"
+          gh release download "$RELEASE_TAG" --pattern "*.android-release.json" --dir "$stage"
+          output="$stage/aosp-update-manifest-${RELEASE_CHANNEL}.json"
+          node scripts/android/publish-update-manifest.mjs \
+            "$stage" "$RELEASE_VERSION" "$RELEASE_CHANNEL" "$RELEASE_TAG" \
+            "$GITHUB_REPOSITORY" "$output"
+          gh release upload "$RELEASE_TAG" "$output" --clobber

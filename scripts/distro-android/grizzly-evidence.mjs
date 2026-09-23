@@ -116,7 +116,7 @@ export function captureEvidence(
     outRoot || path.join(repoRoot, "reports", "grizzly-evidence"),
     stamp,
   );
-  fs.mkdirSync(outDir, { recursive: true });
+  fs.mkdirSync(outDir, { recursive: true, mode: 0o700 });
   console.log(`[grizzly-evidence] writing to ${outDir}`);
 
   // Bootloader surface: slot state, unlock state, firmware versions.
@@ -140,6 +140,37 @@ export function captureEvidence(
     `${JSON.stringify(selected, null, 2)}\n`,
   );
   const targetArgs = (rest) => ["-s", selected.device, ...rest];
+  // Inventory is not model identification. Only issue device-specific OEM
+  // diagnostics after a successful, unambiguous grizzly product query.
+  if (selected.fastboot) {
+    const product = captureCommand(
+      outDir,
+      "fastboot-product",
+      "fastboot",
+      targetArgs(["getvar", "product"]),
+    );
+    const output = `${product.stdout ?? ""}\n${product.stderr ?? ""}`;
+    const products = output
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^\(bootloader\)\s*/, ""))
+      .filter((line) => line.startsWith("product:"))
+      .map((line) => line.slice(8).trim());
+    selected.fastboot =
+      product.succeeded && products.length === 1 && products[0] === "grizzly";
+  }
+  if (selected.adb) {
+    const product = captureCommand(
+      outDir,
+      "adb-product",
+      "adb",
+      targetArgs(["shell", "getprop", "ro.product.device"]),
+    );
+    selected.adb = product.succeeded && product.stdout.trim() === "grizzly";
+  }
+  fs.writeFileSync(
+    path.join(outDir, "device-identity.json"),
+    `${JSON.stringify({ device: selected.device, grizzlyAdb: selected.adb, grizzlyFastboot: selected.fastboot }, null, 2)}\n`,
+  );
   if (selected.fastboot) {
     captureCommand(
       outDir,

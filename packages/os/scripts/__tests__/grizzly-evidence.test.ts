@@ -79,7 +79,11 @@ test("capture binds all probes to one serial and never changes MTE or boot state
               ? "phone recovery\nother device\n"
               : name === "fastboot-devices"
                 ? "phone fastboot\n"
-                : "",
+                : name === "fastboot-product"
+                  ? "product: grizzly\n"
+                  : name === "adb-product"
+                    ? "grizzly\n"
+                    : "",
         };
       },
     );
@@ -122,6 +126,38 @@ test("failed inventory cannot authorize probes even with plausible stdout", () =
       },
     );
     expect(calls).toEqual(["fastboot-devices", "adb-devices"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("unknown product never authorizes grizzly OEM or shell diagnostics", () => {
+  const root = mkdtempSync(join(tmpdir(), "grizzly-identity-test-"));
+  const calls: string[] = [];
+  try {
+    captureEvidence(
+      { device: "phone", outRoot: root },
+      (_dir: string, name: string) => {
+        calls.push(name);
+        return {
+          succeeded: true,
+          stdout:
+            name === "fastboot-devices"
+              ? "phone fastboot\n"
+              : name === "adb-devices"
+                ? "phone device\n"
+                : name === "fastboot-product"
+                  ? "product: other\n"
+                  : "other\n",
+        };
+      },
+    );
+    expect(calls).toEqual([
+      "fastboot-devices",
+      "adb-devices",
+      "fastboot-product",
+      "adb-product",
+    ]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
