@@ -169,8 +169,8 @@ digest is unchanged; the host also inspects the resulting partition map.
 The report binds source, binary, input-image, and transcript hashes. Logs and
 disk images stay outside source control.
 
-This proves the tested native operations and name replacement behavior, not
-physical USB unplug behavior or production restore. The authorization broker,
+This proves the tested native operations, name replacement, and virtual device
+removal behavior, not physical USB unplug behavior or production restore. The authorization broker,
 production integration of the qualified child runner, the cancellation/failure
 checkpoint matrix, packaging,
 and physical-media qualification above remain required before enabling restore.
@@ -221,3 +221,30 @@ also call the native runner for real udev settle, formatting and read-only
 checking, then retain independent filesystem inspection and unchanged-canary
 proof. The generic fixture entrypoint is private to the test translation unit;
 it is not part of the public runtime API.
+
+
+## Removal while descriptors remain open
+
+Both VM lanes now remove the actual virtio target through a private local QMP
+socket after successful formatting, checking and fsync. The guest keeps its
+original whole-disk and partition descriptors open throughout removal. The
+host requires the matching `DEVICE_DELETED` event, not merely a successful
+`device_del` reply: [QEMU documents removal as asynchronous](https://www.qemu.org/docs/master/interop/qemu-qmp-ref.html#command-device_del).
+The guest independently waits for the original whole-disk and partition sysfs
+objects to disappear. It then requires GPT create/verify to fail and both
+filesystem utilities to exit nonzero through the native supervisor. A setup
+error or missing executable does not count as a utility refusal.
+
+The host hashes the entire target before removal and after the guest finishes;
+stale-descriptor refusal must leave it unchanged. Both host and guest also
+check the complete non-target canary digest. Reports retain the QMP completion
+event, refusal results and hashes; `qmp.log` contains the handshake. The host
+runner records its own source hash and refuses evidence if that file changes
+mid-run. Handshake tests reject acknowledgement without removal, removal of a
+different device, guest refusal, and command errors, while accepting either
+ordering of the completion event and command acknowledgement.
+
+This covers Linux virtio hot removal at a completed-operation boundary. It does
+not claim physical USB electrical unplug, removal during an in-flight write,
+replacement-device reuse, power-loss recovery, or the complete cancellation
+checkpoint matrix. Those remain required for production qualification.

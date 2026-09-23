@@ -179,6 +179,7 @@ jobs:
             packages/os/usb-installer/native/restore-tool-runner.test.c \
             -o "$RUNNER_TEMP/restore-tool-runner-test"
           "$RUNNER_TEMP/restore-tool-runner-test"
+          python3 packages/os/usb-installer/native/qualify-restore-vm.test.py
 
       - name: Install unprivileged VM tools
         run: |

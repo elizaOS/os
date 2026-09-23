@@ -16,6 +16,7 @@ import stat
 import struct
 import subprocess
 import sys
+import time
 
 
 class Identity(ctypes.Structure):
@@ -198,6 +199,29 @@ def main():
         require(verify(target, ctypes.byref(expected)) == 0, "formatting damaged GPT")
         require(bytes(identity(target)) == bytes(expected), "target identity changed")
         require(bytes(identity(partition)) == bytes(part_identity), "partition identity changed")
+        # The host removes the actual virtio device through QMP only after all
+        # successful writes/readback have been synced. Keep both original FDs.
+        whole_sysfs = Path(f"/sys/dev/block/{expected.major}:{expected.minor}")
+        require(whole_sysfs.exists() and part_sysfs.exists(), "fixture disappeared early")
+        print("ELIZAOS_RESTORE_READY_FOR_REMOVAL", flush=True)
+        deadline = time.monotonic() + 60
+        while whole_sysfs.exists() or part_sysfs.exists():
+            require(time.monotonic() < deadline, "host did not remove the target device")
+            time.sleep(0.05)
+        removed_create = create(target, ctypes.byref(expected))
+        removed_verify = verify(target, ctypes.byref(expected))
+        require(removed_create < 0 and removed_verify < 0,
+                "GPT primitive accepted a removed device")
+        removed_tools = []
+        for tool in (1, 2):
+            result = ToolResult()
+            rc = run_tool(tool, partition, ctypes.byref(result))
+            require(rc < 0 and result.outcome == 2 and result.detail != 0,
+                    "utility did not explicitly refuse the removed partition")
+            removed_tools.append({"tool": tool, "rc": rc, "outcome": result.outcome,
+                                  "exitStatus": result.detail})
+        removal = {"sysfsRemoved": True, "gptCreateResult": removed_create,
+                   "gptVerifyResult": removed_verify, "tools": removed_tools}
         canary_after = digest(canary, canary_identity.size_bytes)
         require(canary_after == canary_before, "replacement disk was modified")
         report = {
@@ -206,13 +230,13 @@ def main():
             "identity": {name: getattr(expected, name) for name, _ in Identity._fields_},
             "identityRefusals": refused, "corruptionRefusals": corruptions,
             "helperRefusals": ["missing FD", "caller pathname", "whole disk"],
-            "readOnlyFdRefused": True,
+            "readOnlyFdRefused": True, "deviceRemoval": removal,
             "canarySha256Before": canary_before, "canarySha256After": canary_after,
             "exfatVerification": verification, "supervisedTools": supervised,
             "binaries": {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
                          for path in (args.library, Path(formatter), Path(checker))},
             "limits": ["not physical USB qualification", "not broker authorization",
-                       "name replacement is not a hardware unplug test"],
+                       "virtio removal is not physical USB controller qualification"],
         }
         print("ELIZAOS_RESTORE_FD_REPORT " + json.dumps(report, sort_keys=True), flush=True)
     finally:

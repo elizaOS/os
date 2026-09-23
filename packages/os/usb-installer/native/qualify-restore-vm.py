@@ -11,6 +11,8 @@ import base64
 import hashlib
 import json
 import os
+import socket
+import time
 from pathlib import Path
 import struct
 import subprocess
@@ -71,7 +73,120 @@ def inspect_target(output, sector_size):
     return parts
 
 
+class Qmp:
+    """Local VM control only. Preserve acknowledgements and asynchronous events."""
+
+    def __init__(self, path, transcript):
+        self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.socket.settimeout(30)
+        self.stream = None
+        try:
+            self.socket.connect(str(path))
+            self.stream = self.socket.makefile("rb")
+        except BaseException:
+            self.socket.close()
+            raise
+        self.transcript = transcript
+        self.messages = []
+        self.sequence = 0
+        try:
+            if "QMP" not in self.receive():
+                raise RuntimeError("missing QMP greeting")
+            self.execute("qmp_capabilities")
+        except BaseException:
+            self.close()
+            raise
+
+    def receive(self):
+        line = self.stream.readline(65537)
+        if not line or len(line) > 65536:
+            raise RuntimeError("missing or oversized QMP response")
+        message = json.loads(line)
+        if not isinstance(message, dict):
+            raise RuntimeError("QMP response is not an object")
+        self.messages.append(message)
+        self.transcript.write(json.dumps({"received": message}) + "\n")
+        self.transcript.flush()
+        return message
+
+    def execute(self, name, arguments=None):
+        self.sequence += 1
+        request = {"execute": name, "id": self.sequence}
+        if arguments is not None:
+            request["arguments"] = arguments
+        self.transcript.write(json.dumps({"sent": request}) + "\n")
+        self.transcript.flush()
+        self.socket.sendall((json.dumps(request) + "\n").encode())
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            self.socket.settimeout(max(0.001, deadline - time.monotonic()))
+            reply = self.receive()
+            if reply.get("id") != self.sequence:
+                continue
+            if "error" in reply or "return" not in reply:
+                raise RuntimeError(f"QMP {name} failed: {reply}")
+            return reply["return"]
+        raise RuntimeError(f"QMP {name} acknowledgement timed out")
+
+    def remove_restore_device(self):
+        self.execute("device_del", {"id": "restore-device"})
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            for message in self.messages:
+                if message.get("data", {}).get("device") != "restore-device":
+                    continue
+                if message.get("event") == "DEVICE_UNPLUG_GUEST_ERROR":
+                    raise RuntimeError("guest refused virtual device removal")
+                if message.get("event") == "DEVICE_DELETED":
+                    return message
+            self.socket.settimeout(max(0.001, deadline - time.monotonic()))
+            self.receive()
+        raise RuntimeError("QMP did not confirm virtual device removal")
+
+    def close(self):
+        self.stream.close()
+        self.socket.close()
+
+
+def run_vm(qemu, output):
+    # No host disk is exposed; QMP can remove only the named disposable fixture.
+    removal = None
+    target_before = None
+    control = None
+    with (output / "qemu.log").open("w") as log, (output / "qmp.log").open("w") as qmp_log:
+        process = subprocess.Popen(qemu, cwd=output, stdout=log, stderr=log)
+        try:
+            deadline = time.monotonic() + 900
+            while process.poll() is None:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("qualification VM timed out")
+                guest_log = output / "guest.log"
+                if removal is None and guest_log.exists():
+                    transcript = guest_log.read_text(errors="replace")
+                    if "ELIZAOS_RESTORE_READY_FOR_REMOVAL" in transcript.splitlines():
+                        target_before = file_hash(output / "target.raw")
+                        control = Qmp(output / "qmp.sock", qmp_log)
+                        removal = control.remove_restore_device()
+                time.sleep(0.1)
+            if process.returncode != 0:
+                raise RuntimeError(f"qualification VM exited {process.returncode}")
+            if removal is None or target_before is None:
+                raise RuntimeError("VM never completed the device-removal handshake")
+            target_after = file_hash(output / "target.raw")
+            if target_before != target_after:
+                raise RuntimeError("removed target changed during stale-FD refusal checks")
+            return {"event": removal, "targetSha256Before": target_before,
+                    "targetSha256After": target_after}
+        finally:
+            if control is not None:
+                control.close()
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+
+
 def main():
+    host_runner_sha256 = file_hash(Path(__file__))
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-image", type=Path, required=True)
     parser.add_argument("--source-archive", type=Path, required=True)
@@ -137,19 +252,19 @@ exit "$status"
     qemu = ["qemu-system-x86_64", "-accel", args.accelerator,
             "-cpu", "host" if args.accelerator == "kvm" else "max",
             "-m", "2048", "-smp", "2", "-display", "none", "-monitor", "none",
+            "-qmp", "unix:qmp.sock,server=on,wait=off",
             "-serial", f"file:{output / 'guest.log'}", "-no-reboot", "-boot", "order=c",
             "-drive", "file=guest.qcow2,if=none,id=os,format=qcow2",
             "-device", "virtio-blk-pci,drive=os,bootindex=1",
             "-drive", "file=target.raw,if=none,id=restore,format=raw",
-            "-device", ("virtio-blk-pci,drive=restore,serial=ELIZAOS-RESTORE-TEST,"
+            "-device", ("virtio-blk-pci,id=restore-device,drive=restore,serial=ELIZAOS-RESTORE-TEST,"
                         f"logical_block_size={args.sector_size},physical_block_size={args.sector_size}"),
             "-drive", "file=canary.raw,if=none,id=canary,format=raw",
             "-device", "virtio-blk-pci,drive=canary,serial=ELIZAOS-CANARY",
             "-drive", "file=seed.iso,media=cdrom,readonly=on", "-netdev", "user,id=n0",
             "-device", "virtio-net-pci,netdev=n0"]
     print(f"Booting isolated {args.sector_size}-byte sector qualification VM: {output}", flush=True)
-    with (output / "qemu.log").open("w") as log:
-        subprocess.run(qemu, cwd=output, stdout=log, stderr=log, check=True, timeout=900)
+    removal = run_vm(qemu, output)
     transcript = (output / "guest.log").read_text(errors="replace")
     reports = [json.loads(line.split("ELIZAOS_RESTORE_FD_REPORT ", 1)[1])
                for line in transcript.splitlines() if line.startswith("ELIZAOS_RESTORE_FD_REPORT ")]
@@ -159,7 +274,12 @@ exit "$status"
     if before != after or reports[0].get("sectorBytes") != args.sector_size:
         raise RuntimeError("host canary digest or sector geometry mismatch")
     parts = inspect_target(output, args.sector_size)
-    result = {"guest": reports[0], "partitions": parts,
+    if not reports[0].get("deviceRemoval", {}).get("sysfsRemoved"):
+        raise RuntimeError("guest did not prove stale-FD rejection after removal")
+    if file_hash(Path(__file__)) != host_runner_sha256:
+        raise RuntimeError("host runner changed during qualification")
+    result = {"deviceRemoval": removal, "hostRunnerSha256": host_runner_sha256,
+              "guest": reports[0], "partitions": parts,
               "canarySha256Before": before, "canarySha256After": after,
               "imageSha512": IMAGE_SHA512, "exfatSourceSha256": SOURCE_SHA256,
               "sourceSha256": {name: hashlib.sha256(content).hexdigest() for name, content in sources.items()},
