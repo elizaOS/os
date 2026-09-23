@@ -254,8 +254,13 @@ checkpoint matrix. Those remain required for production qualification.
 
 The VM now uses the pinned Debian **generic** image, whose kernel contains USB
 host/storage drivers; the previous genericcloud kernel intentionally omits them.
-A separate named 512 MiB QEMU USB-storage fixture is exposed through an emulated
-xHCI controller with its removable bit set. Neither a physical USB device nor a
+A separate named 512 MiB QEMU SCSI disk is exposed through emulated USB UAS
+and xHCI controllers with its removable bit set. The disk receives explicit
+logical/physical sector sizes; both guest and host require the logical sector
+size to match the lane before accepting any evidence. The older QEMU bundled
+with Ubuntu 24.04 did not forward the bulk-only USB-storage wrapper's sector
+setting to its [internally created SCSI disk](https://github.com/qemu/qemu/blob/v8.2.2/hw/usb/dev-storage-classic.c#L69),
+so that wrapper is not used for 4K qualification. Neither a physical USB device nor a
 host block device is passed through. The existing virtio target and canary retain
 their roles in formatting and hot-removal tests.
 

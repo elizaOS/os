@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Root helper qualification on one named emulated USB disk inside the VM."""
+import argparse
 import concurrent.futures
 import ctypes
 import fcntl
@@ -9,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import struct
 import subprocess
 import sys
 import threading
@@ -25,7 +27,10 @@ STATE = Path("/run/elizaos-usb-restore")
 
 
 def main():
-    require(sys.argv[1:] == ["--disposable-vm"], "disposable VM flag is required")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--disposable-vm", action="store_true", required=True)
+    parser.add_argument("--sector-size", choices=(512, 4096), type=int, required=True)
+    args = parser.parse_args()
     require(os.geteuid() == 0, "guest root is required")
     require(Path("/sys/class/dmi/id/sys_vendor").read_text().strip() == "QEMU", "QEMU is required")
     block = Path("/sys/class/block/sda")
@@ -40,6 +45,8 @@ def main():
             "guest must use its separate OS disk")
     descriptor = os.open("/dev/sda", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
     expected = identity(descriptor)
+    sector_bytes = struct.unpack("I", fcntl.ioctl(descriptor, 0x1268, bytes(4)))[0]
+    require(sector_bytes == args.sector_size, "USB fixture logical sector size does not match the lane")
     before = digest(descriptor, expected.size_bytes)
     os.close(descriptor)
     require(not STATE.exists() and not STATE.is_symlink(), "state fixture already exists")
@@ -215,7 +222,7 @@ def main():
         final_digest = digest(descriptor, expected.size_bytes)
     finally:
         os.close(descriptor)
-    report = {"status": "pass", "cases": cases, "gateSha256Before": before,
+    report = {"status": "pass", "sectorBytes": sector_bytes, "cases": cases, "gateSha256Before": before,
               "gateSha256After": after_gate, "finalUsbSha256": final_digest,
               "singleUseResults": {"accepted": results.count(0), "rejected": results.count(1)},
               "partitionBinding": ["valid partition", "symlink refused", "wrong disk refused"],

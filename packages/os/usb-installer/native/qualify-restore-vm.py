@@ -235,7 +235,7 @@ cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 /root/res
 cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 /root/linux-restore-helper.c -o /usr/libexec/elizaos-restore-helper-test
 cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 -shared -fPIC /root/linux-restore-helper.qualify.c -o /root/linux-restore-helper-qualification.so
 helper_status=0
-strace -f -e trace=openat,fcntl,ioctl,fsync -o /root/helper.trace python3 /root/qualify-restore-helper.py --disposable-vm || helper_status=$?
+strace -f -e trace=openat,fcntl,ioctl,fsync -o /root/helper.trace python3 /root/qualify-restore-helper.py --disposable-vm --sector-size SECTOR_BYTES || helper_status=$?
 cat /root/helper.trace
 if [ "$helper_status" != 0 ]; then exit "$helper_status"; fi
 status=0
@@ -243,6 +243,7 @@ strace -f -e trace=openat,fcntl,ioctl -o /root/restore.trace python3 /root/quali
 cat /root/restore.trace
 exit "$status"
 """
+    guest_script = guest_script.replace("SECTOR_BYTES", str(args.sector_size))
     data += ("  - path: /root/run-qualification.sh\n    permissions: '0700'\n    encoding: b64\n"
              f"    content: {base64.b64encode(guest_script.encode()).decode()}\n")
     data += "runcmd:\n  - [sh, -c, '/root/run-qualification.sh > /dev/ttyS0 2>&1']\n  - [poweroff]\n"
@@ -270,7 +271,8 @@ exit "$status"
             "-device", "virtio-blk-pci,drive=canary,serial=ELIZAOS-CANARY",
             "-device", "qemu-xhci,id=helper-xhci",
             "-drive", "file=helper-usb.raw,if=none,id=helper-usb,format=raw",
-            "-device", ("usb-storage,bus=helper-xhci.0,drive=helper-usb,removable=on,"
+            "-device", "usb-uas,id=helper-uas,bus=helper-xhci.0,serial=ELIZAOS-HELPER-TEST",
+            "-device", ("scsi-hd,bus=helper-uas.0,drive=helper-usb,removable=on,"
                         "serial=ELIZAOS-HELPER-TEST,"
                         f"logical_block_size={args.sector_size},physical_block_size={args.sector_size}"),
             "-drive", "file=seed.iso,media=cdrom,readonly=on", "-netdev", "user,id=n0",
@@ -287,7 +289,8 @@ exit "$status"
     if len(helper_reports) != 1 or helper_reports[0].get("status") != "pass":
         raise RuntimeError(f"native helper did not qualify: {helper_reports}")
     helper_report = helper_reports[0]
-    if (helper_report["gateSha256Before"] != helper_report["gateSha256After"] or
+    if (helper_report["sectorBytes"] != args.sector_size or
+            helper_report["gateSha256Before"] != helper_report["gateSha256After"] or
             helper_report["finalUsbSha256"] != file_hash(output / "helper-usb.raw")):
         raise RuntimeError("native helper USB digest mismatch")
     helper_parts = inspect_target(output, args.sector_size, "helper-usb.raw")
