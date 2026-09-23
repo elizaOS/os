@@ -26,7 +26,13 @@ export function readHealthToken(file) {
     fs.closeSync(fd);
   }
 }
-export function verifyPostBoot(release, shell, expectedSlot, healthToken) {
+export function verifyPostBoot(
+  release,
+  shell,
+  expectedSlot,
+  healthToken,
+  requestHealth,
+) {
   requireThat(
     typeof healthToken === "string" &&
       /^[A-Za-z0-9._~+/-]{1,4096}={0,2}$/.test(healthToken),
@@ -75,32 +81,24 @@ export function verifyPostBoot(release, shell, expectedSlot, healthToken) {
     /^\d+(?:\s+\d+)*$/.test(shell(["pidof", "ai.elizaos.app"]).trim()),
     "agent process missing",
   );
-  // Keep credentials out of argv and journals; send only over adb stdin.
+  // The transport callback keeps credentials out of subprocess argv/journals.
   let response;
   try {
-    response = shell(
-      [
-        "sh",
-        "-c",
-        '\'IFS= read -r token; printf "GET /api/health HTTP/1.0\\r\\nHost: 127.0.0.1\\r\\nAuthorization: Bearer %s\\r\\n\\r\\n" "$token" | toybox nc -w 5 127.0.0.1 31337\'',
-      ],
-      { input: `${healthToken}\n` },
-    );
+    response = requestHealth(healthToken);
   } catch {
     throw new Error("authenticated agent health transport failed");
   }
-  requireThat(
-    /^HTTP\/1\.[01] 200(?: |\r?\n)/.test(response),
-    "agent health HTTP failure",
-  );
-  const boundary = response.indexOf("\r\n\r\n");
-  requireThat(boundary >= 0, "invalid health HTTP response");
+  requireThat(response?.status === 200, "agent health HTTP failure");
   let body;
   try {
-    body = JSON.parse(response.slice(boundary + 4));
+    body = JSON.parse(response.body);
   } catch {
     throw new Error("invalid agent health JSON");
   }
+  requireThat(
+    body !== null && typeof body === "object",
+    "invalid agent health JSON",
+  );
   requireThat(body.ready === true, "agent health not ready");
   return {
     status: "pass",

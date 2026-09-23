@@ -18,6 +18,7 @@ import {
   verifyFile,
   verifyInstallFiles,
 } from "./release-contract.mjs";
+import { readAndroidHealth } from "./runtime-health.mjs";
 
 export function parseOptions(argv) {
   const o = { execute: false, confirm: false, wipe: false, reboot: false };
@@ -283,6 +284,7 @@ export function executePlan({
   serial,
   run = checkedRun,
   healthToken,
+  requestHealth = (token) => readAndroidHealth(tools.adb, serial, token),
 }) {
   const record = (event) => {
     fs.writeSync(
@@ -343,6 +345,7 @@ export function executePlan({
           run(tools.adb, ["-s", serial, "shell", ...args], options),
         active,
         healthToken,
+        requestHealth,
       );
       record({
         event: "installed-runtime-verified",

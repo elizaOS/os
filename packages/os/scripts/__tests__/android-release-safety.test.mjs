@@ -614,6 +614,8 @@ test("two IDs for the same key cannot satisfy independent authorization", (t) =>
   );
 });
 
+const healthy = () => ({ status: 200, body: JSON.stringify({ ready: true }) });
+
 function bootShell(release, overrides = {}) {
   const values = {
     "getprop sys.boot_completed": "1",
@@ -629,15 +631,13 @@ function bootShell(release, overrides = {}) {
     "pidof ai.elizaos.app": "1234",
     ...overrides,
   };
-  return (args) =>
-    args[0] === "sh"
-      ? (overrides.health ?? 'HTTP/1.0 200 OK\r\n\r\n{"ready":true}')
-      : (values[args.join(" ")] ?? "");
+  return (args) => values[args.join(" ")] ?? "";
 }
 test("post-boot checks reject fallback, stale APK, missing roles and false healthy HTTP 200", (t) => {
   const { release } = fixture(t);
   assert.equal(
-    verifyPostBoot(release, bootShell(release), "b", "test-token").status,
+    verifyPostBoot(release, bootShell(release), "b", "test-token", healthy)
+      .status,
     "pass",
   );
   for (const override of [
@@ -647,11 +647,17 @@ test("post-boot checks reject fallback, stale APK, missing roles and false healt
     { "sha256sum /system/priv-app/Eliza/Eliza.apk": "wrong" },
     { "getconf PAGESIZE": "16384" },
     { "cmd role get-role-holders android.app.role.ASSISTANT": "" },
-    { health: 'HTTP/1.0 200 OK\r\n\r\n{"status":"unhealthy"}' },
-    { health: "HTTP/1.0 503 Unavailable\r\n\r\n{}" },
+    { health: { status: 200, body: '{"status":"unhealthy"}' } },
+    { health: { status: 503, body: "{}" } },
   ])
     assert.throws(() =>
-      verifyPostBoot(release, bootShell(release, override), "b", "test-token"),
+      verifyPostBoot(
+        release,
+        bootShell(release, override),
+        "b",
+        "test-token",
+        () => override.health ?? healthy(),
+      ),
     );
 });
 
@@ -695,6 +701,7 @@ test("complete fake-transport installation verifies runtime and journals every t
     tools,
     serial: "SERIAL",
     healthToken: "test-token",
+    requestHealth: healthy,
     run: (_tool, args) =>
       args[2] === "wait-for-device" ? "" : bootShell(f.release)(args.slice(3)),
   });
@@ -834,43 +841,35 @@ test("health credentials stay out of argv and errors; readiness must be explicit
   const shell = bootShell(release);
   verifyPostBoot(
     release,
-    (args, options) => {
+    (args) => {
       assert(!args.join(" ").includes("test-token"));
-      if (args[0] === "sh") assert.equal(options.input, "test-token\n");
+
       return shell(args);
     },
     "b",
     "test-token",
+    healthy,
   );
   for (const body of [
     { status: "ready" },
     { ready: false },
     { ready: "true" },
+    {},
   ]) {
     assert.throws(
       () =>
-        verifyPostBoot(
-          release,
-          bootShell(release, {
-            health: `HTTP/1.0 200 OK\r\n\r\n${JSON.stringify(body)}`,
-          }),
-          "b",
-          "test-token",
-        ),
+        verifyPostBoot(release, bootShell(release), "b", "test-token", () => ({
+          status: 200,
+          body: JSON.stringify(body),
+        })),
       /not ready/,
     );
   }
   assert.throws(
     () =>
-      verifyPostBoot(
-        release,
-        (args) => {
-          if (args[0] === "sh") throw new Error("test-token");
-          return shell(args);
-        },
-        "b",
-        "test-token",
-      ),
+      verifyPostBoot(release, shell, "b", "test-token", () => {
+        throw new Error("test-token");
+      }),
     /^Error: authenticated agent health transport failed$/,
   );
 });

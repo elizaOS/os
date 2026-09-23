@@ -149,3 +149,10 @@ over adb stdin, never in command arguments or journals; health must return
 available, omit `--reboot-after-flash`, complete the qualified boot/setup
 procedure, then run the standalone validator with the new credential. Missing
 credentials never count as successful validation. Do not commit this file.
+
+Post-boot health uses the authenticated NDJSON abstract socket
+`eliza_local_agent_v1`, through a temporary serial-bound ADB forward. The
+private token file is passed to the probe over stdin; no device TCP health
+listener is required. A failed probe or forward cleanup is a verification
+failure. See the [Pixel readiness review](../../packages/os/android/docs/pixel11-readiness-2026-09-23.md)
+for the remaining physical qualification gates.

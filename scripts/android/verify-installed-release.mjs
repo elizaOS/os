@@ -9,6 +9,7 @@ import {
   requireThat,
   validateEnvelope,
 } from "./release-contract.mjs";
+import { readAndroidHealth } from "./runtime-health.mjs";
 
 try {
   const o = parseOptions(process.argv.slice(2));
@@ -36,6 +37,7 @@ try {
         checkedRun(tools.adb, ["-s", o.serial, "shell", ...args], options),
       o.slot,
       healthToken,
+      (token) => readAndroidHealth(tools.adb, o.serial, token),
     );
     process.stdout.write(`${JSON.stringify({ subjectSha256, ...result })}\n`);
   } else {
