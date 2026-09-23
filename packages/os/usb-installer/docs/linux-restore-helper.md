@@ -115,7 +115,7 @@ The candidate sequence is deliberately linear:
 4. After another cancellation check and identity validation, create exFAT with
    `/usr/libexec/elizaos-mkfs-exfat-fd` and verify it read-only with
    `/usr/libexec/elizaos-fsck-exfat-fd`. Both proposed helper binaries take
-   **no arguments**, reject missing/non-block FD 4, and duplicate the inherited
+   **no arguments**, reject missing/non-partition FD 4, and duplicate the inherited
    descriptor. They never open a device pathname. The formatter always creates
    label `ELIZAOS-USB`; the checker always uses read-only `-n` semantics.
 5. Sync and revalidate both retained identities before success is possible.
@@ -141,7 +141,9 @@ by the VM lane.
 [exfatprogs 1.2.9, commit 3e87676349387a119cadacd68661d2966796b7fd](https://github.com/exfatprogs/exfatprogs/tree/3e87676349387a119cadacd68661d2966796b7fd).
 It verifies the archive SHA-256 before extraction and applies the checked-in
 `exfatprogs-fd.patch` without fuzz. The patch restricts both entrypoints to fixed
-options and changes device acquisition to `F_DUPFD_CLOEXEC` on FD 4. Build output
+options and changes device acquisition to `F_DUPFD_CLOEXEC` on FD 4. Missing or
+invalid partition offset, device size, or sector geometry fails instead of
+using the upstream regular-file defaults. Build output
 includes the upstream GPL license and binary digests. It installs nothing and
 requires a new output directory. The GPT primitive requires libfdisk >= 2.35
 for its [descriptor API](https://www.kernel.org/pub/linux/utils/util-linux/v2.41/libfdisk-docs/libfdisk-Context.html#fdisk-assign-device-by-fd).

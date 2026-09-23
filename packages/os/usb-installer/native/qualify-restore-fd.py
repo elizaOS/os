@@ -159,6 +159,12 @@ def main():
             override = subprocess.run([tool, "/dev/vdc"], pass_fds=(partition,),
                                       stdin=subprocess.DEVNULL, capture_output=True, timeout=15)
             require(override.returncode == 2, "helper accepted a caller pathname")
+            whole = subprocess.run(
+                ["/usr/bin/python3", "-c",
+                 "import os,sys; os.dup2(3,4); os.execve(sys.argv[1],[sys.argv[1]],{'LANG':'C','LC_ALL':'C','PATH':'/nonexistent'})",
+                 tool], pass_fds=(target,), stdin=subprocess.DEVNULL,
+                capture_output=True, timeout=15)
+            require(whole.returncode != 0, "exFAT helper accepted a whole disk")
         require(digest(target, expected.size_bytes) == guard_before,
                 "rejected helper invocation wrote the disk")
         command([formatter], partition)
@@ -176,7 +182,7 @@ def main():
             "kernel": os.uname().release, "sectorBytes": sector,
             "identity": {name: getattr(expected, name) for name, _ in Identity._fields_},
             "identityRefusals": refused, "corruptionRefusals": corruptions,
-            "helperRefusals": ["missing FD", "caller pathname"],
+            "helperRefusals": ["missing FD", "caller pathname", "whole disk"],
             "readOnlyFdRefused": True,
             "canarySha256Before": canary_before, "canarySha256After": canary_after,
             "exfatVerification": verification,
