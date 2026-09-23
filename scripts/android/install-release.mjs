@@ -277,6 +277,7 @@ export function waitUntil(check, timeoutMs) {
 
 export function executePlan({
   release,
+  state,
   plan,
   reader,
   stage,
@@ -295,9 +296,30 @@ export function executePlan({
     fs.fsyncSync(journal);
   };
   try {
+    requireThat(
+      state &&
+        release.startingStates.some((s) => canonical(s) === canonical(state)),
+      "execution requires a qualified starting state",
+    );
+    let activeSlot = state.currentSlot;
+    const checkState = () => {
+      requireThat(
+        reader.get("current-slot") === activeSlot,
+        "active slot changed during installation",
+      );
+      requireThat(
+        reader.get("version-bootloader") === state.bootloader,
+        "bootloader changed during installation",
+      );
+      requireThat(
+        reader.get("version-baseband") === state.baseband,
+        "baseband changed during installation",
+      );
+    };
     for (const [index, step] of plan.entries()) {
       // No action on a device whose identity/mode or snapshot state changed.
       reader.mode(step.mode, release);
+      checkState();
       requireThat(
         hashFile(tools.fastboot).sha256 === release.tools.fastboot.sha256,
         "fastboot changed during installation",
@@ -308,15 +330,26 @@ export function executePlan({
           stage,
           release.files.find((f) => f.filename === step.file),
         );
+      if (step.args[0].startsWith("--set-active="))
+        requireThat(
+          step.args[0] === `--set-active=${state.targetSlot}`,
+          "activation conflicts with qualified target slot",
+        );
       record({ event: "begin", index, args });
       const output = reader.fb(args, {
         timeoutMs: release.validation.flashTimeoutSeconds * 1000,
       });
       record({ event: "command-complete", index, output });
+      if (step.args[0].startsWith("--set-active=")) {
+        activeSlot = state.targetSlot;
+        checkState();
+        record({ event: "active-slot-verified", slot: activeSlot });
+      }
       if (step.transition && step.transition !== "adb") {
         // Fastboot reconnect is bounded by each command's timeout; wrong or
         // missing state fails closed. Operators may retry after inspection.
         waitUntil(() => reader.mode(step.transition, release), 30000);
+        checkState();
       }
     }
     if (plan.at(-1)?.transition === "adb") {
@@ -444,6 +477,7 @@ export function main(argv = process.argv.slice(2)) {
         beforeWrites();
         executePlan({
           release,
+          state,
           plan,
           reader,
           stage,

@@ -370,6 +370,26 @@ test("signed metadata and firmware requirements cannot be bypassed", (t) => {
   assert.throws(() => verifyInstallFiles(f.release, f.directory), /integrity/);
 });
 
+test("signed physical qualification cannot omit recovery and kernel pairing evidence", (t) => {
+  for (const check of [
+    "encrypted-recovery",
+    "recovery-after-ota-slot",
+    "kernel-vendor-module-pair",
+  ]) {
+    for (const result of [undefined, "fail", "skipped"]) {
+      const f = fixture(t);
+      if (result === undefined)
+        delete f.envelope.qualification.cases[0].checks[check];
+      else f.envelope.qualification.cases[0].checks[check] = result;
+      f.resign();
+      assert.throws(
+        () => validateEnvelope(f.envelope, f.policy),
+        /qualification incomplete/,
+      );
+    }
+  }
+});
+
 test("publication rejects unsigned, revoked, ineligible, mislabeled and orphan archives", (t) => {
   const f = fixture(t, false);
   const args = {
@@ -518,18 +538,28 @@ test("failure at every flash-plan command stops subsequent writes, activation an
     const journalPath = path.join(f.directory, `journal-${failure}`);
     const journal = fs.openSync(journalPath, "wx");
     const calls = [];
+    let activeSlot = "a";
     try {
       assert.throws(
         () =>
           executePlan({
             release: f.release,
+            state: f.release.startingStates[0],
             plan: tasks,
             reader: {
               mode() {},
+              get(key) {
+                return {
+                  "current-slot": activeSlot,
+                  "version-bootloader": "bl1",
+                  "version-baseband": "radio1",
+                }[key];
+              },
               fb(args) {
                 calls.push(args);
                 if (calls.length === failure + 1)
                   throw new Error("USB disconnected");
+                if (args[0].startsWith("--set-active=")) activeSlot = "b";
                 return "OKAY";
               },
             },
@@ -558,6 +588,88 @@ test("failure at every flash-plan command stops subsequent writes, activation an
   }
 });
 
+test("firmware and slot drift after reconnect stop writes; ignored activation cannot succeed", (t) => {
+  for (const fault of [
+    "slot",
+    "bootloader",
+    "baseband",
+    "missing-slot",
+    "activation",
+  ]) {
+    const f = fixture(t);
+    const tool = path.join(f.directory, "fastboot");
+    fs.writeFileSync(tool, "tool fixture");
+    f.release.tools.fastboot.sha256 = hashFile(tool).sha256;
+    const journalPath = path.join(f.directory, "transition-journal");
+    const journal = fs.openSync(journalPath, "wx");
+    const vars = {
+      "current-slot": "a",
+      "version-bootloader": "bl1",
+      "version-baseband": "radio1",
+    };
+    let mode = "bootloader";
+    const calls = [];
+    const reader = {
+      get(key) {
+        return vars[key];
+      },
+      mode(expected) {
+        assert.equal(mode, expected);
+      },
+      fb(args) {
+        calls.push(args);
+        if (args[0] === "reboot" && args[1] === "fastboot") {
+          mode = "fastbootd";
+          if (fault === "slot") vars["current-slot"] = "b";
+          if (fault === "missing-slot") delete vars["current-slot"];
+          if (fault === "bootloader") vars["version-bootloader"] = "different";
+          if (fault === "baseband") vars["version-baseband"] = "different";
+        } else if (args[0] === "reboot" && args[1] === "bootloader")
+          mode = "bootloader";
+        // Simulate fastboot reporting OKAY without changing the active slot.
+        return "OKAY";
+      },
+    };
+    try {
+      assert.throws(
+        () =>
+          executePlan({
+            release: f.release,
+            state: f.release.startingStates[0],
+            plan: compilePlan(f.release, plan, f.release.startingStates[0], {
+              reboot: true,
+            }),
+            reader,
+            stage: f.directory,
+            journal,
+            tools: { fastboot: tool },
+            serial: "SERIAL",
+          }),
+        /changed during installation/,
+      );
+    } finally {
+      fs.closeSync(journal);
+    }
+    assert.deepEqual(
+      calls.at(-1),
+      fault === "activation" ? ["--set-active=b"] : ["reboot", "fastboot"],
+    );
+    const events = fs
+      .readFileSync(journalPath, "utf8")
+      .trim()
+      .split("\n")
+      .map(JSON.parse);
+    assert.equal(events.at(-1).event, "failed");
+    assert(
+      !events.some(
+        (e) =>
+          e.event.startsWith("installed-") ||
+          e.event === "active-slot-verified",
+      ),
+    );
+  }
+});
+
 test("changed image/tool and wrong mode fail before any write", (t) => {
   for (const reason of ["image", "tool", "mode"]) {
     const f = fixture(t);
@@ -571,6 +683,13 @@ test("changed image/tool and wrong mode fail before any write", (t) => {
       fs.appendFileSync(path.join(f.directory, "boot.img"), "changed");
     if (reason === "tool") fs.appendFileSync(tool, "changed");
     const reader = {
+      get(key) {
+        return {
+          "current-slot": "a",
+          "version-bootloader": "bl1",
+          "version-baseband": "radio1",
+        }[key];
+      },
       mode() {
         if (reason === "mode") throw new Error("wrong mode");
       },
@@ -581,6 +700,7 @@ test("changed image/tool and wrong mode fail before any write", (t) => {
     assert.throws(() =>
       executePlan({
         release: f.release,
+        state: f.release.startingStates[0],
         plan: compilePlan(f.release, plan, f.release.startingStates[0]),
         reader,
         stage: f.directory,
@@ -685,13 +805,22 @@ test("complete fake-transport installation verifies runtime and journals every t
     f.release.tools[name].sha256 = hashFile(tools[name]).sha256;
   }
   let mode = "bootloader";
+  let activeSlot = "a";
   const calls = [];
   const reader = {
+    get(key) {
+      return {
+        "current-slot": activeSlot,
+        "version-bootloader": "bl1",
+        "version-baseband": "radio1",
+      }[key];
+    },
     mode(expected) {
       assert.equal(mode, expected);
     },
     fb(args) {
       calls.push(args);
+      if (args[0].startsWith("--set-active=")) activeSlot = "b";
       if (args[0] === "reboot")
         mode =
           args[1] === "fastboot"
@@ -707,6 +836,7 @@ test("complete fake-transport installation verifies runtime and journals every t
   t.after(() => fs.closeSync(journal));
   executePlan({
     release: f.release,
+    state: f.release.startingStates[0],
     plan: compilePlan(f.release, plan, f.release.startingStates[0], {
       reboot: true,
     }),

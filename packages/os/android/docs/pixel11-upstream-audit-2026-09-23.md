@@ -150,6 +150,39 @@ verification before entering any device-write phase.
 
 ### Follow-up qualification work
 
+Implementation follow-up inspected the actual Espada v2 Magisk ZIP without
+executing its scripts. Its SHA-256 matched GitHub's asset metadata:
+`8d7e1701123060c5a0d6662d27eae020f94aa54db19e967a31d66af06f269cfa`.
+The archive contains paired 64 MiB boot/vendor-kernel images. Its `anykernel.sh`
+continues after failed backups, verifies vendor-kernel input only after writing
+boot, and retains August/A9 comments despite the September release. Do not
+adopt that script as our safe installer. Its AVB-footer/KeyMint explanation is
+an important hypothesis to verify against actual image metadata and encrypted
+hardware boot; it is not a diagnosis of our incidents.
+
+Read-only inspection with the local AOSP `avbtool` found the boot image's AVB
+properties identify Android 17, patch `2026-09-01`, B1 fingerprint and rollback
+index `1788220800`. The vendor-kernel image also names B1 but has AVB algorithm
+`NONE`; this does not independently establish its trust chain. The executable
+AK3 setting `supported.patchlevels=- 2026-09` is an upper-bound range, not an
+exact September firmware check: its parser uses `0000-00` as the lower bound.
+Thus the downloaded script does not substantiate the release notes' assertion
+that older firmware is refused. Preserve our exact bootloader/baseband checks.
+
+The inspected `espada` source head was
+`3e7ca981eb24cdaa5874f613f92cf39eafafe12b`; `espada-magisk` was
+`bd5c0c1aaf29fa140b53556cc653f03dcca7f1a3`. The README still describes A9
+and a general Kleaf build rather than a complete September ROM manifest.
+No reproducible mapping from these branch heads to the downloaded image pair
+was established. The existing stock-kernel pin therefore remains unchanged.
+
+Implemented host safeguards now recheck current slot and firmware throughout
+execution and after reconnect, and verify activation before success/reboot.
+Signed production qualification additionally requires `encrypted-recovery`,
+`recovery-after-ota-slot` and `kernel-vendor-module-pair`. These requirements
+capture the newly identified boundaries; they do not claim the tests have run
+on physical hardware or add an OTA/recovery adapter.
+
 1. Inspect Espada's September source manifest, kernel/module coupling and patch
    level guard against our complete grizzly inputs. Build an isolated candidate;
    do not update firmware/source pins piecemeal.

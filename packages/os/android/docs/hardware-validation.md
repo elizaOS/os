@@ -45,11 +45,11 @@ Gemma artifact is unavailable.
 
 `grizzly` is pinned in `pixel11pro.lock.json` to Android 17 r1, stock build
 `CD1A.260714.001.A9`, exact `adevtool` and `vendor_state` commits, and the stock
-kernel extraction path. The connected lab phone reports the same A9 build and
-bootloader after its stock update, so that exact factory image is also the
-rollback source. Do not downgrade to the phone's earlier C2 build after the A9
-bootloader has run. Do not unlock or flash until the A9 archive verifies and
-the A9-derived elizaOS images are retained.
+kernel extraction path. Earlier lab notes reported an A9 phone after a stock
+update; that historical observation is not the current phone's identity or
+downgrade authorization. Recollect its product, firmware and slot state before
+choosing a recovery image. Do not downgrade the earlier phone to C2 after its
+A9 bootloader has run. Archive verification alone does not authorize flashing.
 
 Generate and verify the device layer before building:
 
@@ -59,8 +59,10 @@ node scripts/distro-android/prepare-grizzly.mjs \
   --lock packages/os/android/pixel11pro.lock.json
 ```
 
-This is generated device support, not a claim that Google published the
-missing device tree or `spacecraft` kernel source. Promotion additionally
+This is generated device support, not a complete qualification of the device
+tree. Newer community kernels and September sources are reviewed in the
+[upstream audit](pixel11-upstream-audit-2026-09-23.md); they do not change this
+candidate's pinned stock-kernel baseline. Promotion additionally
 requires an exact-build compile, bootloader/slot capture, stock rollback drill,
 and every physical validation item below.
 
@@ -117,6 +119,20 @@ Before requesting independently signed v2 qualification, retain all of:
 - HOME/assistant launch, local health/chat/inference, logcat, and SELinux denial
   review, including a deliberate failure canary;
 - verified boot, recovery, OTA, both-slot boot, and rollback results.
+
+The signed physical check set also requires these explicit results:
+
+| Check | Evidence required |
+| --- | --- |
+| `encrypted-recovery` | Access to encrypted userdata after normal boot and recovery, on the exact firmware and lock credential configuration; actual restore verification if backup/restore is offered. Preserve the factory encryption contract. |
+| `recovery-after-ota-slot` | Retain slot identity before OTA, after switching slots and after restarting recovery. Prove subsequent operations target the intended slot, including stale/missing slot-probe rejection. The current installer does not implement OTA or recovery sideload. |
+| `kernel-vendor-module-pair` | Bind kernel, boot/vendor-kernel images, module load lists, vendor drivers, firmware and security patch level to one tested build. Reject mixed artifacts and verify module loading and camera/radio operation on hardware. |
+
+Also retain clean-install and update results separately for Wi-Fi, mobile data,
+camera and optional packages. A recovery logo, successful patcher exit or
+network-connected icon does not satisfy these checks. Preparation must complete
+artifact hashes and staging-space checks before writes. Factory archive hashing
+is streamed; no memory-exhaustion fallback may skip verification.
 
 A legacy `lab-validated` label cannot authorize installation. The installer
 requires signed v2 qualification, reviewed target eligibility, current trust
