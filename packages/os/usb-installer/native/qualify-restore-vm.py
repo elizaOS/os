@@ -20,8 +20,8 @@ import sys
 import uuid
 import zlib
 
-IMAGE_URL = "https://cloud.debian.org/images/cloud/trixie/20260914-2601/debian-13-genericcloud-amd64-20260914-2601.qcow2"
-IMAGE_SHA512 = "95e110dfcdbd0ed8a82a75ed9579802f9950cabf51a810dcc6388e81bc778188713878b9f28d583a0ea602fbf48b35996ae9ad37f584166d8fbd6489df248f53"
+IMAGE_URL = "https://cloud.debian.org/images/cloud/trixie/20260914-2601/debian-13-generic-amd64-20260914-2601.qcow2"
+IMAGE_SHA512 = "a733e7d49442a03e70d03e4eb5aaf3967f3efc69ef70952f9bb10fc1ee2c4876eb95956b5ad2d31350e5fada768feb651352535fb8cd1233f61998a5a7d2e93c"
 SOURCE_URL = "https://codeload.github.com/exfatprogs/exfatprogs/tar.gz/3e87676349387a119cadacd68661d2966796b7fd"
 SOURCE_SHA256 = "2c342bb1a4a9fb5ace61020bb6fae1784cb48e98577b18e271691d9de85fa337"
 NATIVE = Path(__file__).resolve().parent
@@ -36,14 +36,14 @@ def file_hash(path, algorithm="sha256"):
     return result.hexdigest()
 
 
-def inspect_target(output, sector_size):
+def inspect_target(output, sector_size, disk="target.raw"):
     # fdisk supports explicit regular-file sector size on older hosts too;
     # sfdisk's --sector-size option is not available on Ubuntu 24.04.
     inspection = subprocess.check_output(
-        ["fdisk", "-b", str(sector_size), "-l", str(output / "target.raw")],
+        ["fdisk", "-b", str(sector_size), "-l", str(output / disk)],
         text=True, timeout=15)
-    (output / "partition-map.log").write_text(inspection)
-    with (output / "target.raw").open("rb") as stream:
+    (output / ("partition-map.log" if disk == "target.raw" else "helper-partition-map.log")).write_text(inspection)
+    with (output / disk).open("rb") as stream:
         stream.seek(sector_size)
         header = bytearray(stream.read(sector_size))
         stored_crc = struct.unpack_from("<I", header, 16)[0]
@@ -160,9 +160,9 @@ def run_vm(qemu, output):
             while process.poll() is None:
                 if time.monotonic() >= deadline:
                     raise RuntimeError("qualification VM timed out")
-                guest_log = output / "guest.log"
-                if removal is None and guest_log.exists():
-                    transcript = guest_log.read_text(errors="replace")
+                proof_log = output / "proof.log"
+                if removal is None and proof_log.exists():
+                    transcript = proof_log.read_text(errors="replace")
                     if "ELIZAOS_RESTORE_READY_FOR_REMOVAL" in transcript.splitlines():
                         target_before = file_hash(output / "target.raw")
                         control = Qmp(output / "qmp.sock", qmp_log)
@@ -213,7 +213,8 @@ def main():
     sources = {name: (NATIVE / name).read_bytes() for name in (
         "restore-gpt-fd.c", "restore-gpt-fd.h", "exfatprogs-fd.patch",
         "restore-tool-runner.c", "restore-tool-runner.h", "restore-tool-runner.test.c",
-        "build-exfat-fd.sh", "qualify-restore-fd.py",
+        "build-exfat-fd.sh", "qualify-restore-fd.py", "qualify-restore-helper.py",
+        "linux-restore-helper.c", "linux-restore-helper.qualify.c",
     )}
     data = """#cloud-config
 hostname: elizaos-restore-qualification
@@ -226,16 +227,25 @@ write_files:
                  f"    content: {base64.b64encode(content).decode()}\n")
     guest_script = """#!/bin/sh
 set -eu
+# Keep structured evidence off the kernel/getty console.
+stty -F /dev/ttyS1 raw -echo 115200
 bash /root/build-exfat-fd.sh /root/exfat.tar.gz /root/exfat-tools
 install -m 0755 /root/exfat-tools/elizaos-mkfs-exfat-fd /root/exfat-tools/elizaos-fsck-exfat-fd /usr/libexec/
 cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 -shared -fPIC /root/restore-gpt-fd.c /root/restore-tool-runner.c -lfdisk -o /root/restore-gpt-fd.so
 cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 /root/restore-tool-runner.test.c -o /root/restore-tool-runner-test
 /root/restore-tool-runner-test
+cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 /root/linux-restore-helper.c -o /usr/libexec/elizaos-restore-helper-test
+cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 -shared -fPIC /root/linux-restore-helper.qualify.c -o /root/linux-restore-helper-qualification.so
+helper_status=0
+strace -f -e trace=openat,fcntl,ioctl,fsync -o /root/helper.trace python3 /root/qualify-restore-helper.py --disposable-vm --sector-size SECTOR_BYTES > /dev/ttyS1 || helper_status=$?
+cat /root/helper.trace
+if [ "$helper_status" != 0 ]; then exit "$helper_status"; fi
 status=0
-strace -f -e trace=openat,fcntl,ioctl -o /root/restore.trace python3 /root/qualify-restore-fd.py --disposable-vm --library /root/restore-gpt-fd.so --tools /root/exfat-tools || status=$?
+strace -f -e trace=openat,fcntl,ioctl -o /root/restore.trace python3 /root/qualify-restore-fd.py --disposable-vm --library /root/restore-gpt-fd.so --tools /root/exfat-tools > /dev/ttyS1 || status=$?
 cat /root/restore.trace
 exit "$status"
 """
+    guest_script = guest_script.replace("SECTOR_BYTES", str(args.sector_size))
     data += ("  - path: /root/run-qualification.sh\n    permissions: '0700'\n    encoding: b64\n"
              f"    content: {base64.b64encode(guest_script.encode()).decode()}\n")
     data += "runcmd:\n  - [sh, -c, '/root/run-qualification.sh > /dev/ttyS0 2>&1']\n  - [poweroff]\n"
@@ -245,7 +255,7 @@ exit "$status"
                 str(output / "guest.qcow2"), "8G"])
     image_tool(["genisoimage", "-quiet", "-output", str(output / "seed.iso"),
                 "-volid", "cidata", "-joliet", "-rock", "user-data", "meta-data"])
-    for disk in ("target.raw", "canary.raw"):
+    for disk in ("target.raw", "canary.raw", "helper-usb.raw"):
         with (output / disk).open("xb") as stream:
             stream.truncate(SIZE)
     before = file_hash(output / "canary.raw")
@@ -253,7 +263,8 @@ exit "$status"
             "-cpu", "host" if args.accelerator == "kvm" else "max",
             "-m", "2048", "-smp", "2", "-display", "none", "-monitor", "none",
             "-qmp", "unix:qmp.sock,server=on,wait=off",
-            "-serial", f"file:{output / 'guest.log'}", "-no-reboot", "-boot", "order=c",
+            "-serial", f"file:{output / 'guest.log'}",
+            "-serial", f"file:{output / 'proof.log'}", "-no-reboot", "-boot", "order=c",
             "-drive", "file=guest.qcow2,if=none,id=os,format=qcow2",
             "-device", "virtio-blk-pci,drive=os,bootindex=1",
             "-drive", "file=target.raw,if=none,id=restore,format=raw",
@@ -261,15 +272,31 @@ exit "$status"
                         f"logical_block_size={args.sector_size},physical_block_size={args.sector_size}"),
             "-drive", "file=canary.raw,if=none,id=canary,format=raw",
             "-device", "virtio-blk-pci,drive=canary,serial=ELIZAOS-CANARY",
+            "-device", "qemu-xhci,id=helper-xhci",
+            "-drive", "file=helper-usb.raw,if=none,id=helper-usb,format=raw",
+            "-device", "usb-uas,id=helper-uas,bus=helper-xhci.0,serial=ELIZAOS-HELPER-TEST",
+            "-device", ("scsi-hd,bus=helper-uas.0,drive=helper-usb,removable=on,"
+                        "serial=ELIZAOS-HELPER-TEST,"
+                        f"logical_block_size={args.sector_size},physical_block_size={args.sector_size}"),
             "-drive", "file=seed.iso,media=cdrom,readonly=on", "-netdev", "user,id=n0",
             "-device", "virtio-net-pci,netdev=n0"]
     print(f"Booting isolated {args.sector_size}-byte sector qualification VM: {output}", flush=True)
     removal = run_vm(qemu, output)
-    transcript = (output / "guest.log").read_text(errors="replace")
+    transcript = (output / "proof.log").read_text(errors="strict")
     reports = [json.loads(line.split("ELIZAOS_RESTORE_FD_REPORT ", 1)[1])
                for line in transcript.splitlines() if line.startswith("ELIZAOS_RESTORE_FD_REPORT ")]
     if len(reports) != 1 or reports[0].get("status") != "pass":
         raise RuntimeError(f"guest did not qualify: {reports}; inspect {output / 'guest.log'}")
+    helper_reports = [json.loads(line.split("ELIZAOS_RESTORE_HELPER_REPORT ", 1)[1])
+                      for line in transcript.splitlines() if line.startswith("ELIZAOS_RESTORE_HELPER_REPORT ")]
+    if len(helper_reports) != 1 or helper_reports[0].get("status") != "pass":
+        raise RuntimeError(f"native helper did not qualify: {helper_reports}")
+    helper_report = helper_reports[0]
+    if (helper_report["sectorBytes"] != args.sector_size or
+            helper_report["gateSha256Before"] != helper_report["gateSha256After"] or
+            helper_report["finalUsbSha256"] != file_hash(output / "helper-usb.raw")):
+        raise RuntimeError("native helper USB digest mismatch")
+    helper_parts = inspect_target(output, args.sector_size, "helper-usb.raw")
     after = file_hash(output / "canary.raw")
     if before != after or reports[0].get("sectorBytes") != args.sector_size:
         raise RuntimeError("host canary digest or sector geometry mismatch")
@@ -280,10 +307,12 @@ exit "$status"
         raise RuntimeError("host runner changed during qualification")
     result = {"deviceRemoval": removal, "hostRunnerSha256": host_runner_sha256,
               "guest": reports[0], "partitions": parts,
+              "nativeHelper": helper_report, "helperPartitions": helper_parts,
               "canarySha256Before": before, "canarySha256After": after,
               "imageSha512": IMAGE_SHA512, "exfatSourceSha256": SOURCE_SHA256,
               "sourceSha256": {name: hashlib.sha256(content).hexdigest() for name, content in sources.items()},
-              "transcriptSha256": file_hash(output / "guest.log"), "qemuCommand": qemu}
+              "transcriptSha256": file_hash(output / "guest.log"),
+              "proofSha256": file_hash(output / "proof.log"), "qemuCommand": qemu}
     (output / "qualification.json").write_text(json.dumps(result, indent=2) + "\n")
     print(f"PASS: {output / 'qualification.json'}", flush=True)
 
