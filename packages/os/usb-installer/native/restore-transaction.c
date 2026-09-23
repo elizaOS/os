@@ -8,6 +8,8 @@
 
 static int guard(const struct elizaos_restore_transaction *transaction,
                  int partition) {
+  const int authorization = transaction->check_authorization(transaction->context);
+  if (authorization != 0) return authorization < 0 ? authorization : -EACCES;
   if (!transaction->validate(transaction->context, transaction->whole_fd,
                               partition)) return -ESTALE;
   return transaction->cancelled(transaction->context) ? -ECANCELED : 0;
@@ -29,7 +31,8 @@ int elizaos_restore_execute(const struct elizaos_restore_transaction *transactio
   result->last_completed = ELIZAOS_RESTORE_NOT_STARTED;
   result->media = ELIZAOS_RESTORE_UNTOUCHED;
   if (transaction == NULL || transaction->whole_fd < 0 ||
-      transaction->consume == NULL || transaction->open_partition == NULL ||
+      transaction->check_authorization == NULL || transaction->consume == NULL ||
+      transaction->open_partition == NULL ||
       transaction->validate == NULL || transaction->cancelled == NULL) {
     result->error = -EINVAL;
     return result->error;

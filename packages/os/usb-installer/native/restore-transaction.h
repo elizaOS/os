@@ -35,6 +35,7 @@ struct elizaos_restore_result {
 /* Trusted in-process bindings, never an IPC or user-selected callback surface.
  * Caller has already authenticated the exact boot-bound request, retained its
  * root-owned authorization directory and exclusively opened whole-device FD.
+ * check_authorization must return 0 or negative errno at every boundary.
  * consume must durably create its single-use marker (0 or negative errno).
  * open_partition returns a new owned FD bound to partition 1 and the fixed GPT
  * extent. validate must recheck both held identities (partition == -1 until
@@ -43,11 +44,13 @@ struct elizaos_restore_result {
  * between bounded operations, never by racing an in-flight write or child.
  * The caller keeps the target claim until all work and child cleanup settles.
  * This candidate is exercised in isolated VMs, not linked into the shipped
- * disabled helper. It does not supply broker authorization or expiry policy. */
+ * disabled helper. The trusted helper supplies the expiry check; initiating
+ * local-user authentication and broker policy remain separate requirements. */
 struct elizaos_restore_transaction {
   int whole_fd;
   struct elizaos_restore_identity identity;
   void *context;
+  int (*check_authorization)(void *context);
   int (*consume)(void *context);
   int (*open_partition)(void *context, int whole_fd);
   bool (*validate)(void *context, int whole_fd, int partition_fd);

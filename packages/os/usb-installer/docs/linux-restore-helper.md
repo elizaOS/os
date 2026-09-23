@@ -28,10 +28,32 @@ The native helper:
 including the exact lowercase kernel boot ID read from
 `/proc/sys/kernel/random/boot_id`. It is not authentication. A future
 privileged broker must authorize that exact
-binding in a root-owned, mode-0600, single-link regular file at
+binding and boot-clock validity interval in a root-owned, mode-0600, single-link regular file at
 `/run/elizaos-usb-restore/authorized/<plan-id>`. Both `authorized/` and
 `consumed/`, and their parent, must already be root-owned directories with no
 group or other write bits. The helper never creates this trust root.
+
+The private authorization file has exactly four newline-terminated lines:
+`ELIZAOS_RESTORE_AUTHORIZATION_V1`, the 64-character plan binding, the issuance
+instant and the expiry instant as canonical nonzero decimal nanoseconds on
+Linux `CLOCK_BOOTTIME`. Its validity interval must be positive and at most five
+minutes; issuance must not be in the future and expiry must be strictly after
+the current clock reading. There is no compatibility fallback to the old bare
+binding file. Missing, malformed, overflowed or noncanonical fields fail closed.
+The timestamps come only from the trusted root-owned file, never request JSON
+or wire fields. A broker must set issuance to the current boot clock after
+local-user approval and must not renew or reissue the same plan ID.
+
+[CLOCK_BOOTTIME](https://man7.org/linux/man-pages/man3/clock_gettime.3.html)
+includes suspend time without depending on wall-clock changes. Clock-read
+failures also reject authorization. The helper rechecks the captured deadline
+immediately before marker creation, and the transaction's required trusted
+authorization check runs between operations. Expiry never races or rolls back
+an in-flight write: it stops subsequent operations after bounded work settles.
+Before consumption, expiry leaves media untouched; after consumption is
+attempted, the result is incomplete and the consumed marker remains. This
+implements the native deadline boundary, not local-user authentication,
+revocation, a credential verifier, or a production broker.
 
 The authorization and replay ledger are deliberately boot-scoped under `/run`.
 The helper rejects a correctly digest-bound request when its boot ID differs
@@ -354,7 +376,7 @@ use aligned direct reads to avoid stale cache aliases after partition writes. Ke
 bounded EBUSY response from partition-map ioctls while transient probes finish;
 the native transaction and disk writes are never retried by the test harness.
 These are process-level cancellation and failure tests, not power-loss proof.
-Production broker expiry/credentials, packaging/policy and physical-media
+Production broker credentials/revocation, packaging/policy and physical-media
 qualification remain required before activation.
 
 
@@ -388,3 +410,12 @@ This proves USB removal between native transaction operations in the emulated
 controller. It does not prove physical electrical unplug, removal during an
 in-flight write, power-loss durability, authorization policy or production
 readiness. The shipped helper and application capability remain disabled.
+
+
+Expiry qualification covers legacy unbounded files, zero/noncanonical/overflowed
+timestamps, expired and future intervals, reversed intervals and grants longer
+than five minutes. The VM also lets real boot-clock deadlines elapse at the
+authorized and plan-consumed checkpoints. Both must return authorization expiry,
+run no GPT write, preserve the complete target digest, and refuse reuse; only
+the latter may have a consumed marker. Existing cancellation, replay, complete
+restore and transaction-removal proofs remain required.
