@@ -1,7 +1,8 @@
 # Linux Restore privileged-helper foundation
 
 Linux Restore is **not available** in the application. This package contains a
-native identity-retention gate, separate retained-FD GPT/exFAT primitives, and
+native identity-retention gate, separate retained-FD GPT/exFAT primitives, a
+fixed-tool process runner, and
 an executable TypeScript safety model. The primitives are exercised in disposable
 VMs and are not linked into the shipped helper or exposed by the application.
 
@@ -170,5 +171,53 @@ disk images stay outside source control.
 
 This proves the tested native operations and name replacement behavior, not
 physical USB unplug behavior or production restore. The authorization broker,
-bounded child supervision, cancellation/failure checkpoint matrix, packaging,
+production integration of the qualified child runner, the cancellation/failure
+checkpoint matrix, packaging,
 and physical-media qualification above remain required before enabling restore.
+
+
+## Fixed-tool native process runner
+
+`native/restore-tool-runner.c` implements the three fixed child shapes above.
+Its public API accepts only a tool enum, the already-validated partition FD (or
+`-1` for udev settle), and a result record. It accepts no executable pathname,
+argv, environment, or adjustable limits. Executable ownership, hashes and
+packaging remain the responsibility of the future trusted helper deployment.
+The runner is not linked into the shipped helper.
+
+The child receives `/dev/null` as stdin, separate stdout/stderr pipes, and only
+partition FD 4 when appropriate. It closes every other inherited descriptor,
+resets signal dispositions and the signal mask, uses the fixed environment,
+and executes the absolute executable without a shell. The caller's descriptor
+is duplicated before pipe allocation so a closed descriptor cannot accidentally
+refer to one of the runner's own pipes. A separate close-on-exec error pipe
+distinguishes execution/setup failure from the utility's own nonzero status.
+
+The parent drains both output pipes fairly, discards their content, and counts
+bytes independently. Neither stream may exceed 256 KiB. Output is diagnostic
+utility text, not a trusted progress protocol. A monotonic 15-second deadline,
+output overflow, I/O failure, signal, or nonzero exit produces failure. The
+runner creates a child process group, kills remaining group members after the
+leader exits, and retains the leader unreaped until cleanup to prevent PID
+reuse. It rejects non-default `SIGCHLD` disposition or `SA_NOCLDWAIT`; the future
+helper must remain single-threaded with no competing child reaper.
+
+The deadline triggers `SIGKILL`; the runner then waits for the leader to be
+reaped before returning. Uninterruptible kernel I/O may delay that wait. The
+caller must retain its physical-target lock throughout it. Cancellation remains
+checked before and after each tool, as specified above, and must never translate
+partial mutation into success or a claimed rollback. Process-group cleanup
+covers the fixed trusted utilities; it is not a sandbox for arbitrary programs
+that deliberately escape their group. A complete progress/cancellation protocol,
+broker integration, and power-loss recovery remain unfinished.
+
+`native/restore-tool-runner.test.c` executes harmless fixtures with no block
+devices. It checks descriptor and environment isolation, stdin EOF, exact-limit
+output on both streams, independent floods, hangs with open and closed pipes,
+signals, nonzero exit, missing executables, invalid descriptors, invalid API
+selectors, incompatible reaping policy, and descendant cleanup. CI runs it
+unprivileged and again inside the disposable guest. Both sector-size VM lanes
+also call the native runner for real udev settle, formatting and read-only
+checking, then retain independent filesystem inspection and unchanged-canary
+proof. The generic fixture entrypoint is private to the test translation unit;
+it is not part of the public runtime API.
