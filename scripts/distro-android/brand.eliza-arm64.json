@@ -16,5 +16,11 @@
   "initRcName": "init.eliza.rc",
   "commonMakefile": "eliza_common.mk",
   "cuttlefishMakefile": "eliza_cf_arm64_phone.mk",
-  "buildAndroidSystemCmd": ["bun", "run", "build:android:system"]
+  "buildAndroidSystemCmd": [
+    "bun",
+    "run",
+    "--cwd",
+    "packages/app",
+    "build:android:system"
+  ]
 }
