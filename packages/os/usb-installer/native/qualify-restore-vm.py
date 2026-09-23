@@ -160,9 +160,9 @@ def run_vm(qemu, output):
             while process.poll() is None:
                 if time.monotonic() >= deadline:
                     raise RuntimeError("qualification VM timed out")
-                guest_log = output / "guest.log"
-                if removal is None and guest_log.exists():
-                    transcript = guest_log.read_text(errors="replace")
+                proof_log = output / "proof.log"
+                if removal is None and proof_log.exists():
+                    transcript = proof_log.read_text(errors="replace")
                     if "ELIZAOS_RESTORE_READY_FOR_REMOVAL" in transcript.splitlines():
                         target_before = file_hash(output / "target.raw")
                         control = Qmp(output / "qmp.sock", qmp_log)
@@ -227,6 +227,8 @@ write_files:
                  f"    content: {base64.b64encode(content).decode()}\n")
     guest_script = """#!/bin/sh
 set -eu
+# Keep structured evidence off the kernel/getty console.
+stty -F /dev/ttyS1 raw -echo 115200
 bash /root/build-exfat-fd.sh /root/exfat.tar.gz /root/exfat-tools
 install -m 0755 /root/exfat-tools/elizaos-mkfs-exfat-fd /root/exfat-tools/elizaos-fsck-exfat-fd /usr/libexec/
 cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 -shared -fPIC /root/restore-gpt-fd.c /root/restore-tool-runner.c -lfdisk -o /root/restore-gpt-fd.so
@@ -235,11 +237,11 @@ cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 /root/res
 cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 /root/linux-restore-helper.c -o /usr/libexec/elizaos-restore-helper-test
 cc -std=c17 -O2 -Wall -Wextra -Werror -Wconversion -Wshadow -Wformat=2 -shared -fPIC /root/linux-restore-helper.qualify.c -o /root/linux-restore-helper-qualification.so
 helper_status=0
-strace -f -e trace=openat,fcntl,ioctl,fsync -o /root/helper.trace python3 /root/qualify-restore-helper.py --disposable-vm --sector-size SECTOR_BYTES || helper_status=$?
+strace -f -e trace=openat,fcntl,ioctl,fsync -o /root/helper.trace python3 /root/qualify-restore-helper.py --disposable-vm --sector-size SECTOR_BYTES > /dev/ttyS1 || helper_status=$?
 cat /root/helper.trace
 if [ "$helper_status" != 0 ]; then exit "$helper_status"; fi
 status=0
-strace -f -e trace=openat,fcntl,ioctl -o /root/restore.trace python3 /root/qualify-restore-fd.py --disposable-vm --library /root/restore-gpt-fd.so --tools /root/exfat-tools || status=$?
+strace -f -e trace=openat,fcntl,ioctl -o /root/restore.trace python3 /root/qualify-restore-fd.py --disposable-vm --library /root/restore-gpt-fd.so --tools /root/exfat-tools > /dev/ttyS1 || status=$?
 cat /root/restore.trace
 exit "$status"
 """
@@ -261,7 +263,8 @@ exit "$status"
             "-cpu", "host" if args.accelerator == "kvm" else "max",
             "-m", "2048", "-smp", "2", "-display", "none", "-monitor", "none",
             "-qmp", "unix:qmp.sock,server=on,wait=off",
-            "-serial", f"file:{output / 'guest.log'}", "-no-reboot", "-boot", "order=c",
+            "-serial", f"file:{output / 'guest.log'}",
+            "-serial", f"file:{output / 'proof.log'}", "-no-reboot", "-boot", "order=c",
             "-drive", "file=guest.qcow2,if=none,id=os,format=qcow2",
             "-device", "virtio-blk-pci,drive=os,bootindex=1",
             "-drive", "file=target.raw,if=none,id=restore,format=raw",
@@ -279,7 +282,7 @@ exit "$status"
             "-device", "virtio-net-pci,netdev=n0"]
     print(f"Booting isolated {args.sector_size}-byte sector qualification VM: {output}", flush=True)
     removal = run_vm(qemu, output)
-    transcript = (output / "guest.log").read_text(errors="replace")
+    transcript = (output / "proof.log").read_text(errors="strict")
     reports = [json.loads(line.split("ELIZAOS_RESTORE_FD_REPORT ", 1)[1])
                for line in transcript.splitlines() if line.startswith("ELIZAOS_RESTORE_FD_REPORT ")]
     if len(reports) != 1 or reports[0].get("status") != "pass":
@@ -308,7 +311,8 @@ exit "$status"
               "canarySha256Before": before, "canarySha256After": after,
               "imageSha512": IMAGE_SHA512, "exfatSourceSha256": SOURCE_SHA256,
               "sourceSha256": {name: hashlib.sha256(content).hexdigest() for name, content in sources.items()},
-              "transcriptSha256": file_hash(output / "guest.log"), "qemuCommand": qemu}
+              "transcriptSha256": file_hash(output / "guest.log"),
+              "proofSha256": file_hash(output / "proof.log"), "qemuCommand": qemu}
     (output / "qualification.json").write_text(json.dumps(result, indent=2) + "\n")
     print(f"PASS: {output / 'qualification.json'}", flush=True)
 

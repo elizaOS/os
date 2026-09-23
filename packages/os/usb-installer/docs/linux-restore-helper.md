@@ -297,3 +297,10 @@ matches its final full-disk digest to the guest report. Reports bind the helper
 and test-wrapper binary hashes and record each refusal case. `helper.trace` is
 included in the guest transcript. This still supplies no production broker,
 credential verifier, UI capability, or mutation path in the shipped helper.
+
+Structured guest reports and removal handshakes use a dedicated second serial
+channel (`proof.log`), separate from the kernel/getty console and syscall
+transcript (`guest.log`). Console output previously split a report marker in
+CI. The host still requires exactly one complete successful report per proof;
+it never reconstructs or accepts a damaged console message. Both channels are
+retained and hashed in the final qualification report.
