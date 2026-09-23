@@ -181,7 +181,25 @@ export function toolPaths(dir, release, run) {
   return tools;
 }
 
-export function deviceReader(tools, serial, run = checkedRun) {
+// Verify immediately before every subprocess, including read-only discovery.
+// A previous check is insufficient when the tool changes between commands.
+export function pinnedToolRunner(tools, release, run = checkedRun) {
+  return (command, args, options) => {
+    const name = Object.keys(tools).find((key) => tools[key] === command);
+    requireThat(name && release.tools[name], "unqualified tool invocation");
+    requireThat(
+      hashFile(command).sha256 === release.tools[name].sha256,
+      `${name} changed during installation`,
+    );
+    return run(command, args, options);
+  };
+}
+
+export function deviceReader(tools, serial, run) {
+  requireThat(
+    typeof run === "function",
+    "device reader requires a checked transport",
+  );
   const fb = (args, options = {}) =>
     run(tools.fastboot, ["-s", serial, ...args], options);
   const get = (key) => parseGetvar(fb(["getvar", key]), key);
@@ -317,9 +335,6 @@ export function executePlan({
       );
     };
     for (const [index, step] of plan.entries()) {
-      // No action on a device whose identity/mode or snapshot state changed.
-      reader.mode(step.mode, release);
-      checkState();
       requireThat(
         hashFile(tools.fastboot).sha256 === release.tools.fastboot.sha256,
         "fastboot changed during installation",
@@ -330,6 +345,10 @@ export function executePlan({
           stage,
           release.files.find((f) => f.filename === step.file),
         );
+      // Hashing a multi-gigabyte image can take minutes. Query live device
+      // state afterwards, immediately before authorizing the next command.
+      reader.mode(step.mode, release);
+      checkState();
       if (step.args[0].startsWith("--set-active="))
         requireThat(
           step.args[0] === `--set-active=${state.targetSlot}`,
@@ -353,6 +372,7 @@ export function executePlan({
       }
     }
     if (plan.at(-1)?.transition === "adb") {
+      run = pinnedToolRunner(tools, release, run);
       requireThat(
         hashFile(tools.adb).sha256 === release.tools.adb.sha256,
         "adb changed during installation",
@@ -415,7 +435,7 @@ export function main(argv = process.argv.slice(2)) {
   );
   const healthToken = o.reboot ? readHealthToken(o.healthTokenFile) : undefined;
   const tools = toolPaths(o.toolDir, release, checkedRun),
-    reader = deviceReader(tools, o.serial);
+    reader = deviceReader(tools, o.serial, pinnedToolRunner(tools, release));
   return withDeviceInstallLock(
     o.serial,
     { journal: path.resolve(o.journal), subjectSha256 },

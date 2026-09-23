@@ -256,7 +256,6 @@ build_plan() {
   # below when the endpoint is absent or unhealthy.
   add_plan "${adb_cmd[@]}" shell "${AGENT_HEALTH_COMMAND} || true"
   add_plan "${adb_cmd[@]}" logcat -d
-  add_plan "${adb_cmd[@]}" logcat -d
 }
 
 print_plan() {

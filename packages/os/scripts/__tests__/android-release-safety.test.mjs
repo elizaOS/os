@@ -13,6 +13,7 @@ import {
   executePlan,
   parseGetvar,
   parseOptions,
+  pinnedToolRunner,
 } from "../../../../scripts/android/install-release.mjs";
 import {
   readHealthToken,
@@ -1078,4 +1079,117 @@ test("every signed artifact rejects corruption and absence before an install pla
     fs.writeFileSync(pathname, original);
   }
   verifyInstallFiles(f.release, f.directory);
+});
+
+test("fastboot replacement is rejected before inventory, getvar and write dispatch", (t) => {
+  for (const phase of ["inventory", "getvar", "write"]) {
+    const f = fixture(t);
+    const tool = path.join(f.directory, "fastboot");
+    fs.writeFileSync(tool, "qualified executable");
+    f.release.tools.fastboot.sha256 = hashFile(tool).sha256;
+    const tools = { fastboot: tool };
+    const calls = [];
+    const reader = deviceReader(
+      tools,
+      "SERIAL",
+      pinnedToolRunner(tools, f.release, (_command, args) => {
+        calls.push(args);
+        // Replacing the binary after inventory must prevent the next getvar.
+        fs.writeFileSync(tool, "replacement executable");
+        return "SERIAL\tfastboot\n";
+      }),
+    );
+    if (phase !== "getvar") fs.writeFileSync(tool, "replacement executable");
+    assert.throws(
+      () =>
+        phase === "write"
+          ? reader.fb(["--slot", "b", "flash", "boot", "boot.img"])
+          : reader.mode("bootloader", f.release),
+      /fastboot changed/,
+    );
+    assert.equal(calls.length, phase === "getvar" ? 1 : 0);
+  }
+});
+
+test("image and credential named pipes fail without waiting for a writer", {
+  skip: process.platform !== "linux",
+}, (t) => {
+  const f = fixture(t);
+  const pipe = path.join(f.directory, "pipe");
+  const made = spawnSync("mkfifo", ["-m", "600", pipe]);
+  assert.equal(made.status, 0);
+  for (const [module, method] of [
+    ["release-contract.mjs", "hashFile"],
+    ["post-boot.mjs", "readHealthToken"],
+  ]) {
+    const url = new URL(
+      `../../../../scripts/android/${module}`,
+      import.meta.url,
+    ).href;
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import { ${method} } from ${JSON.stringify(url)}; ${method}(process.argv[1]);`,
+        pipe,
+      ],
+      { timeout: 2000, encoding: "utf8" },
+    );
+    assert.equal(
+      result.error,
+      undefined,
+      "file validation must not hang on FIFO open",
+    );
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /regular/);
+  }
+});
+
+test("slot drift during image hashing is detected before the first write", (t) => {
+  const f = fixture(t);
+  const tool = path.join(f.directory, "fastboot");
+  fs.writeFileSync(tool, "tool");
+  f.release.tools.fastboot.sha256 = hashFile(tool).sha256;
+  const imageInode = fs.statSync(path.join(f.directory, "boot.img")).ino;
+  let slot = "a";
+  const originalRead = fs.readSync;
+  t.mock.method(fs, "readSync", function (fd, ...args) {
+    const count = originalRead.call(fs, fd, ...args);
+    if (count === 0 && fs.fstatSync(fd).ino === imageInode) slot = "b";
+    return count;
+  });
+  const journal = fs.openSync(
+    path.join(f.directory, "hash-drift-journal"),
+    "wx",
+  );
+  t.after(() => fs.closeSync(journal));
+  let writes = 0;
+  assert.throws(
+    () =>
+      executePlan({
+        release: f.release,
+        state: f.release.startingStates[0],
+        plan: compilePlan(f.release, plan, f.release.startingStates[0]),
+        reader: {
+          mode() {},
+          get(key) {
+            return {
+              "current-slot": slot,
+              "version-bootloader": "bl1",
+              "version-baseband": "radio1",
+            }[key];
+          },
+          fb() {
+            writes++;
+          },
+        },
+        stage: f.directory,
+        journal,
+        tools: { fastboot: tool },
+        serial: "SERIAL",
+      }),
+    /active slot changed/,
+  );
+  assert.equal(writes, 0);
 });

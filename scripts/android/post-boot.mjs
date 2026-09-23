@@ -6,7 +6,10 @@ export function readHealthToken(file) {
     file,
     "--health-token-file required for authenticated boot validation",
   );
-  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  const fd = fs.openSync(
+    file,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+  );
   try {
     const stat = fs.fstatSync(fd);
     requireThat(
