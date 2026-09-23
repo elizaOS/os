@@ -156,3 +156,20 @@ private token file is passed to the probe over stdin; no device TCP health
 listener is required. A failed probe or forward cleanup is a verification
 failure. See the [Pixel readiness review](../../packages/os/android/docs/pixel11-readiness-2026-09-23.md)
 for the remaining physical qualification gates.
+
+## Concurrent or interrupted installation
+
+The Linux installer acquires a private per-serial interlock under
+`~/.local/state/elizaos/android-install-locks/` before device inspection and
+holds it through staging, writes, and requested boot verification. The lock
+records the PID, release digest, journal location, and phase. Separate installs
+by the same OS account cannot write the same serial concurrently, even from
+different repository checkouts.
+
+A normal completion or pre-write error removes the lock. Once writes may have
+started, failure retains it; process death also leaves it behind. There is no
+automatic stale-PID recovery or resume flag. Before manually removing a lock,
+verify the installer and its child tools have stopped, retain its journal, and
+inspect the actual phone and recovery path. Retry only a separately qualified
+starting state; never infer it from the last successful command. This interlock
+does not control raw fastboot commands, another OS account, or another host.

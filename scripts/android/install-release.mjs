@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFastbootInfoArtifacts } from "../aosp/build-grizzly-bundle.mjs";
+import { withDeviceInstallLock } from "./install-lock.mjs";
 import { readHealthToken, verifyPostBoot } from "./post-boot.mjs";
 import {
   canonical,
@@ -382,74 +383,81 @@ export function main(argv = process.argv.slice(2)) {
   const healthToken = o.reboot ? readHealthToken(o.healthTokenFile) : undefined;
   const tools = toolPaths(o.toolDir, release, checkedRun),
     reader = deviceReader(tools, o.serial);
-  const state = reader.inspect(release);
-  requireThat(
-    !o.slot || o.slot === state.targetSlot,
-    "requested slot conflicts with qualified transition",
-  );
-  verifyFile(o.recoveryDir, state.recovery.archive);
-  for (const partition of metadata.requirements.get("partition-exists")) {
-    const size = reader.get(`partition-size:${partition}`);
-    requireThat(
-      /^0x[0-9a-fA-F]+$/.test(size) && BigInt(size) > 0n,
-      "required partition missing/zero",
-    );
-  }
-  const plan = compilePlan(release, metadata.fastbootInfo, state, o);
-  const capacity = fs.statfsSync(os.tmpdir());
-  const bytes = release.files.reduce((sum, f) => sum + f.sizeBytes, 0);
-  requireThat(
-    capacity.bavail * capacity.bsize > bytes + 1024 ** 3,
-    "insufficient temporary disk capacity",
-  );
-  const stage = fs.mkdtempSync(path.join(os.tmpdir(), "elizaos-install-"));
-  fs.chmodSync(stage, 0o700);
-  let journal;
-  try {
-    for (const f of release.files) {
-      fs.copyFileSync(
-        path.join(o.directory, f.filename),
-        path.join(stage, f.filename),
-        fs.constants.COPYFILE_EXCL,
+  return withDeviceInstallLock(
+    o.serial,
+    { journal: path.resolve(o.journal), subjectSha256 },
+    ({ beforeWrites }) => {
+      const state = reader.inspect(release);
+      requireThat(
+        !o.slot || o.slot === state.targetSlot,
+        "requested slot conflicts with qualified transition",
       );
-      verifyFile(stage, f);
-      fs.chmodSync(path.join(stage, f.filename), 0o400);
-    }
-    verifyInstallFiles(release, stage);
-    journal = fs.openSync(
-      o.journal,
-      fs.constants.O_WRONLY |
-        fs.constants.O_CREAT |
-        fs.constants.O_EXCL |
-        fs.constants.O_NOFOLLOW,
-      0o600,
-    );
-    fs.writeSync(
-      journal,
-      `${JSON.stringify({ event: "authorized", serial: o.serial, stateId: state.id, subjectSha256, plan })}\n`,
-    );
-    fs.fsyncSync(journal);
-    // Revalidate authorization, recovery and starting state immediately before writes.
-    validateEnvelope(envelope, loadPolicy());
-    verifyFile(o.recoveryDir, state.recovery.archive);
-    requireThat(
-      canonical(reader.inspect(release)) === canonical(state),
-      "starting state changed while staging",
-    );
-    executePlan({
-      release,
-      plan,
-      reader,
-      stage,
-      journal,
-      tools,
-      serial: o.serial,
-      healthToken,
-    });
-  } finally {
-    if (journal !== undefined) fs.closeSync(journal);
-    fs.rmSync(stage, { recursive: true, force: true });
-  }
+      verifyFile(o.recoveryDir, state.recovery.archive);
+      for (const partition of metadata.requirements.get("partition-exists")) {
+        const size = reader.get(`partition-size:${partition}`);
+        requireThat(
+          /^0x[0-9a-fA-F]+$/.test(size) && BigInt(size) > 0n,
+          "required partition missing/zero",
+        );
+      }
+      const plan = compilePlan(release, metadata.fastbootInfo, state, o);
+      const capacity = fs.statfsSync(os.tmpdir());
+      const bytes = release.files.reduce((sum, f) => sum + f.sizeBytes, 0);
+      requireThat(
+        capacity.bavail * capacity.bsize > bytes + 1024 ** 3,
+        "insufficient temporary disk capacity",
+      );
+      const stage = fs.mkdtempSync(path.join(os.tmpdir(), "elizaos-install-"));
+      fs.chmodSync(stage, 0o700);
+      let journal;
+      try {
+        for (const f of release.files) {
+          fs.copyFileSync(
+            path.join(o.directory, f.filename),
+            path.join(stage, f.filename),
+            fs.constants.COPYFILE_EXCL,
+          );
+          verifyFile(stage, f);
+          fs.chmodSync(path.join(stage, f.filename), 0o400);
+        }
+        verifyInstallFiles(release, stage);
+        journal = fs.openSync(
+          o.journal,
+          fs.constants.O_WRONLY |
+            fs.constants.O_CREAT |
+            fs.constants.O_EXCL |
+            fs.constants.O_NOFOLLOW,
+          0o600,
+        );
+        fs.writeSync(
+          journal,
+          `${JSON.stringify({ event: "authorized", serial: o.serial, stateId: state.id, subjectSha256, plan })}\n`,
+        );
+        fs.fsyncSync(journal);
+        // Revalidate authorization, recovery and starting state immediately before writes.
+        validateEnvelope(envelope, loadPolicy());
+        verifyFile(o.recoveryDir, state.recovery.archive);
+        requireThat(
+          canonical(reader.inspect(release)) === canonical(state),
+          "starting state changed while staging",
+        );
+        beforeWrites();
+        executePlan({
+          release,
+          plan,
+          reader,
+          stage,
+          journal,
+          tools,
+          serial: o.serial,
+          healthToken,
+        });
+      } finally {
+        if (journal !== undefined) fs.closeSync(journal);
+        fs.rmSync(stage, { recursive: true, force: true });
+      }
+    },
+  );
 }
 if (
   process.argv[1] &&

@@ -506,41 +506,56 @@ test("plan follows generated layout, binds slots, forbids unqualified wipes and 
   );
 });
 
-test("failed write produces durable failure and never advances/reboots", (t) => {
+test("failure at every flash-plan command stops subsequent writes, activation and reboot", (t) => {
   const f = fixture(t);
   const tool = path.join(f.directory, "fastboot");
   fs.writeFileSync(tool, "tool fixture");
   f.release.tools.fastboot.sha256 = hashFile(tool).sha256;
-  const journal = fs.openSync(path.join(f.directory, "journal"), "wx");
-  t.after(() => fs.closeSync(journal));
-  const calls = [];
-  const reader = {
-    mode() {},
-    fb(args) {
-      calls.push(args);
-      throw new Error("USB disconnected");
-    },
-  };
-  assert.throws(
-    () =>
-      executePlan({
-        release: f.release,
-        plan: compilePlan(f.release, plan, f.release.startingStates[0], {
-          reboot: true,
-        }),
-        reader,
-        stage: f.directory,
-        journal,
-        tools: { fastboot: tool },
-        serial: "SERIAL",
-      }),
-    /USB disconnected/,
-  );
-  assert.equal(calls.length, 1);
-  assert.match(
-    fs.readFileSync(path.join(f.directory, "journal"), "utf8"),
-    /"event":"failed"/,
-  );
+  const tasks = compilePlan(f.release, plan, f.release.startingStates[0], {
+    reboot: true,
+  });
+  for (let failure = 0; failure < tasks.length; failure++) {
+    const journalPath = path.join(f.directory, `journal-${failure}`);
+    const journal = fs.openSync(journalPath, "wx");
+    const calls = [];
+    try {
+      assert.throws(
+        () =>
+          executePlan({
+            release: f.release,
+            plan: tasks,
+            reader: {
+              mode() {},
+              fb(args) {
+                calls.push(args);
+                if (calls.length === failure + 1)
+                  throw new Error("USB disconnected");
+                return "OKAY";
+              },
+            },
+            stage: f.directory,
+            journal,
+            tools: { fastboot: tool },
+            serial: "SERIAL",
+          }),
+        /USB disconnected/,
+      );
+    } finally {
+      fs.closeSync(journal);
+    }
+    assert.equal(calls.length, failure + 1);
+    const events = fs
+      .readFileSync(journalPath, "utf8")
+      .trim()
+      .split("\n")
+      .map(JSON.parse);
+    assert.equal(events.at(-1).event, "failed");
+    assert.equal(
+      events.filter((e) => e.event === "command-complete").length,
+      failure,
+    );
+    assert(!events.some((e) => e.event === "installed-runtime-verified"));
+  }
 });
 
 test("changed image/tool and wrong mode fail before any write", (t) => {
@@ -872,4 +887,65 @@ test("health credentials stay out of argv and errors; readiness must be explicit
       }),
     /^Error: authenticated agent health transport failed$/,
   );
+});
+
+test("production CLI and shell entrypoint reject fixture authorization before invoking device tools", (t) => {
+  const f = fixture(t);
+  const manifest = path.join(f.directory, "signed-fixture.json");
+  fs.writeFileSync(manifest, JSON.stringify(f.envelope));
+  const tools = path.join(f.directory, "tools");
+  fs.mkdirSync(tools);
+  const invoked = path.join(f.directory, "device-tool-invoked");
+  for (const name of ["adb", "fastboot"])
+    fs.writeFileSync(
+      path.join(tools, name),
+      '#!/bin/sh\nprintf invoked > "$DEVICE_SPY"\nexit 99\n',
+      { mode: 0o700 },
+    );
+  const args = [
+    "--manifest",
+    manifest,
+    "--artifact-dir",
+    f.directory,
+    "--device",
+    "SERIAL",
+    "--tool-dir",
+    tools,
+    "--recovery-dir",
+    f.directory,
+    "--journal",
+    path.join(f.directory, "journal"),
+    "--execute",
+    "--confirm-flash",
+  ];
+  for (const [command, entry] of [
+    [process.execPath, "scripts/android/install-release.mjs"],
+    ["bash", "packages/os/android/installer/install-elizaos-android.sh"],
+  ]) {
+    const result = spawnSync(command, [entry, ...args], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${tools}:${process.env.PATH}`,
+        DEVICE_SPY: invoked,
+      },
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /android-contract/);
+    assert.equal(fs.existsSync(invoked), false);
+  }
+});
+
+test("every signed artifact rejects corruption and absence before an install plan can execute", (t) => {
+  const f = fixture(t);
+  for (const file of f.release.files) {
+    const pathname = path.join(f.directory, file.filename);
+    const original = fs.readFileSync(pathname);
+    fs.writeFileSync(pathname, Buffer.alloc(original.length, 0xff));
+    assert.throws(() => verifyInstallFiles(f.release, f.directory));
+    fs.unlinkSync(pathname);
+    assert.throws(() => verifyInstallFiles(f.release, f.directory));
+    fs.writeFileSync(pathname, original);
+  }
+  verifyInstallFiles(f.release, f.directory);
 });

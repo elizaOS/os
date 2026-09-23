@@ -44,7 +44,13 @@ function parseArgs(argv) {
   return options;
 }
 
-function capture(outDir, name, command, args, { timeoutMs = 30_000 } = {}) {
+export function capture(
+  outDir,
+  name,
+  command,
+  args,
+  { timeoutMs = 30_000 } = {},
+) {
   const result = spawnSync(command, args, {
     encoding: "utf8",
     timeout: timeoutMs,
@@ -65,7 +71,11 @@ function capture(outDir, name, command, args, { timeoutMs = 30_000 } = {}) {
   console.log(
     `[grizzly-evidence] ${succeeded ? "ok  " : "fail"} ${name} (${status})`,
   );
-  return { succeeded, stdout: result.stdout ?? "" };
+  return {
+    succeeded,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+  };
 }
 
 export function selectEvidenceTransports({

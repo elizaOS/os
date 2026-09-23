@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  capture,
   captureEvidence,
   selectEvidenceTransports,
 } from "../../../../scripts/distro-android/grizzly-evidence.mjs";
@@ -158,6 +159,43 @@ test("unknown product never authorizes grizzly OEM or shell diagnostics", () => 
       "fastboot-product",
       "adb-product",
     ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("real subprocess stderr reaches device identity checks and failures stay failures", () => {
+  const root = mkdtempSync(join(tmpdir(), "grizzly-stderr-"));
+  try {
+    const result = capture(root, "product", process.execPath, [
+      "-e",
+      'process.stderr.write("(bootloader) product: grizzly\\n")',
+    ]);
+    expect(result.succeeded).toBe(true);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("product: grizzly");
+    expect(readFileSync(join(root, "product.txt"), "utf8")).toContain(
+      result.stderr,
+    );
+    const out = captureEvidence(
+      { device: "phone", outRoot: root },
+      (_dir, name) => {
+        if (name === "fastboot-devices")
+          return { succeeded: true, stdout: "phone fastboot\n" };
+        if (name === "adb-devices") return { succeeded: true, stdout: "" };
+        if (name === "fastboot-product") return result;
+        return { succeeded: true, stdout: "" };
+      },
+    );
+    expect(
+      JSON.parse(readFileSync(join(out, "device-identity.json"), "utf8"))
+        .grizzlyFastboot,
+    ).toBe(true);
+    const failed = capture(root, "failed-product", process.execPath, [
+      "-e",
+      'process.stderr.write("product: grizzly\\n"); process.exit(1)',
+    ]);
+    expect(failed.succeeded).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
