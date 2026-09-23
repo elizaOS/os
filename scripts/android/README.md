@@ -112,7 +112,7 @@ an explicit serial, private new journal, retained recovery archive and pinned
 tools. The wipe choice must exactly match the qualified starting-state policy:
 
 ```sh
-node scripts/android/install-release.mjs --manifest qualified.android-release.json --artifact-dir /absolute/bundle/flash --device SERIAL --tool-dir /absolute/platform-tools --recovery-dir /absolute/recovery --journal /absolute/evidence/install.jsonl --execute --confirm-flash --reboot-after-flash
+node scripts/android/install-release.mjs --manifest qualified.android-release.json --artifact-dir /absolute/bundle/flash --device SERIAL --tool-dir /absolute/platform-tools --recovery-dir /absolute/recovery --journal /absolute/evidence/install.jsonl --health-token-file /absolute/private/local-agent-token --execute --confirm-flash --reboot-after-flash
 ```
 
 Add `--wipe-data` only for a qualified transition requiring it. Without reboot,
@@ -141,3 +141,11 @@ bypasses, exercise the hardware matrix, full/incremental/interrupted OS update,
 recovery, downgrade rejection and secure-storage behavior. Test locked boot
 only in a separate qualified signing/recovery project. These scripts never
 relock a device.
+
+Post-boot validation requires `--health-token-file` pointing to a private (0600)
+file containing the installed application’s local agent bearer. It is passed
+over adb stdin, never in command arguments or journals; health must return
+`ready: true`. For a first install or wipe where that credential is not yet
+available, omit `--reboot-after-flash`, complete the qualified boot/setup
+procedure, then run the standalone validator with the new credential. Missing
+credentials never count as successful validation. Do not commit this file.

@@ -48,6 +48,7 @@ Required image input:
   --manifest FILE             Signed v2 release contract required for flashing.
   --tool-dir DIR              Digest-pinned adb/fastboot (Linux execution).
   --recovery-dir DIR          Retained qualified recovery archive.
+  --health-token-file FILE   Private local agent bearer for post-boot checks.
   --journal FILE              New private JSONL file for durable command results.
 
 Device and safety options:
@@ -86,7 +87,7 @@ Examples:
     --manifest /absolute/release.android-release.json \
     --tool-dir /absolute/platform-tools --recovery-dir /absolute/recovery \
     --journal /absolute/private/install.jsonl \
-    --execute --confirm-flash --reboot-after-flash
+    --health-token-file /absolute/private/local-agent-token --execute --confirm-flash --reboot-after-flash
 EOF
 }
 
@@ -162,7 +163,7 @@ parse_args() {
         IMAGE_SPECS+=("$2")
         shift 2
         ;;
-      --journal|--tool-dir|--recovery-dir)
+      --journal|--tool-dir|--recovery-dir|--health-token-file)
         [[ $# -ge 2 ]] || die "$1 requires a value"
         shift 2
         ;;

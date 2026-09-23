@@ -14,7 +14,10 @@ import {
   parseGetvar,
   parseOptions,
 } from "../../../../scripts/android/install-release.mjs";
-import { verifyPostBoot } from "../../../../scripts/android/post-boot.mjs";
+import {
+  readHealthToken,
+  verifyPostBoot,
+} from "../../../../scripts/android/post-boot.mjs";
 import { generateUpdateManifest } from "../../../../scripts/android/publish-update-manifest.mjs";
 import {
   CVD_CHECKS,
@@ -628,12 +631,15 @@ function bootShell(release, overrides = {}) {
   };
   return (args) =>
     args[0] === "sh"
-      ? (overrides.health ?? 'HTTP/1.0 200 OK\r\n\r\n{"status":"ready"}')
+      ? (overrides.health ?? 'HTTP/1.0 200 OK\r\n\r\n{"ready":true}')
       : (values[args.join(" ")] ?? "");
 }
 test("post-boot checks reject fallback, stale APK, missing roles and false healthy HTTP 200", (t) => {
   const { release } = fixture(t);
-  assert.equal(verifyPostBoot(release, bootShell(release), "b").status, "pass");
+  assert.equal(
+    verifyPostBoot(release, bootShell(release), "b", "test-token").status,
+    "pass",
+  );
   for (const override of [
     { "getprop ro.boot.slot_suffix": "_a" },
     { getenforce: "Permissive" },
@@ -645,7 +651,7 @@ test("post-boot checks reject fallback, stale APK, missing roles and false healt
     { health: "HTTP/1.0 503 Unavailable\r\n\r\n{}" },
   ])
     assert.throws(() =>
-      verifyPostBoot(release, bootShell(release, override), "b"),
+      verifyPostBoot(release, bootShell(release, override), "b", "test-token"),
     );
 });
 
@@ -688,6 +694,7 @@ test("complete fake-transport installation verifies runtime and journals every t
     journal,
     tools,
     serial: "SERIAL",
+    healthToken: "test-token",
     run: (_tool, args) =>
       args[2] === "wait-for-device" ? "" : bootShell(f.release)(args.slice(3)),
   });
@@ -810,5 +817,60 @@ test("transport timeouts and unsuccessful exits are failures, never empty succes
         timeoutMs: 20,
       }),
     /command failed/,
+  );
+});
+
+test("health credentials stay out of argv and errors; readiness must be explicit", (t) => {
+  const { release, directory } = fixture(t);
+  const file = path.join(directory, "health-token");
+  fs.writeFileSync(file, "test-token\n", { mode: 0o600 });
+  assert.equal(readHealthToken(file), "test-token");
+  fs.chmodSync(file, 0o644);
+  assert.throws(() => readHealthToken(file), /private regular/);
+  assert.throws(
+    () => verifyPostBoot(release, bootShell(release), "b"),
+    /token required/,
+  );
+  const shell = bootShell(release);
+  verifyPostBoot(
+    release,
+    (args, options) => {
+      assert(!args.join(" ").includes("test-token"));
+      if (args[0] === "sh") assert.equal(options.input, "test-token\n");
+      return shell(args);
+    },
+    "b",
+    "test-token",
+  );
+  for (const body of [
+    { status: "ready" },
+    { ready: false },
+    { ready: "true" },
+  ]) {
+    assert.throws(
+      () =>
+        verifyPostBoot(
+          release,
+          bootShell(release, {
+            health: `HTTP/1.0 200 OK\r\n\r\n${JSON.stringify(body)}`,
+          }),
+          "b",
+          "test-token",
+        ),
+      /not ready/,
+    );
+  }
+  assert.throws(
+    () =>
+      verifyPostBoot(
+        release,
+        (args) => {
+          if (args[0] === "sh") throw new Error("test-token");
+          return shell(args);
+        },
+        "b",
+        "test-token",
+      ),
+    /^Error: authenticated agent health transport failed$/,
   );
 });

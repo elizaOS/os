@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFastbootInfoArtifacts } from "../aosp/build-grizzly-bundle.mjs";
-import { verifyPostBoot } from "./post-boot.mjs";
+import { readHealthToken, verifyPostBoot } from "./post-boot.mjs";
 import {
   canonical,
   hashFile,
@@ -29,6 +29,7 @@ export function parseOptions(argv) {
     "--journal": "journal",
     "--tool-dir": "toolDir",
     "--recovery-dir": "recoveryDir",
+    "--health-token-file": "healthTokenFile",
   };
   const seen = new Set();
   for (let i = 0; i < argv.length; i++) {
@@ -281,6 +282,7 @@ export function executePlan({
   tools,
   serial,
   run = checkedRun,
+  healthToken,
 }) {
   const record = (event) => {
     fs.writeSync(
@@ -337,8 +339,10 @@ export function executePlan({
         ?.args[0].split("=")[1];
       const postBoot = verifyPostBoot(
         release,
-        (args) => run(tools.adb, ["-s", serial, "shell", ...args]),
+        (args, options) =>
+          run(tools.adb, ["-s", serial, "shell", ...args], options),
         active,
+        healthToken,
       );
       record({
         event: "installed-runtime-verified",
@@ -372,6 +376,7 @@ export function main(argv = process.argv.slice(2)) {
     process.platform === "linux",
     "qualified execution currently requires a Linux host; other hosts are planning-only",
   );
+  const healthToken = o.reboot ? readHealthToken(o.healthTokenFile) : undefined;
   const tools = toolPaths(o.toolDir, release, checkedRun),
     reader = deviceReader(tools, o.serial);
   const state = reader.inspect(release);
@@ -436,6 +441,7 @@ export function main(argv = process.argv.slice(2)) {
       journal,
       tools,
       serial: o.serial,
+      healthToken,
     });
   } finally {
     if (journal !== undefined) fs.closeSync(journal);

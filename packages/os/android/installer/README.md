@@ -45,7 +45,7 @@ packages/os/android/installer/install-elizaos-android.sh \
   --tool-dir /absolute/platform-tools \
   --recovery-dir /absolute/recovery \
   --journal /absolute/private/install.jsonl \
-  --execute --confirm-flash --reboot-after-flash
+  --health-token-file /absolute/private/local-agent-token --execute --confirm-flash --reboot-after-flash
 ```
 
 A required wipe must be explicitly selected with `--wipe-data`; a wipe that
@@ -84,3 +84,11 @@ node --test packages/os/scripts/__tests__/android-release-safety.test.mjs
 
 These suites use mock transports and temporary signing keys. Passing them does
 not prove a phone boots or that a recovery transition works.
+
+Post-boot validation requires `--health-token-file` pointing to a private (0600)
+file containing the installed application’s local agent bearer. It is passed
+over adb stdin, never in command arguments or journals; health must return
+`ready: true`. For a first install or wipe where that credential is not yet
+available, omit `--reboot-after-flash`, complete the qualified boot/setup
+procedure, then run the standalone validator with the new credential. Missing
+credentials never count as successful validation. Do not commit this file.

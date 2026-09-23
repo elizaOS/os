@@ -2,7 +2,7 @@
 /** Standalone read-only post-install verification using the signed contract. */
 import path from "node:path";
 import { checkedRun, parseOptions, toolPaths } from "./install-release.mjs";
-import { verifyPostBoot } from "./post-boot.mjs";
+import { readHealthToken, verifyPostBoot } from "./post-boot.mjs";
 import {
   loadPolicy,
   readJson,
@@ -28,11 +28,14 @@ try {
   );
   requireThat(release.target.kind === "physical", "physical release required");
   if (o.execute) {
+    const healthToken = readHealthToken(o.healthTokenFile);
     const tools = toolPaths(path.resolve(o.toolDir), release, checkedRun);
     const result = verifyPostBoot(
       release,
-      (args) => checkedRun(tools.adb, ["-s", o.serial, "shell", ...args]),
+      (args, options) =>
+        checkedRun(tools.adb, ["-s", o.serial, "shell", ...args], options),
       o.slot,
+      healthToken,
     );
     process.stdout.write(`${JSON.stringify({ subjectSha256, ...result })}\n`);
   } else {
