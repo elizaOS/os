@@ -73,6 +73,9 @@ export const PHONE_CHECKS = [
   "snapshot-merge",
   "rejected-downgrade",
   "stock-restoration",
+  "encrypted-recovery",
+  "recovery-after-ota-slot",
+  "kernel-vendor-module-pair",
 ];
 const CVD_TARGETS = new Map([
   ["cuttlefish-x86_64", "x86_64"],

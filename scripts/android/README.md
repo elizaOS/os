@@ -56,6 +56,15 @@ storage capacity × starting state needs a case (`sku`, `storageBytes`,
 names are exported by the validator. Any changed release field invalidates
 qualification and signatures.
 
+Physical qualification explicitly includes encrypted recovery, recovery slot
+identity after OTA and the matched kernel/vendor module set; see the
+[hardware matrix](../../packages/os/android/docs/hardware-validation.md).
+During execution, firmware and current-slot probes must remain equal to the
+qualified state through bootloader/fastbootd transitions. After activation the
+installer verifies the target slot before recording activation or rebooting.
+Missing probes and a command reporting success without the requested slot
+change fail closed. These host guards still require physical qualification.
+
 Each signature covers UTF-8 canonical JSON of exactly
 `{schemaVersion:2, release, qualification}`. Two different Ed25519 public keys
 are mandatory, for `release` and `qualification` roles. Distinct IDs pointing
