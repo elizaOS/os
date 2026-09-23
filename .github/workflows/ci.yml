@@ -192,7 +192,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/restore-inputs"
           curl --fail --location --retry 3 --max-time 300 \
-            https://cloud.debian.org/images/cloud/trixie/20260914-2601/debian-13-genericcloud-amd64-20260914-2601.qcow2 \
+            https://cloud.debian.org/images/cloud/trixie/20260914-2601/debian-13-generic-amd64-20260914-2601.qcow2 \
             -o "$RUNNER_TEMP/restore-inputs/debian.qcow2"
           curl --fail --location --retry 3 --max-time 120 \
             https://codeload.github.com/exfatprogs/exfatprogs/tar.gz/3e87676349387a119cadacd68661d2966796b7fd \

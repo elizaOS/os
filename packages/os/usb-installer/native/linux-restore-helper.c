@@ -418,8 +418,10 @@ static int validate_authorized_plan(const struct request *request,
     return -1;
   }
 
+  /* Reject special files after opening without waiting for a FIFO writer or
+   * device readiness. Regular-file reads are unaffected by O_NONBLOCK. */
   const int authorization = openat(authorized, request->plan_id,
-                                   O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+                                   O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW);
   if (authorization < 0 || !trusted_authorization_file(authorization) ||
       !read_exact_binding(authorization, request->plan_binding)) {
     if (authorization >= 0) (void)close(authorization);

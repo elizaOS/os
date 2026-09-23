@@ -248,3 +248,47 @@ This covers Linux virtio hot removal at a completed-operation boundary. It does
 not claim physical USB electrical unplug, removal during an in-flight write,
 replacement-device reuse, power-loss recovery, or the complete cancellation
 checkpoint matrix. Those remain required for production qualification.
+
+
+## Root helper and emulated removable USB qualification
+
+The VM now uses the pinned Debian **generic** image, whose kernel contains USB
+host/storage drivers; the previous genericcloud kernel intentionally omits them.
+A separate named 512 MiB QEMU USB-storage fixture is exposed through an emulated
+xHCI controller with its removable bit set. Neither a physical USB device nor a
+host block device is passed through. The existing virtio target and canary retain
+their roles in formatting and hot-removal tests.
+
+`native/qualify-restore-helper.py` runs the actual disabled helper binary against
+this USB fixture. It checks exact private root authorization, non-root callers,
+previous-boot requests, missing state, incorrect identity, unsafe authorization
+ownership/modes, symlinks, hard links, FIFOs, directories, wrong/trailing binding
+bytes, writable state directories, consumed markers and device symlinks. A
+correctly authorized non-removable disk remains refused. Even a valid removable
+disk request must return `NATIVE_FD_QUALIFICATION_REQUIRED`, create no consumed
+marker, and leave the entire USB fixture unchanged.
+
+This testing exposed a blocking FIFO open in authorization acquisition. The
+helper now opens authorization files with `O_NONBLOCK` before checking they are
+private, root-owned, single-link regular files. A special file therefore fails
+validation without waiting for a FIFO writer. This does not relax the ownership,
+type, mode, link-count, or exact-binding checks.
+
+The qualification-only `linux-restore-helper.qualify.c` wrapper includes the
+same native helper source to exercise its private functions; it is compiled only
+for the test VM and is not installed or linked into the production application.
+Thirty-two attempts from sixteen synchronized workers exercise the actual
+single-use marker code:
+exactly one succeeds, the others report consumed, and the resulting root-owned
+0600 marker contains the expected bytes. File and directory fsync calls are
+retained in the syscall transcript. This proves the tested concurrent filesystem
+behavior, not persistence through a power cut.
+
+The test then creates a GPT on the disposable USB fixture and exercises the
+native partition opener under its held whole-device exclusive claim. It accepts
+the correct partition and rejects both a symlink and a replacement node pointing
+to another disk. The host independently inspects the resulting USB GPT and
+matches its final full-disk digest to the guest report. Reports bind the helper
+and test-wrapper binary hashes and record each refusal case. `helper.trace` is
+included in the guest transcript. This still supplies no production broker,
+credential verifier, UI capability, or mutation path in the shipped helper.
