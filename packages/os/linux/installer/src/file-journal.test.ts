@@ -1,3 +1,4 @@
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmod,
@@ -11,6 +12,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { InstallRecoveryRequiredError } from "./executor";
 import { DurableFileInstallJournal } from "./file-journal";
@@ -53,6 +55,44 @@ afterEach(async () => {
 });
 
 describe("durable file install journal", () => {
+  it("rejects a FIFO without waiting for a writer or retaining the read lock", async () => {
+    const directory = await temporaryDirectory();
+    const path = join(directory, `${PLAN_ID}.jsonl`);
+    execFileSync("mkfifo", ["--mode=600", path]);
+    const modulePath = fileURLToPath(
+      new URL("./file-journal.ts", import.meta.url),
+    );
+    // A separate process bounds the regression: a blocking FIFO open must not
+    // strand the test runner's filesystem worker or prevent cleanup.
+    const result = spawnSync(
+      "bun",
+      [
+        "--eval",
+        `import { DurableFileInstallJournal } from ${JSON.stringify(modulePath)};
+         try {
+           await new DurableFileInstallJournal(${JSON.stringify(directory)}).read(${JSON.stringify(PLAN_ID)});
+           process.exitCode = 2;
+         } catch (error) {
+           process.stdout.write(JSON.stringify({ name: error.name, message: error.message }));
+           process.exitCode = error.name === "InstallRecoveryRequiredError" ? 0 : 3;
+         }`,
+      ],
+      { encoding: "utf8", timeout: 3000, killSignal: "SIGKILL" },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      name: "InstallRecoveryRequiredError",
+      message: expect.stringMatching(/regular file/),
+    });
+    expect((await lstat(path)).isFIFO()).toBe(true);
+    await expect(
+      lstat(join(directory, `${PLAN_ID}.lock`)),
+    ).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("persists owner-only JSONL records and releases its durable writer lock", async () => {
     const directory = await temporaryDirectory();
     const journal = new DurableFileInstallJournal(directory);
