@@ -361,7 +361,8 @@ jobs:
           mkdir -p "$evidence"
           # cmd voiceinteraction show requires ACCESS_VOICE_INTERACTION_SERVICE.
           # Scope root ADB to the selected disposable Cuttlefish userdebug guest.
-          export ANDROID_SERIAL="$(adb get-serialno)"
+          ANDROID_SERIAL=$(adb get-serialno)
+          export ANDROID_SERIAL
           device=$(adb shell getprop ro.product.device | tr -d '\r')
           case "$device" in vsoc_x86_64|vsoc_x86_64_only) ;; *) exit 1 ;; esac
           test "$(adb shell getprop ro.build.type | tr -d '\r')" = userdebug
