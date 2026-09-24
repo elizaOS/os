@@ -126,3 +126,6 @@ Verified before physical connection:
 **Ready for read-only phone intake, not physical installation.** Nothing in this
 review establishes a bootable grizzly image or qualifies a firmware transition.
 The builder, exact image, physical recovery and hardware gates above remain open.
+
+For the post-PR #126 gate-by-gate assessment, evidence requirements and current
+host findings, see [boot and recovery qualification](boot-recovery-qualification.md).
