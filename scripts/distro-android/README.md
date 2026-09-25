@@ -4,6 +4,9 @@ This directory contains the toolchain for building a brand-customised
 Android AOSP image — Cuttlefish (virtual phone) for CI validation, and
 real device targets (Pixel codenames) for installs.
 
+The application build in `elizaOS/eliza` owns launcher icons and app splash
+assets. This toolchain consumes its staged privileged APK.
+
 The toolchain was originally written for **elizaOS** as a single
 hardcoded brand and generalized so any brand can build a
 privileged-system-app distribution by supplying a JSON brand config

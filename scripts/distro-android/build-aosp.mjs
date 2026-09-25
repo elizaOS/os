@@ -526,8 +526,8 @@ function launchCuttlefish(aospRoot, brand) {
  * APK picks up BuildConfig.AOSP_BUILD=true and the agent bundle is
  * produced with <BRAND>_AOSP_BUILD=1.
  */
-function rebuildPrivilegedApk(brand) {
-  if (!fs.existsSync(path.join(elizaRoot, "packages/app-core/package.json"))) {
+export function rebuildPrivilegedApk(brand, sourceRoot = elizaRoot) {
+  if (!fs.existsSync(path.join(sourceRoot, "packages/app/package.json"))) {
     throw new Error(
       "Set ELIZAOS_ELIZA_ROOT to an elizaOS/eliza checkout before rebuilding the privileged APK.",
     );
@@ -541,7 +541,7 @@ function rebuildPrivilegedApk(brand) {
   };
   const [cmd, ...rest] = brand.buildAndroidSystemCmd;
   const result = spawnSync(cmd, rest, {
-    cwd: elizaRoot,
+    cwd: sourceRoot,
     env,
     stdio: "inherit",
   });

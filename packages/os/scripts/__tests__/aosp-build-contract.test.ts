@@ -67,6 +67,7 @@ import {
   closeAospBuildEnvironment,
   cuttlefishLaunchCommand,
   prepareAospBuildEnvironment,
+  rebuildPrivilegedApk,
   resolveCuttlefishGpuMode,
   revalidateAospBuildEnvironment,
 } from "../../../../scripts/distro-android/build-aosp.mjs";
@@ -154,6 +155,57 @@ function tmpdir() {
 }
 
 describe("AOSP build contracts", () => {
+  test("privileged APK rebuild uses the current app checkout and preserves brand inputs and failures", async () => {
+    const root = await mkdtemp(join(tmpdir(), "elizaos-apk-source-"));
+    const receipt = join(root, "build-receipt.json");
+    const brand = {
+      envPrefix: "REVIEW",
+      packageName: "ai.review.app",
+      buildAndroidSystemCmd: [
+        process.execPath,
+        "-e",
+        `
+        require("node:fs").writeFileSync("build-receipt.json", JSON.stringify({
+          cwd: process.cwd(),
+          osRoot: process.env.ELIZAOS_OS_REPO_ROOT,
+          appId: process.env.REVIEW_APP_ID,
+          aospBuild: process.env.REVIEW_AOSP_BUILD,
+          gradleBuild: process.env.REVIEW_GRADLE_AOSP_BUILD,
+        }));
+      `,
+      ],
+    };
+    try {
+      await mkdir(join(root, "packages/app-core"), { recursive: true });
+      await writeFile(join(root, "packages/app-core/package.json"), "{}");
+      expect(() => rebuildPrivilegedApk(brand, root)).toThrow(
+        "Set ELIZAOS_ELIZA_ROOT",
+      );
+      expect(existsSync(receipt)).toBe(false);
+      await mkdir(join(root, "packages/app"), { recursive: true });
+      await writeFile(join(root, "packages/app/package.json"), "{}");
+      rebuildPrivilegedApk(brand, root);
+      expect(JSON.parse(readFileSync(receipt, "utf8"))).toEqual({
+        cwd: root,
+        osRoot: resolve(repositoryRoot),
+        appId: "ai.review.app",
+        aospBuild: "1",
+        gradleBuild: "true",
+      });
+      expect(() =>
+        rebuildPrivilegedApk(
+          {
+            ...brand,
+            buildAndroidSystemCmd: [process.execPath, "-e", "process.exit(23)"],
+          },
+          root,
+        ),
+      ).toThrow("exited with code 23");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("AOSP builds keep temporary artifacts on the default output volume", () => {
     expect(
       aospBuildEnvironment("/srv/aosp", {
