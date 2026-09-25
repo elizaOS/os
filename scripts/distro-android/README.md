@@ -25,7 +25,7 @@ and a corresponding **vendor tree** under `packages/os/android/vendor/<brand>/`.
   "brand":         "eliza",                  // lowercase token; vendor/<X>, init.<X>.rc, file paths
   "appName":       "Eliza",                  // PascalCase; APK module + apk filename
   "distroName":    "elizaOS",                // brand display name in log messages
-  "packageName":   "com.elizaai.eliza",     // APK Java package id
+  "packageName":   "ai.elizaos.app",       // APK Java package id
   "classPrefix":   "Eliza",                  // Java class prefix (ElizaDialActivity, ElizaSmsReceiver, …)
   "productName":   "eliza_cf_x86_64_phone",  // Cuttlefish product name + makefile filename stem
   "lunchTarget":   "eliza_cf_x86_64_phone-trunk_staging-userdebug",
@@ -37,11 +37,7 @@ and a corresponding **vendor tree** under `packages/os/android/vendor/<brand>/`.
   "initRcName":    "init.eliza.rc",
   "commonMakefile":"eliza_common.mk",
   "cuttlefishMakefile":"eliza_cf_x86_64_phone.mk",
-  "buildAndroidSystemCmd": ["bun", "run", "--cwd", "packages/app", "build:android:system"],
-
-  // Optional — only needed if the brand stores assets/cache outside the defaults
-  "androidAssetsDir": "packages/app-core/platforms/android/app/src/main/assets/agent",
-  "cacheDirName":     "eliza-android-agent"
+  "buildAndroidSystemCmd": ["bun", "run", "--cwd", "packages/app", "build:android:system"]
 }
 ```
 
