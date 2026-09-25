@@ -236,7 +236,11 @@ export function prepareAospBuildEnvironment(aospRoot, env = process.env) {
     throw error;
   }
 
-  buildEnv.OUT_DIR = canonicalOutputRoot;
+  // Soong passes OUT_DIR/siso_config to Siso, whose config repository path
+  // must be relative to the source root. Keep canonical paths for ownership
+  // and identity checks, but give the build its equivalent relative path.
+  buildEnv.OUT_DIR =
+    path.relative(fs.realpathSync(aospRoot), canonicalOutputRoot) || ".";
   buildEnv.TMPDIR = canonicalTemp;
   buildEnv.TMP = canonicalTemp;
   buildEnv.TEMP = canonicalTemp;
@@ -522,8 +526,8 @@ function launchCuttlefish(aospRoot, brand) {
  * APK picks up BuildConfig.AOSP_BUILD=true and the agent bundle is
  * produced with <BRAND>_AOSP_BUILD=1.
  */
-function rebuildPrivilegedApk(brand) {
-  if (!fs.existsSync(path.join(elizaRoot, "packages/app-core/package.json"))) {
+export function rebuildPrivilegedApk(brand, sourceRoot = elizaRoot) {
+  if (!fs.existsSync(path.join(sourceRoot, "packages/app/package.json"))) {
     throw new Error(
       "Set ELIZAOS_ELIZA_ROOT to an elizaOS/eliza checkout before rebuilding the privileged APK.",
     );
@@ -537,7 +541,7 @@ function rebuildPrivilegedApk(brand) {
   };
   const [cmd, ...rest] = brand.buildAndroidSystemCmd;
   const result = spawnSync(cmd, rest, {
-    cwd: elizaRoot,
+    cwd: sourceRoot,
     env,
     stdio: "inherit",
   });

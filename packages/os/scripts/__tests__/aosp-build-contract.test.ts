@@ -15,7 +15,13 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir as systemTmpdir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import {
+  delimiter,
+  dirname,
+  join,
+  relative as relativePath,
+  resolve,
+} from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   assertApkProvenanceEntries,
@@ -61,6 +67,7 @@ import {
   closeAospBuildEnvironment,
   cuttlefishLaunchCommand,
   prepareAospBuildEnvironment,
+  rebuildPrivilegedApk,
   resolveCuttlefishGpuMode,
   revalidateAospBuildEnvironment,
 } from "../../../../scripts/distro-android/build-aosp.mjs";
@@ -148,6 +155,57 @@ function tmpdir() {
 }
 
 describe("AOSP build contracts", () => {
+  test("privileged APK rebuild uses the current app checkout and preserves brand inputs and failures", async () => {
+    const root = await mkdtemp(join(tmpdir(), "elizaos-apk-source-"));
+    const receipt = join(root, "build-receipt.json");
+    const brand = {
+      envPrefix: "REVIEW",
+      packageName: "ai.review.app",
+      buildAndroidSystemCmd: [
+        process.execPath,
+        "-e",
+        `
+        require("node:fs").writeFileSync("build-receipt.json", JSON.stringify({
+          cwd: process.cwd(),
+          osRoot: process.env.ELIZAOS_OS_REPO_ROOT,
+          appId: process.env.REVIEW_APP_ID,
+          aospBuild: process.env.REVIEW_AOSP_BUILD,
+          gradleBuild: process.env.REVIEW_GRADLE_AOSP_BUILD,
+        }));
+      `,
+      ],
+    };
+    try {
+      await mkdir(join(root, "packages/app-core"), { recursive: true });
+      await writeFile(join(root, "packages/app-core/package.json"), "{}");
+      expect(() => rebuildPrivilegedApk(brand, root)).toThrow(
+        "Set ELIZAOS_ELIZA_ROOT",
+      );
+      expect(existsSync(receipt)).toBe(false);
+      await mkdir(join(root, "packages/app"), { recursive: true });
+      await writeFile(join(root, "packages/app/package.json"), "{}");
+      rebuildPrivilegedApk(brand, root);
+      expect(JSON.parse(readFileSync(receipt, "utf8"))).toEqual({
+        cwd: root,
+        osRoot: resolve(repositoryRoot),
+        appId: "ai.review.app",
+        aospBuild: "1",
+        gradleBuild: "true",
+      });
+      expect(() =>
+        rebuildPrivilegedApk(
+          {
+            ...brand,
+            buildAndroidSystemCmd: [process.execPath, "-e", "process.exit(23)"],
+          },
+          root,
+        ),
+      ).toThrow("exited with code 23");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("AOSP builds keep temporary artifacts on the default output volume", () => {
     expect(
       aospBuildEnvironment("/srv/aosp", {
@@ -162,6 +220,23 @@ describe("AOSP build contracts", () => {
     });
   });
 
+  test("AOSP default output uses a Siso-compatible relative path", async () => {
+    const root = await mkdtemp(join(tmpdir(), "elizaos-aosp-root-"));
+    let prepared: ReturnType<typeof prepareAospBuildEnvironment> | undefined;
+    try {
+      prepared = prepareAospBuildEnvironment(root, {});
+      expect(prepared.env.OUT_DIR).toBe("out");
+      expect(resolve(root, prepared.env.OUT_DIR)).toBe(
+        prepared.canonicalOutputRoot,
+      );
+      expect(prepared.env.TMPDIR).toBe(join(root, "out", ".elizaos-tmp"));
+      revalidateAospBuildEnvironment(prepared);
+    } finally {
+      if (prepared) closeAospBuildEnvironment(prepared);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("AOSP build temporary artifacts follow absolute and relative OUT_DIR", async () => {
     const root = await mkdtemp(join(tmpdir(), "elizaos-aosp-root-"));
     const external = await mkdtemp(join(tmpdir(), "elizaos-aosp-out-"));
@@ -172,7 +247,8 @@ describe("AOSP build contracts", () => {
       });
       prepared.push(absolute);
       expect(absolute.env.TMPDIR).toBe(join(external, ".elizaos-tmp"));
-      expect(absolute.env.OUT_DIR).toBe(external);
+      expect(absolute.env.OUT_DIR).toBe(relativePath(root, external));
+      expect(resolve(root, absolute.env.OUT_DIR)).toBe(external);
 
       const relative = prepareAospBuildEnvironment(root, {
         OUT_DIR: "build-output",
@@ -181,7 +257,7 @@ describe("AOSP build contracts", () => {
       expect(relative.env.TMPDIR).toBe(
         join(root, "build-output", ".elizaos-tmp"),
       );
-      expect(relative.env.OUT_DIR).toBe(join(root, "build-output"));
+      expect(relative.env.OUT_DIR).toBe("build-output");
       revalidateAospBuildEnvironment(absolute);
       revalidateAospBuildEnvironment(relative);
     } finally {
@@ -198,7 +274,7 @@ describe("AOSP build contracts", () => {
     try {
       await symlink(external, join(root, "out"), "dir");
       prepared = prepareAospBuildEnvironment(root, {});
-      expect(prepared.env.OUT_DIR).toBe(external);
+      expect(prepared.env.OUT_DIR).toBe(relativePath(root, external));
       expect(prepared.env.TMPDIR).toBe(join(external, ".elizaos-tmp"));
       revalidateAospBuildEnvironment(prepared);
     } finally {

@@ -4,6 +4,9 @@ This directory contains the toolchain for building a brand-customised
 Android AOSP image — Cuttlefish (virtual phone) for CI validation, and
 real device targets (Pixel codenames) for installs.
 
+The application build in `elizaOS/eliza` owns launcher icons and app splash
+assets. This toolchain consumes its staged privileged APK.
+
 The toolchain was originally written for **elizaOS** as a single
 hardcoded brand and generalized so any brand can build a
 privileged-system-app distribution by supplying a JSON brand config
@@ -22,7 +25,7 @@ and a corresponding **vendor tree** under `packages/os/android/vendor/<brand>/`.
   "brand":         "eliza",                  // lowercase token; vendor/<X>, init.<X>.rc, file paths
   "appName":       "Eliza",                  // PascalCase; APK module + apk filename
   "distroName":    "elizaOS",                // brand display name in log messages
-  "packageName":   "com.elizaai.eliza",     // APK Java package id
+  "packageName":   "ai.elizaos.app",       // APK Java package id
   "classPrefix":   "Eliza",                  // Java class prefix (ElizaDialActivity, ElizaSmsReceiver, …)
   "productName":   "eliza_cf_x86_64_phone",  // Cuttlefish product name + makefile filename stem
   "lunchTarget":   "eliza_cf_x86_64_phone-trunk_staging-userdebug",
@@ -34,11 +37,7 @@ and a corresponding **vendor tree** under `packages/os/android/vendor/<brand>/`.
   "initRcName":    "init.eliza.rc",
   "commonMakefile":"eliza_common.mk",
   "cuttlefishMakefile":"eliza_cf_x86_64_phone.mk",
-  "buildAndroidSystemCmd": ["bun", "run", "--cwd", "packages/app", "build:android:system"],
-
-  // Optional — only needed if the brand stores assets/cache outside the defaults
-  "androidAssetsDir": "packages/app-core/platforms/android/app/src/main/assets/agent",
-  "cacheDirName":     "eliza-android-agent"
+  "buildAndroidSystemCmd": ["bun", "run", "--cwd", "packages/app", "build:android:system"]
 }
 ```
 
