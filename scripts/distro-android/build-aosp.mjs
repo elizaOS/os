@@ -236,7 +236,11 @@ export function prepareAospBuildEnvironment(aospRoot, env = process.env) {
     throw error;
   }
 
-  buildEnv.OUT_DIR = canonicalOutputRoot;
+  // Soong passes OUT_DIR/siso_config to Siso, whose config repository path
+  // must be relative to the source root. Keep canonical paths for ownership
+  // and identity checks, but give the build its equivalent relative path.
+  buildEnv.OUT_DIR =
+    path.relative(fs.realpathSync(aospRoot), canonicalOutputRoot) || ".";
   buildEnv.TMPDIR = canonicalTemp;
   buildEnv.TMP = canonicalTemp;
   buildEnv.TEMP = canonicalTemp;

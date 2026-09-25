@@ -15,7 +15,13 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir as systemTmpdir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import {
+  delimiter,
+  dirname,
+  join,
+  relative as relativePath,
+  resolve,
+} from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   assertApkProvenanceEntries,
@@ -162,6 +168,23 @@ describe("AOSP build contracts", () => {
     });
   });
 
+  test("AOSP default output uses a Siso-compatible relative path", async () => {
+    const root = await mkdtemp(join(tmpdir(), "elizaos-aosp-root-"));
+    let prepared: ReturnType<typeof prepareAospBuildEnvironment> | undefined;
+    try {
+      prepared = prepareAospBuildEnvironment(root, {});
+      expect(prepared.env.OUT_DIR).toBe("out");
+      expect(resolve(root, prepared.env.OUT_DIR)).toBe(
+        prepared.canonicalOutputRoot,
+      );
+      expect(prepared.env.TMPDIR).toBe(join(root, "out", ".elizaos-tmp"));
+      revalidateAospBuildEnvironment(prepared);
+    } finally {
+      if (prepared) closeAospBuildEnvironment(prepared);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("AOSP build temporary artifacts follow absolute and relative OUT_DIR", async () => {
     const root = await mkdtemp(join(tmpdir(), "elizaos-aosp-root-"));
     const external = await mkdtemp(join(tmpdir(), "elizaos-aosp-out-"));
@@ -172,7 +195,8 @@ describe("AOSP build contracts", () => {
       });
       prepared.push(absolute);
       expect(absolute.env.TMPDIR).toBe(join(external, ".elizaos-tmp"));
-      expect(absolute.env.OUT_DIR).toBe(external);
+      expect(absolute.env.OUT_DIR).toBe(relativePath(root, external));
+      expect(resolve(root, absolute.env.OUT_DIR)).toBe(external);
 
       const relative = prepareAospBuildEnvironment(root, {
         OUT_DIR: "build-output",
@@ -181,7 +205,7 @@ describe("AOSP build contracts", () => {
       expect(relative.env.TMPDIR).toBe(
         join(root, "build-output", ".elizaos-tmp"),
       );
-      expect(relative.env.OUT_DIR).toBe(join(root, "build-output"));
+      expect(relative.env.OUT_DIR).toBe("build-output");
       revalidateAospBuildEnvironment(absolute);
       revalidateAospBuildEnvironment(relative);
     } finally {
@@ -198,7 +222,7 @@ describe("AOSP build contracts", () => {
     try {
       await symlink(external, join(root, "out"), "dir");
       prepared = prepareAospBuildEnvironment(root, {});
-      expect(prepared.env.OUT_DIR).toBe(external);
+      expect(prepared.env.OUT_DIR).toBe(relativePath(root, external));
       expect(prepared.env.TMPDIR).toBe(join(external, ".elizaos-tmp"));
       revalidateAospBuildEnvironment(prepared);
     } finally {
